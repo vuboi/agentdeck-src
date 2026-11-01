@@ -9,6 +9,31 @@ export type RunLane = {
 
 export type MessageDelivery = 'send' | 'queue' | 'listener';
 
+/** Shell-like tools whose command can keep a turn occupied while work continues elsewhere. */
+const SHELL_TOOL = /(?:^|[._/:]|__)(?:bash|shell|exec|exec_command|powershell|pwsh|cmd|run_in_terminal|run_shell_command|run_command|terminal|command|read_bash|write_bash|read_powershell|write_powershell)$/i;
+const SERVE_TOOL = /(?:^|[._/:]|__)browser_serve$/i;
+const LONG_RUNNING_WORD = /\b(?:build|bundle|check|clippy|compile|deploy|dev|download|export|fetch|import|install|migrate|package|pull|push|release|run|seed|serve|start|sync|test|timeout|update|upgrade|wait|watch|sleep)\b/i;
+const TRANSFER_COMMAND = /(?:^|[;&|]\s*)(?:curl|wget|Invoke-WebRequest|Start-BitsTransfer|gh\s+run\s+(?:watch|view))\b/i;
+
+/** Read the command text from the JSON used by Bash/Shell tools, with plain text as a safe fallback. */
+function commandText(input: string): string {
+  try {
+    const value = JSON.parse(input) as Record<string, unknown>;
+    return [value.command, value.cmd, value.script, Array.isArray(value.args) ? value.args.join(' ') : '']
+      .filter((part): part is string => typeof part === 'string')
+      .join(' ');
+  } catch {
+    return input;
+  }
+}
+
+/** Detect work that should release the chat while its provider call is still running. */
+export function isLongRunningWork(name: string, input = ''): boolean {
+  if (SERVE_TOOL.test(name)) return true;
+  const command = commandText(input);
+  return SHELL_TOOL.test(name) && (LONG_RUNNING_WORD.test(command) || TRANSFER_COMMAND.test(command));
+}
+
 /** Codex's wait call repeats the task count already presented by provider-native Agent activity cards. */
 export function isRedundantAgentWait(command: string, hasAgentTasks: boolean): boolean {
   return hasAgentTasks && /^wait\s+\d+\s+agent\(s\)/i.test(command.trimStart());

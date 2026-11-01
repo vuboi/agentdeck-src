@@ -15,8 +15,9 @@ export function endedByTask(item: Pick<Activity, 'status' | 'nativeTaskId' | 'en
  * result only adds output. Otherwise an error is 'fail', a background call (a shell that answers with its id) stays
  * 'background' until its task ends, and any other call is 'ok'.
  */
-export function statusAfterResult(item: Pick<Activity, 'background' | 'status' | 'nativeTaskId' | 'endedAt'>, isError: boolean): ActivityStatus {
+export function statusAfterResult(item: Pick<Activity, 'background' | 'status' | 'nativeTaskId' | 'endedAt' | 'promotedToBackground'>, isError: boolean): ActivityStatus {
   if (endedByTask(item)) return item.status;
   if (isError) return 'fail';
+  if (item.promotedToBackground && item.nativeTaskId === undefined) return 'ok';
   return item.background ? 'background' : 'ok';
 }

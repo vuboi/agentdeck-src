@@ -1,6 +1,7 @@
 import type { Activity } from './activity.svelte';
 import type { TaskRecord } from '../../tasks/delegate-task';
 import type { DelegateRun } from '../session/delegation.svelte';
+import { isLongRunningWork } from './run-lanes';
 
 /** One addressable piece of background work; source records remain owned by their existing runtime. */
 export type ChatWork = {
@@ -59,7 +60,7 @@ function workTitle(input: string): string {
 export function projectChatWork(events: readonly Activity[], tasks: readonly TaskRecord[], runs: readonly DelegateRun[]): ChatWork[] {
   const work: ChatWork[] = [];
   for (const event of events) {
-    if ((!event.background && event.name !== 'Run project') || /delegate_task/i.test(event.name)) continue;
+    if ((!event.background && event.name !== 'Run project' && !isLongRunningWork(event.name, event.input)) || /delegate_task/i.test(event.name)) continue;
     work.push({
       id: `native:${event.key}`, sessionId: event.sessionId, callId: event.callId,
       activityKey: event.key,

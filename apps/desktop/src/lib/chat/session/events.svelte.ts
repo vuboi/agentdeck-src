@@ -28,7 +28,7 @@ import { finishWorkflowIntegration } from './delegation.svelte';
 import { importHistory, keepOtherTurn, rememberMixed, transcripts } from './history.svelte';
 import { parseCustomModel } from '../../agents/models.svelte';
 import type { CredentialAttempt } from '../../agents/credential-switch';
-import { isBackgroundWait } from '../runs/run-lanes';
+import { isBackgroundWait, isLongRunningWork } from '../runs/run-lanes';
 
 const credentialAttempts = new Map<string, CredentialAttempt & { controller: AbortController }>();
 /** A user request or Stop invalidates every pending continuation for the previous task. */
@@ -647,7 +647,8 @@ function handleEventNow(
     return;
   }
   if (ownedRun) {
-    if (event.kind === 'tool_call' && event.background) {
+    const longRunningTool = event.kind === 'tool_call' && isLongRunningWork(event.name, event.input);
+    if (event.kind === 'tool_call' && (event.background || longRunningTool)) {
       ownedRun.backgroundTools.add(event.id);
       updateLane(sessionId, { id: turn!, role: ownedRun.listener ? 'listener' : 'primary', state: 'running', backgroundWork: true });
     } else if (event.kind === 'tool_result' && ownedRun.backgroundTools.delete(event.id)) {
@@ -663,7 +664,7 @@ function handleEventNow(
       const wasWaiting = sessionLanes[sessionId]?.find((lane) => lane.id === turn)?.state === 'waiting';
       updateLane(sessionId, { id: turn!, role: ownedRun.listener ? 'listener' : 'primary', state: wasWaiting && ownedRun.backgroundTools.size ? 'waiting' : 'running', backgroundWork: ownedRun.backgroundTools.size > 0 });
     }
-    if (event.kind === 'tool_call' && isBackgroundWait(event.name, event.background, event.input) && ownedRun.backgroundTools.size) {
+    if (event.kind === 'tool_call' && (isBackgroundWait(event.name, event.background, event.input) || longRunningTool) && ownedRun.backgroundTools.size) {
       updateLane(sessionId, { id: turn!, role: ownedRun.listener ? 'listener' : 'primary', state: 'waiting', backgroundWork: true });
       sendNextQueued(sessionId);
     }

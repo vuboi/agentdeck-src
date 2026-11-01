@@ -8,6 +8,7 @@ import { stopServers } from '../../browser/browser.svelte';
 import { planRunRestore, terminalStep, updateInflight, loadInflight, withTerminal, withoutTerminal, type InflightRun, type ServerLike } from './inflight';
 import { sessionTail, watchOutput } from '../../terminal/terminal-session';
 import { endedByTask, statusAfterResult } from './activity-status';
+import { isLongRunningWork } from './run-lanes';
 
 export type ActivityStatus = 'running' | 'background' | 'ok' | 'fail' | 'stopped';
 export type Activity = {
@@ -31,6 +32,8 @@ export type Activity = {
   /** Whether the call itself was started as background work (a shell with run_in_background, an agent). A task event
    *  later sets `background` too, but a foreground call with a task event still ends when its result comes. */
   launchedInBackground?: boolean;
+  /** The UI promoted a long command to Work while the provider still owns the foreground call. */
+  promotedToBackground?: boolean;
   status: ActivityStatus;
   startedAt: number;
   endedAt?: number;
@@ -272,7 +275,7 @@ function flushThinking(sessionId: string, turn?: string) {
 }
 
 /** A dev server the agent starts with browser_serve keeps running after its call: a background task, shown as a project run. */
-const SERVE_TOOL = /(?:^|[._/:-])browser_serve$/i;
+const SERVE_TOOL = /(?:^|[._/:]|__)browser_serve$/i;
 
 /** The command and folder of a browser_serve call, once its input is whole JSON (null while it still streams). */
 function serveArgs(input: string): { command: string; cwd: string } | null {
@@ -308,6 +311,7 @@ export function trackActivity(sessionId: string, title: string, project: string,
     record({ key: `${sessionId}:raw:${++calls}`, sessionId, title, project, name: `${event.source} · ${event.label}`, input: event.line.slice(0, 200), background: false, status: 'ok', startedAt: now, endedAt: now, output: event.line });
   } else if (event.kind === 'tool_call') {
     const serving = SERVE_TOOL.test(event.name);
+    const promoted = !event.background && isLongRunningWork(event.name, event.input);
     const serve = serving ? serveArgs(event.input) : null;
     const item: Activity = {
       key: `${sessionId}:${event.id}:${++calls}`,
@@ -323,9 +327,10 @@ export function trackActivity(sessionId: string, title: string, project: string,
       // A served project lists as a Run project, so its log and Stop button are the same as the Preview's Run.
       name: serve ? 'Run project' : event.name,
       input: serve ? `${serve.command}\n${serve.cwd}` : event.input,
-      background: serving || event.background,
+      background: serving || event.background || promoted,
       launchedInBackground: serving || event.background,
-      status: serving ? 'background' : 'running',
+      promotedToBackground: promoted,
+      status: serving || event.background || promoted ? 'background' : 'running',
       startedAt: Date.now(),
     };
     activity.push(item);
