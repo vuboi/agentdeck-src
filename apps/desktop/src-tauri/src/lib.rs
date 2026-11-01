@@ -556,22 +556,12 @@ async fn read_image_data_url(path: String) -> Result<String, String> {
     use base64::Engine;
     const MAX_BYTES: u64 = 15 * 1024 * 1024;
     tauri::async_runtime::spawn_blocking(move || {
-        let mime = match Path::new(&path)
-            .extension()
-            .map(|ext| ext.to_string_lossy().to_lowercase())
-            .as_deref()
-        {
-            Some("png") => "image/png",
-            Some("jpg" | "jpeg") => "image/jpeg",
-            Some("gif") => "image/gif",
-            Some("webp") => "image/webp",
-            _ => return Err("not an image file".to_string()),
-        };
         let meta = std::fs::metadata(&path).map_err(|error| error.to_string())?;
         if !meta.is_file() || meta.len() > MAX_BYTES {
-            return Err("not a file, or larger than 8 MB".to_string());
+            return Err("not a file, or larger than 15 MB".to_string());
         }
         let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        let mime = image_mime(&bytes).ok_or("not a supported image file")?;
         Ok(format!(
             "data:{mime};base64,{}",
             base64::engine::general_purpose::STANDARD.encode(bytes)
@@ -579,6 +569,21 @@ async fn read_image_data_url(path: String) -> Result<String, String> {
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Image generators can return WebP bytes while the history filename still ends in `.png`; use the bytes as the source of truth.
+fn image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
 }
 
 /// The raw bytes of an attached file, for the document preview (sent as binary, not JSON). At most 50 MB.
