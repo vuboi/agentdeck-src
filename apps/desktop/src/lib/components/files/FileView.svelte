@@ -29,6 +29,7 @@
   import DiffView from './DiffView.svelte';
   import Markdown from '../ui/Markdown.svelte';
   import OfficePreview from './OfficePreview.svelte';
+  import { middlePan } from '../../app/ui/middle-pan';
 
   let { file }: { file: Extract<ContentTab, { kind: 'file' }> } = $props();
 
@@ -522,7 +523,7 @@
   {:else if mediaOf(file.name)}
     <MediaView path={file.path} root={file.root} name={file.name} />
   {:else if imageMimeOf(file.name)}
-    <div class="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 [background-image:linear-gradient(45deg,var(--muted)_25%,transparent_25%),linear-gradient(-45deg,var(--muted)_25%,transparent_25%),linear-gradient(45deg,transparent_75%,var(--muted)_75%),linear-gradient(-45deg,transparent_75%,var(--muted)_75%)] [background-position:0_0,0_8px,8px_-8px,-8px_0] [background-size:16px_16px]">
+    <div use:middlePan class="middle-pan-scroll flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 [background-image:linear-gradient(45deg,var(--muted)_25%,transparent_25%),linear-gradient(-45deg,var(--muted)_25%,transparent_25%),linear-gradient(45deg,transparent_75%,var(--muted)_75%),linear-gradient(-45deg,transparent_75%,var(--muted)_75%)] [background-position:0_0,0_8px,8px_-8px,-8px_0] [background-size:16px_16px]">
       {#if picture}
         <img src={picture} alt={file.name} class="max-h-full max-w-full object-contain" onload={(event) => {
             const img = event.currentTarget as HTMLImageElement;

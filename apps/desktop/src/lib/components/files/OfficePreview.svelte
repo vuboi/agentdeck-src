@@ -14,6 +14,7 @@
   import { revealTab } from '../../app/ui/tab-strip';
   import TabListButton from '../ui/TabListButton.svelte';
   import type { PickerItem } from '../ui/PickerPopover.svelte';
+  import { middlePan } from '../../app/ui/middle-pan';
 
   let { file }: { file: Extract<ContentTab, { kind: 'file' }> } = $props();
   let scroll: HTMLDivElement | undefined = $state();
@@ -247,7 +248,8 @@
 
   <div
     bind:this={scroll}
-    class="relative min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto {format === 'xlsx' ? 'bg-white dark:bg-black' : 'bg-muted/30 p-4 md:p-6'}"
+    use:middlePan
+    class="middle-pan-scroll relative min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto {format === 'xlsx' ? 'bg-white dark:bg-black' : 'bg-muted/30 p-4 md:p-6'}"
     onwheel={handleWheel}
   >
     {#if format === 'xlsx' && selectedSheet}

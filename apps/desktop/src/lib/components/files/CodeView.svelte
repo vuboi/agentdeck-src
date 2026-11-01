@@ -4,6 +4,7 @@
   import { observedMeasure } from '../../app/ui/virtual';
   import { highlightTokens, type Token } from '../../files/highlight';
   import { theme } from '../../app/ui/theme.svelte';
+  import { middlePan } from '../../app/ui/middle-pan';
 
   // Read-only source view. Only the rows on screen are mounted, so a 1M-line file stays light. Colours arrive in
   // chunks for the rows in view: the plain text is there at once, no spinner. With `wrap` long lines fold (rows
@@ -202,7 +203,7 @@
   });
 </script>
 
-<div bind:this={scroller} class="h-full min-h-0 overflow-auto bg-background font-mono text-sm leading-5">
+<div bind:this={scroller} use:middlePan class="middle-pan-scroll h-full min-h-0 overflow-auto bg-background font-mono text-sm leading-5">
   <div class="relative min-w-full" style:height="{$virtualizer.getTotalSize()}px">
     {#key wrap}
       {#each items as item (item.key)}

@@ -12,6 +12,7 @@ mod caller;
 mod cdp;
 mod changes;
 mod channel;
+mod claude_bash;
 mod computer;
 mod connectors;
 mod copilot;
@@ -2485,6 +2486,7 @@ pub fn run() {
         .setup(|app| {
             // First: every folder and MCP name below depends on which build this is.
             channel::init(&app.config().identifier);
+            claude_bash::install();
             flow_log::install(app.handle());
             // Create the main webview with the same WebView2 extension setting used by Preview child views.
             let main_window = app
@@ -2692,6 +2694,7 @@ pub fn run() {
             project_memory::project_proposals_write,
             project_activity::project_activity_read,
             project_activity::project_activity_append,
+            project_activity::project_activity_save,
             file_open_options,
             file_open_with,
             file_save_as,

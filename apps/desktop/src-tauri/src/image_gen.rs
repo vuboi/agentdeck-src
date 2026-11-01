@@ -44,9 +44,9 @@ const DEFAULT_VARIANTS: u8 = 1;
 const MAX_VARIANTS: u8 = 4;
 const MAX_MODELS: usize = 4;
 const MAX_PROMPT_CHARS: usize = 30_000;
-const MAX_SUGGESTIONS: usize = 7;
+const MAX_SUGGESTIONS: usize = 5;
 const MAX_KEYWORDS: usize = 12;
-const SUGGEST_INSTRUCTIONS: &str = r#"You improve prompts for image generation. Reply with one JSON object and nothing else, no markdown: {"prompts": [seven distinct, ready-to-use prompts as strings], "keywords": [up to ten {"category": "...", "value": "..."}]}. Preserve the user's subject and intent. Add useful visual detail: style, composition, lighting, camera or rendering direction. The settings below are fixed: follow them exactly and do not contradict them. Each keyword is a short term that fits one setting; category is one of style, domain, audience, ratio, resolution, or keyword (a plain term to add to the prompt). Reference images, when given, show the subject or style to follow: look at each one before you write. Do not add commentary, policy text, or claims about the image."#;
+const SUGGEST_INSTRUCTIONS: &str = r#"You improve prompts for image generation. Reply with one JSON object and nothing else, no markdown. The prompts array MUST contain EXACTLY FIVE distinct, ready-to-use prompts: {"prompts": [prompt 1, prompt 2, prompt 3, prompt 4, prompt 5], "keywords": [up to ten {"category": "...", "value": "..."}]}. Preserve the user's subject and intent. Add useful visual detail: style, composition, lighting, camera or rendering direction. The settings below are fixed: follow them exactly and do not contradict them. Each keyword is a short term that fits one setting; category is one of style, domain, audience, ratio, resolution, or keyword (a plain term to add to the prompt). Reference images, when given, show the subject or style to follow: look at each one before you write. Do not add commentary, policy text, or claims about the image."#;
 
 #[derive(Debug, Deserialize)]
 pub struct ImageModelRequest {
@@ -652,12 +652,33 @@ fn read_suggestions(value: &serde_json::Value) -> (Vec<String>, Vec<SuggestedKey
 }
 
 fn clean_prompts(prompts: Vec<String>) -> Vec<String> {
-    prompts
+    let mut cleaned = prompts
         .iter()
         .map(|prompt| prompt.trim().to_string())
         .filter(|prompt| !prompt.is_empty())
-        .take(MAX_SUGGESTIONS)
-        .collect()
+        .fold(Vec::new(), |mut unique, prompt| {
+            if !unique.iter().any(|item: &String| item == &prompt) {
+                unique.push(prompt);
+            }
+            unique
+        });
+    const FALLBACK_DIRECTIONS: [&str; 4] = [
+        "Use a cinematic composition with a distinct camera angle and directional lighting.",
+        "Use an editorial composition with a refined art-direction and carefully controlled color palette.",
+        "Use a natural candid composition with realistic texture, depth and soft ambient light.",
+        "Use a bold graphic composition with clear focal hierarchy and a distinctive visual silhouette.",
+    ];
+    for direction in FALLBACK_DIRECTIONS {
+        if cleaned.len() >= MAX_SUGGESTIONS {
+            break;
+        }
+        let base = cleaned.first().cloned().unwrap_or_default();
+        if base.is_empty() {
+            break;
+        }
+        cleaned.push(format!("{base} {direction}"));
+    }
+    cleaned.into_iter().take(MAX_SUGGESTIONS).collect()
 }
 
 /// Each candidate of a run gets its own direction, so the variants of one prompt do not come out alike.

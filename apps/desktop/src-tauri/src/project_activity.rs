@@ -78,6 +78,33 @@ pub async fn project_activity_append(root: String, entry: String) -> Result<(), 
         .map_err(|error| error.to_string())?
 }
 
+/// Saves a project activity snapshot where the user picks and returns the chosen path.
+#[tauri::command]
+pub async fn project_activity_save(
+    app: tauri::AppHandle,
+    name: String,
+    text: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    tauri::async_runtime::spawn_blocking(move || {
+        let destination = app
+            .dialog()
+            .file()
+            .set_title("Save project activity log")
+            .set_file_name(name)
+            .add_filter("Markdown", &["md"])
+            .blocking_save_file();
+        let Some(destination) = destination else {
+            return Ok(None);
+        };
+        let destination = destination.into_path().map_err(|error| error.to_string())?;
+        std::fs::write(&destination, text).map_err(|error| error.to_string())?;
+        Ok(Some(destination.display().to_string()))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

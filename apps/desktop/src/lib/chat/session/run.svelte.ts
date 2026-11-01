@@ -32,7 +32,7 @@ import { handleAgentEvent, lastEventAt, lastEventKind, manuallyStopped, recovery
 import { answerWorkerApproval, backlog, flushReports, isWorkerChat } from './delegate-task.svelte';
 import { LANGUAGE_RULE } from './orchestration.svelte';
 import { COMPACT_COMMAND, MODEL_LEAD, compressIfNeeded, flushCoordinationPrompt, handoffDigest, liveModel, send, sendImmediate } from './sending.svelte';
-import { chat, history, settleKeptPermission } from './history.svelte';
+import { chat, history, rememberMixed, settleKeptPermission } from './history.svelte';
 
 /** The chats that ran a turn since the app started: the first turn of any other chat that resumes a conversation resumes a session from before. */
 const touchedThisRun = new Set<string>();
@@ -275,8 +275,10 @@ export function startTurn(
       session.conversationModel && session.conversationModel !== selectedModel && !liveModel(session.agent),
     );
     if (modelChanged) {
-      // Codex and Antigravity name their new conversation themselves.
+      // Keep the old transcript attached to this AgentDeck chat, but never offer its id to the new model.
+      rememberMixed(session);
       cliId = null;
+      session.agentSession = undefined;
       session.agentStarted = false;
       session.forkContext = (session.forkContext ?? '') + handoffDigest(messagesOf(session.id), MODEL_LEAD);
       digested = true;
@@ -287,6 +289,7 @@ export function startTurn(
     const epoch = accountEpoch[session.agent] ?? 0;
     const accountChanged = session.agentEpoch !== undefined && session.agentEpoch !== epoch;
     if (accountChanged) {
+      rememberMixed(session);
       cliId = session.agent === 'claude' ? accountConversationId(session.id, epoch) : null;
       session.agentStarted = false;
       session.agentSession = undefined;
@@ -302,6 +305,7 @@ export function startTurn(
       !accountChanged &&
       (session.agentStarted ?? !!session.path);
     session.conversationModel = selectedModel ?? undefined;
+    if (modelChanged || accountChanged) rememberMixed(session);
   } else {
     // Another agent in this chat: its own conversation, started the first time it is used here. The entry is made on
     // that first turn even before the agent has an id (Codex names its thread later), so the account it began under
@@ -317,7 +321,10 @@ export function startTurn(
       !liveModel(session.agent),
     );
     if (modelChanged) {
+      rememberMixed(session);
       cliId = null;
+      own.id = '';
+      own.started = false;
       session.forkContext = (session.forkContext ?? '') + handoffDigest(messagesOf(session.id), MODEL_LEAD);
       digested = true;
       conversationChanged = true;
@@ -325,9 +332,10 @@ export function startTurn(
     // The same account rule as the chat's first agent: a new session, with the conversation so far.
     const accountChanged = own.epoch !== undefined && own.epoch !== epoch;
     if (accountChanged) {
+      rememberMixed(session);
       cliId = session.agent === 'claude' ? crypto.randomUUID() : null;
       own.started = false;
-      if (cliId) own.id = cliId;
+      own.id = cliId ?? '';
       if (!digested) session.forkContext = (session.forkContext ?? '') + handoffDigest(messagesOf(session.id));
       digested = true;
       conversationChanged = true;
@@ -335,6 +343,7 @@ export function startTurn(
     own.epoch = epoch;
     resume = cliId !== null && !modelChanged && !accountChanged && own.started;
     (session.agentModels ??= {})[session.agent] = selectedModel ?? '';
+    if (modelChanged || accountChanged) rememberMixed(session);
   }
   // A turn still marked live is replaced by this one: its events are ignored from now on (see `turns`), so it would
   // show "Thinking" for ever. It ends here, with what it wrote.

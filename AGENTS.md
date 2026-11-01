@@ -1,6 +1,5 @@
 # AGENTS.md — conventions for all coding agents
 
-Read `PLAN.md` first. Work only on the assigned module; do not start a later module early.
 When adding an agent/provider, read the checklist in `docs/development/adding-agent-provider.md` and connect every relevant surface.
 
 When changing Store skill installation/sync/update, read `docs/development/store-skill-locations.md`; connect the provider's global and project folders instead of updating only AgentDeck's cache.

@@ -34,6 +34,7 @@ pub struct Antigravity {
     pub quota_fallbacks: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderQuota {

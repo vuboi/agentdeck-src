@@ -1,5 +1,22 @@
 use std::{env, fs, path::PathBuf};
 
+#[cfg(windows)]
+fn build_hidden_bash(out: &std::path::Path) {
+    let target = out.join("bash.exe");
+    let rustc = env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let status = std::process::Command::new(rustc)
+        .args(["--edition", "2021", "-C", "opt-level=s"])
+        .arg("src/hidden_bash.rs")
+        .arg("-o")
+        .arg(&target)
+        .status();
+    if !status.is_ok_and(|value| value.success()) {
+        eprintln!("build.rs: could not build the hidden Git Bash launcher");
+        std::process::exit(1);
+    }
+    println!("cargo:rustc-env=AGENTDECK_HIDDEN_BASH={}", target.display());
+}
+
 /// The commands of `tauri::generate_handler![...]` in `src/lib.rs`, by name (the last segment of each path).
 fn handler_commands() -> Vec<String> {
     let source = fs::read_to_string("src/lib.rs").unwrap_or_default();
@@ -80,6 +97,12 @@ fn main() {
     println!("cargo:rerun-if-env-changed=AGENTDECK_DEV_ORIGIN");
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=capabilities/default.json");
+    println!("cargo:rerun-if-changed=src/hidden_bash.rs");
+
+    #[cfg(windows)]
+    build_hidden_bash(&PathBuf::from(
+        env::var("OUT_DIR").unwrap_or_else(|_| ".".into()),
+    ));
 
     let debug = env::var("PROFILE").is_ok_and(|profile| profile == "debug");
     let commands = handler_commands();

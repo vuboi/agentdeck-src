@@ -14,8 +14,10 @@
   import { theme } from '../../app/ui/theme.svelte';
   import { hollow, markerText, neighbour, turnDivider } from '../../chat/content/chat-dividers';
   import { focusMessage } from '../../chat/content/focus-message.svelte';
+  import { askText } from '../../chat/session/run.svelte';
   import { preview, releasePreview, revealPreviewed } from '../../browser/preview.svelte';
   import { logError } from '../../app/platform/error-log.svelte';
+  import { middlePan } from '../../app/ui/middle-pan';
   import { parseQuestions } from '../../chat/recovery/questions';
   import FileView from '../files/FileView.svelte';
   import ChatHeader from './ChatHeader.svelte';
@@ -98,6 +100,7 @@
   let draggingBar = false;
   let lastTop = 0;
   function onViewportPointerDown(event: PointerEvent) {
+    if (event.button !== 0) return;
     stopSticking();
     if (!viewportEl || event.offsetX < viewportEl.clientWidth) return;
     draggingBar = true;
@@ -538,20 +541,29 @@
 
   // A background task's "Show in chat": the message it came from is brought into view, the same way as a turn jump.
   $effect(() => {
-    const id = focusMessage.id;
-    if (!focusMessage.at || !id) return;
-    const row = untrack(() => chat.messages.findIndex((message) => message.id === id));
-    if (row < 0) return;
-    untrack(() => {
-      const target = row - from;
-      $virtualizer.scrollToIndex(target, { align: 'center' });
-      void (async () => {
-        for (let pass = 0; pass < 3; pass++) {
-          await new Promise((resolve) => requestAnimationFrame(resolve));
-          $virtualizer.scrollToIndex(target, { align: 'center' });
-        }
-      })();
-    });
+    const request = { id: focusMessage.id, title: focusMessage.title, at: focusMessage.at };
+    if (!request.at || (!request.id && !request.title)) return;
+    void (async () => {
+      await transcriptSettled();
+      const sessionId = workspace.activeId;
+      const matches = () => chat.messages.findIndex((message) =>
+        (request.id && message.id === request.id) ||
+        (request.title && message.role === 'user' && askText(message).trim() === request.title.trim()),
+      );
+      for (let page = 0; page < 60 && matches() < 0 && chat.older > 0 && workspace.activeId === sessionId; page++) {
+        if ((await loadOlder(activeSession())) === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      if (workspace.activeId !== sessionId) return;
+      const row = matches();
+      if (row < 0) return;
+      stopSticking();
+      following = false;
+      await tick();
+      for (let pass = 0; pass < 4; pass++) {
+        $virtualizer.scrollToIndex(row - from, { align: 'center' });
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+    })();
   });
 </script>
 
@@ -631,7 +643,7 @@
     {/if}
 
     <!-- svelte-ignore a11y_no_static_element_interactions (the events only tell that the reader took over the scrolling) -->
-    <div bind:this={viewportEl} bind:clientWidth={listWidth} bind:clientHeight={viewportHeight} onscroll={onViewportScroll} onwheel={stopSticking} ontouchmove={stopSticking} onpointerdown={onViewportPointerDown} onkeydown={stopSticking} class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden pl-2.5 [overflow-anchor:none] [scrollbar-gutter:stable] {chat.loading || !revealed ? 'pointer-events-none opacity-0' : 'motion-safe:transition-opacity motion-safe:duration-150 motion-safe:ease-out'}" aria-hidden={chat.loading || !revealed}>
+    <div bind:this={viewportEl} use:middlePan bind:clientWidth={listWidth} bind:clientHeight={viewportHeight} onscroll={onViewportScroll} onwheel={stopSticking} ontouchmove={stopSticking} onpointerdown={onViewportPointerDown} onkeydown={stopSticking} class="middle-pan-scroll min-h-0 flex-1 overflow-y-auto overflow-x-auto pl-2.5 [overflow-anchor:none] [scrollbar-gutter:stable] {chat.loading || !revealed ? 'pointer-events-none opacity-0' : 'motion-safe:transition-opacity motion-safe:duration-150 motion-safe:ease-out'}" aria-hidden={chat.loading || !revealed}>
       <div class="relative w-full" style:height="{listHeight}px" {@attach watchListHeight} role="log" aria-live="polite" aria-label="Conversation">
         <!-- A theme change repaints every row from scratch: a row kept from before can show the old theme's colours until the page is reloaded. -->
         {#key theme.settledKey}

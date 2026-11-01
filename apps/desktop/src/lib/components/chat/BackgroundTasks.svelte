@@ -72,7 +72,7 @@
     unknown: 'lucideCircleAlert' as ZIconName,
   };
   const tone = (item: ChatWork) => item.state === 'failed' ? 'text-destructive' : item.state === 'input' || item.state === 'unknown' ? 'text-amber-500' : item.state === 'done' ? 'text-emerald-500' : 'text-muted-foreground';
-  const ICON_BUTTON = 'grid size-4 shrink-0 cursor-pointer place-items-center text-muted-foreground outline-none transition-colors hover:text-primary disabled:cursor-default disabled:opacity-40 disabled:hover:text-muted-foreground';
+  const ICON_BUTTON = 'mt-0.5 grid size-4 shrink-0 cursor-pointer place-items-center text-muted-foreground outline-none transition-colors hover:text-primary disabled:cursor-default disabled:opacity-40 disabled:hover:text-muted-foreground';
   // Stop all still uses each row's own handle; it never stops the main chat turn as a shortcut.
   const stoppable = $derived(active.filter((item) => stopTarget(item) !== null));
   // Work is also rendered without the transcript's LiveCommand card. Keep AgentDeck-owned project rows in step with
@@ -147,7 +147,7 @@
           {@const workModel = item.model ? modelLabel(item.model) || item.model : ''}
           {@const statusLabel = item.kind === 'agent' && item.state === 'done' ? 'Answered' : labels[item.state]}
           <div data-work-id={item.id} animate:flip={{ duration: 300, easing: cubicOut }}>
-            <div class="sticky top-0 z-10 flex min-h-12 min-w-0 items-center gap-3 bg-card/95 px-3 py-2 shadow-sm backdrop-blur-sm">
+            <div class="sticky top-0 z-10 flex min-h-12 min-w-0 items-start gap-3 bg-card/95 px-3 py-2 shadow-sm backdrop-blur-sm">
               <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-start gap-2 text-left outline-none" aria-label="Details: {item.title}" aria-expanded={Boolean(details[item.id])} onclick={() => (details[item.id] = !details[item.id])}>
                 <!-- The state leads the row: the loader while it works, then a check, a cross, a clock while it waits. -->
                 <span class="mt-0.5 grid size-5 shrink-0 place-items-center {tone(item)}" role="img" aria-label={labels[item.state]}>
@@ -171,8 +171,8 @@
                <span class="min-w-0 truncate text-xs text-muted-foreground">{item.title}</span>
                 </span>
               </button>
-              {#if item.sourceMessageId}
-                <button type="button" class={ICON_BUTTON} aria-label="Show in chat" onclick={() => requestFocusMessage(item.sourceMessageId!)}>
+              {#if item.sourceMessageId || item.sourceTitle}
+                <button type="button" class={ICON_BUTTON} aria-label="Show in chat" onclick={() => requestFocusMessage(item.sourceMessageId ?? '', item.sourceTitle ?? item.title)}>
                   <ZIcon zType={'lucideMessageSquare' as ZIconName} class="size-3.5" />
                 </button>
               {/if}

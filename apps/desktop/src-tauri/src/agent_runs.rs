@@ -479,6 +479,7 @@ pub(crate) async fn custom_send(
 }
 
 /// Summarizes attachments through a configured OpenAI-compatible vision model before the main agent sees them.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn prehandle_attachments(
     kind: String,

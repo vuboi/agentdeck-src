@@ -12,6 +12,17 @@ use serde_json::Value;
 
 use super::{line_diff, AgentEvent, FileChange, Provider, TurnRequest};
 
+/// Starts Git without creating a transient console window from the desktop app on Windows.
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command
+}
+
 /// Added to Codex's instructions on every turn (the same facts Claude is given).
 pub const APP_CONTEXT: &str = "You are running inside AgentDeck, a desktop app with its own built-in browser (the Preview panel). When the user asks you to run a project or its source (also \"chạy project\", \"chạy source\", \"run the app\"), that is a dev server even when no page is named: find the start command the way a developer would: the workspace's own scripts or launch config (.claude/launch.json, a Makefile, a task runner), or its build or manifest files and README for the language and toolchain, whatever it is; then start it with the browser_serve tool (the command, the absolute project folder, the address it answers at): AgentDeck runs the server itself, so it keeps running after your turn, and opens the page in Preview. Never run a dev server in your own shell: it dies when your command or turn ends and Preview is left on a refused connection. If browser_serve reports a failed start, read the log it returns, fix the cause (config, missing install, port) and call it again; do not stop at the first error. If the page is already served, browser_open opens it. Both open the page in the current Preview tab. Pass new_tab: true to open it in a tab of its own instead, so the current tab stays as it is: when another chat is driving the current tab, when you compare or debug two pages side by side, or when you look something up. Then keep going in this same turn: screenshot, act on the page, screenshot again. Name the script you used in your reply. In the z-ui workspace, use `pnpm start:svelte` for the Svelte 5 app (default http://localhost:4301) and `pnpm start:angular` for the Angular app (default http://localhost:4200); never use the Angular 4200 server when the user asks for Svelte, Svelte 5, or z-ui-svelte. When the user asks you to inspect or interact with that page, you MUST use the AgentDeck MCP tools on the Preview page: call browser_screenshot first, then browser_click/browser_fill/browser_key/browser_scroll as needed (browser_fill for form fields; browser_type only when the page reacts to each keystroke), and call browser_screenshot or browser_dom again to verify the result. Do not use an external Chrome tab, do not merely navigate to or mention the URL, and do not claim an interaction happened without a matching MCP result. You can also use browser_eval, browser_console, and browser_network for inspection. Never tell the user you cannot test in Preview. A code index of the project is built in. To find your way, prefer the agentdeck tools code_search (a symbol by name), code_outline (the structure of a file), code_definition (a symbol with its source), code_references (where a name is used), code_imports and code_importers (what breaks if you change a file) over reading files or grepping the whole tree, then Read only what matters. Before you use a library API, check the version the project has (package.json, Cargo.toml) and look up the current documentation when you are not sure it exists in that version.";
 
@@ -194,7 +205,7 @@ fn snapshot(
 }
 
 fn repo_root(cwd: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(cwd)
         .args(["rev-parse", "--show-toplevel"])
@@ -210,7 +221,7 @@ fn head_snapshot(cwd: Option<&Path>, full: &Path) -> Option<String> {
     let cwd = cwd?;
     let root = repo_root(cwd)?;
     let relative = full.strip_prefix(&root).ok()?.to_string_lossy().replace('\\', "/");
-    let output = Command::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(&root)
         .arg("show")
@@ -230,7 +241,7 @@ fn worktree_baselines(cwd: Option<&Path>) -> HashMap<PathBuf, String> {
     let Some(root) = repo_root(cwd) else {
         return HashMap::new();
     };
-    let output = Command::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(&root)
         .args(["diff", "HEAD", "--name-only", "-z", "--no-renames"])
@@ -246,7 +257,7 @@ fn worktree_baselines(cwd: Option<&Path>) -> HashMap<PathBuf, String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if let Ok(value) = Command::new("git")
+    if let Ok(value) = git_command()
         .arg("-C")
         .arg(&root)
         .args(["ls-files", "--others", "--exclude-standard", "-z"])
@@ -369,7 +380,12 @@ impl Provider for Codex {
         let kind = item["type"].as_str().unwrap_or_default();
         let mut events = Vec::new();
         match (value["type"].as_str().unwrap_or_default(), kind) {
-            ("thread.started", _) => turn.thread = value["thread_id"].as_str().map(str::to_owned),
+            ("thread.started", _) => {
+                turn.thread = value["thread_id"].as_str().map(str::to_owned);
+                if let Some(session_id) = turn.thread.clone() {
+                    events.push(AgentEvent::Session { session_id });
+                }
+            }
             ("item.started", "command_execution") => {
                 turn.started.insert(id.clone());
                 turn.command_output.insert(id.clone(), String::new());
@@ -648,13 +664,15 @@ mod tests {
             .iter()
             .flat_map(|line| codex.parse_line(line))
             .collect();
-        assert!(matches!(&events[0], AgentEvent::ToolCall { input, .. } if input == "echo hi"));
-        assert!(
-            matches!(&events[1], AgentEvent::ToolResult { output, is_error: false, .. } if output == "hi")
-        );
-        assert!(matches!(&events[2], AgentEvent::Delta { text } if text == "done"));
+        assert!(matches!(&events[0], AgentEvent::Session { session_id } if session_id == "th-9"));
+        assert!(matches!(&events[1], AgentEvent::ToolCall { input, .. } if input == "echo hi"));
         assert!(matches!(
-            events[3],
+            &events[2],
+            AgentEvent::ToolResult { output, is_error: false, .. } if output == "hi"
+        ));
+        assert!(matches!(&events[3], AgentEvent::Delta { text } if text == "done"));
+        assert!(matches!(
+            events[4],
             AgentEvent::Usage {
                 input_tokens: 40,
                 cache_read_tokens: 60,
@@ -663,7 +681,7 @@ mod tests {
             }
         ));
         assert!(
-            matches!(&events[4], AgentEvent::Done { session_id: Some(id), .. } if id == "th-9")
+            matches!(&events[5], AgentEvent::Done { session_id: Some(id), .. } if id == "th-9")
         );
     }
 

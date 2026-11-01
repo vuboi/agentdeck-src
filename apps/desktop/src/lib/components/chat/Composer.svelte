@@ -68,6 +68,7 @@
   import { toast } from '../../app/platform/toast';
   import ModelPicker from './ModelPicker.svelte';
   import ComposerQueue from './ComposerQueue.svelte';
+  import { loadImagePrompts, type ImagePrompt } from '../../files/image-prompt-library.svelte';
   import BackgroundTasks from './BackgroundTasks.svelte';
   import { chatWork } from '../../chat/session/work.svelte';
   import { hasTurnWork } from '../../chat/session/turns.svelte';
@@ -143,6 +144,36 @@
   );
   let contextOpen = $state(false);
   let contextAnchor: HTMLElement | null = $state(null);
+  let promptHistoryOpen = $state(false);
+  let promptHistoryAnchor: HTMLElement | null = $state(null);
+  let promptHistory = $state<ImagePrompt[]>([]);
+  let promptHistoryVersion = $state(0);
+  const promptHistoryItems = $derived<PickerItem<ImagePrompt>[]>(
+    promptHistory.map((item) => ({
+      id: item.id,
+      label: item.prompt,
+      hint: `Prompt · ${new Date(item.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`,
+      icon: 'lucideHistory',
+      selected: item.prompt === draft,
+      data: item,
+    })),
+  );
+  async function refreshPromptHistory() {
+    promptHistory = await loadImagePrompts();
+  }
+  $effect(() => {
+    void promptHistoryVersion;
+    if (promptHistoryOpen) void refreshPromptHistory();
+  });
+  function choosePromptHistory(item: PickerItem<ImagePrompt>) {
+    setDraft(item.data.prompt);
+    promptHistoryOpen = false;
+    requestAnimationFrame(() => {
+      area?.focus();
+      if (area) setEditorSelection(area, item.data.prompt.length);
+      resize();
+    });
+  }
   const contextTone = $derived(
     contextPercent >= 90 ? 'text-destructive' : contextPercent >= 75 ? 'text-warning' : 'text-primary',
   );
@@ -1066,6 +1097,26 @@
       >
         <ZIcon zType="lucidePaperclip" class="size-3.5" />
       </ZButton>
+      <ZButton
+        bind:ref={promptHistoryAnchor}
+        zWave={false}
+        zType="ghost"
+        zSize="sm"
+        class="size-7! !bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary {promptHistoryOpen ? `${TRIGGER_ON} !bg-primary/15 !text-primary` : ''}"
+        aria-label="Show prompt history"
+        title={promptHistory.length ? `Prompt history (${promptHistory.length})` : 'Prompt history'}
+        aria-haspopup="listbox"
+        aria-expanded={promptHistoryOpen}
+        onclick={() => {
+          promptHistoryVersion++;
+          promptHistoryOpen = !promptHistoryOpen;
+        }}
+      >
+        <ZIcon zType="lucideHistory" class="size-3.5" />
+        {#if promptHistory.length > 0}
+          <span class="pointer-events-none absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-primary px-1 text-center text-[8px] leading-3.5 text-primary-foreground">{promptHistory.length > 99 ? '99+' : promptHistory.length}</span>
+        {/if}
+      </ZButton>
       <input
         bind:this={fileInput}
         type="file"
@@ -1082,6 +1133,21 @@
         bind:effort
         bind:fast
         bind:permission
+      />
+      <PickerPopover
+        anchor={promptHistoryAnchor}
+        bind:open={promptHistoryOpen}
+        items={promptHistoryItems}
+        search
+        local
+        fitContent
+        headings={false}
+        size="sm"
+        width={360}
+        label="Prompt history"
+        placeholder="Search prompt history…"
+        empty="No saved prompts"
+        onpick={choosePromptHistory}
       />
     </div>
     <!-- Composer and workers share a control whose icons never enter the flex layout. -->

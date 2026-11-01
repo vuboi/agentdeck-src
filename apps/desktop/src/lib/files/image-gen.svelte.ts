@@ -7,6 +7,7 @@ import { generateImages, listImageHistory, stopImageGeneration, suggestImageProm
 import { trackImageRun } from '../chat/runs/activity.svelte';
 import { inTauri } from '../app/platform/history';
 import { toast } from '../app/platform/toast';
+import { saveImagePrompt } from './image-prompt-library.svelte';
 
 export type Preview = GeneratedImage & { src: string };
 
@@ -24,10 +25,14 @@ export const gen = $state({
   activeRunId: null as string | null,
   loadingRun: 0,
   history: [] as ImageHistoryRun[],
+  historyLoading: false,
+  historyHasMore: true,
   /** The prompt suggestions: being written, and what came back. They too outlive the panel. */
   suggesting: false,
   suggestions: [] as string[],
   keywords: [] as SuggestedKeyword[],
+  temporaryPromptHistory: [] as string[],
+  promptHistoryVersion: 0,
 });
 
 /** What the panel's inputs held when it was last closed, so they are there when it opens again. Not reactive. */
@@ -47,10 +52,30 @@ let runTimer: ReturnType<typeof setInterval> | undefined;
 
 /** The saved runs. `quiet` is for the load when the panel opens: an error there is not something the user asked for. */
 export async function refreshHistory(quiet = false) {
+  if (gen.historyLoading) return;
+  gen.historyLoading = true;
   try {
-    gen.history = await listImageHistory();
+    const page = await listImageHistory(50, 0);
+    gen.history = page;
+    gen.historyHasMore = page.length === 50;
   } catch (error) {
     if (!quiet) toast.error(error instanceof Error ? error.message : String(error));
+  } finally {
+    gen.historyLoading = false;
+  }
+}
+
+export async function loadMoreHistory() {
+  if (gen.historyLoading || !gen.historyHasMore) return;
+  gen.historyLoading = true;
+  try {
+    const page = await listImageHistory(50, gen.history.length);
+    gen.history = [...gen.history, ...page];
+    gen.historyHasMore = page.length === 50;
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : String(error));
+  } finally {
+    gen.historyLoading = false;
   }
 }
 
@@ -155,6 +180,11 @@ export async function runSuggest(args: { prompt: string; model: string; provider
     const result = await suggestImagePrompts({ prompt: args.prompt, model: args.model, provider: args.provider, custom: args.custom, referencePaths: await args.referencePaths(), settings: args.settings });
     gen.suggestions = result.suggestions;
     gen.keywords = result.keywords;
+    for (const suggestion of result.suggestions) {
+      rememberTemporaryPrompt(suggestion);
+      await saveImagePrompt(suggestion);
+    }
+    gen.promptHistoryVersion++;
     if (!result.suggestions.length) toast.error('The prompt model returned no suggestions');
   } catch (error) {
     toast.error(error instanceof Error ? error.message : String(error));
@@ -167,4 +197,14 @@ export async function runSuggest(args: { prompt: string; model: string; provider
 export function clearSuggestions() {
   gen.suggestions = [];
   gen.keywords = [];
+}
+
+export function rememberTemporaryPrompt(prompt: string) {
+  const value = prompt.trim();
+  if (!value) return;
+  gen.temporaryPromptHistory = [value, ...gen.temporaryPromptHistory.filter((item) => item !== value)].slice(0, 20);
+}
+
+export function clearTemporaryPromptHistory() {
+  gen.temporaryPromptHistory = [];
 }

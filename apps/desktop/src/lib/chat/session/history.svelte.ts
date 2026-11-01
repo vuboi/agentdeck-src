@@ -134,7 +134,10 @@ type SavedProviderState = Pick<
   | 'agentIds'
   | 'conversationModel'
   | 'source'
->;
+> & {
+  /** Every provider transcript that has belonged to this AgentDeck chat, including threads replaced by a model edit. */
+  providerAliases?: string[];
+};
 const mixed: Record<string, SavedProviderState> = {};
 let mixedHydrated = false;
 const pendingMixed = new Map<string, SavedProviderState>();
@@ -189,7 +192,11 @@ export async function importHistory({ refresh = false } = {}) {
     const keepIsLocal = localSessions().some((item) => item.id === keep);
     if (found.length === 0 && (!keep || keepIsLocal)) return;
     applyHistory(found);
-    if (found.some((item) => item.id === keep)) workspace.activeId = keep;
+    // `applyHistory` folds a new provider thread (for example Codex after continuing a Claude chat) back into the
+    // AgentDeck session id. Check the merged list, not the raw provider ids, or that valid alias looks missing and
+    // the refresh opens a brand-new draft instead of keeping the continued chat active.
+    if (workspace.sessions.some((item) => item.id === keep))
+      workspace.activeId = keep;
     else if (refresh && keep && keepSession?.made) {
       // The provider can lag briefly after the first turn writes its transcript. Keep the AgentDeck-created chat
       // visible during this refresh; creating a new draft here clears the active tab and makes the UI jump away.
@@ -242,6 +249,8 @@ function applyHistory(all: HistorySession[]) {
   // `claude:<id>`). That file is the same chat: it is merged into the chat, not listed again on its own.
   const aliasOf = new Map<string, string>();
   for (const [ownerId, saved] of Object.entries(mixed)) {
+    for (const providerId of saved.providerAliases ?? [])
+      aliasOf.set(providerId, ownerId);
     const first = saved.source ?? saved.agents?.[0] ?? saved.agent;
     if (saved.agentSession && first)
       aliasOf.set(`${first}:${saved.agentSession}`, ownerId);
@@ -332,7 +341,13 @@ function applyHistory(all: HistorySession[]) {
       (item.source === 'claude'
         ? 'claude-sonnet-5-5'
         : MODELS[item.source][0].value),
-    conversationModel: item.model ?? undefined,
+    // A local model/account transition may already have replaced this provider conversation while its new history
+    // file is still being written. Keep that lifecycle state instead of reviving the old transcript's model.
+    conversationModel:
+      current.get(item.id)?.conversationModel ??
+      mixed[item.id]?.conversationModel ??
+      item.model ??
+      undefined,
     status: 'idle',
     parentId:
       item.parent_id && ids.has(item.parent_id)
@@ -429,10 +444,19 @@ const MAX_SAVED = 12;
 const PAGE_LIMIT = 20;
 const SAVED_TAIL = PAGE_LIMIT;
 
-/** Provider ids of saved chats, including edited sessions whose new history file has a different provider id. */
+function providerAliasesOf(state: SavedProviderState): string[] {
+  const aliases = new Set(state.providerAliases ?? []);
+  const first = state.source ?? state.agents?.[0] ?? state.agent;
+  if (state.agentSession && first)
+    aliases.add(`${first}:${state.agentSession}`);
+  for (const [agent, ids] of Object.entries(state.agentIds ?? {}))
+    if (ids?.id) aliases.add(`${agent}:${ids.id}`);
+  return [...aliases];
+}
+
+/** Provider ids of a chat, including every thread replaced by a model/account change or edit. */
 export function rememberMixed(session: SessionItem) {
-  if (!session.path) return;
-  const saved = $state.snapshot({
+  const current = $state.snapshot({
     agent: session.agent,
     agents: session.agents,
     agentSession: session.agentSession,
@@ -443,6 +467,13 @@ export function rememberMixed(session: SessionItem) {
     conversationModel: session.conversationModel,
     source: session.source,
   });
+  const saved: SavedProviderState = {
+    ...current,
+    providerAliases: providerAliasesOf({
+      ...current,
+      providerAliases: providerAliasesOf(mixed[session.id] ?? current),
+    }),
+  };
   mixed[session.id] = saved;
   if (!mixedHydrated) pendingMixed.set(session.id, saved);
   void mixedReady.then(() => setPref('chat.mixed', mixed));

@@ -194,7 +194,7 @@
             aria-selected={active}
             title={tab.kind === 'file' ? displayPath(tab.root, tab.path) : label}
             data-tip-clip
-            class="flex h-7 max-w-56 shrink-0 cursor-pointer items-center justify-between gap-1 rounded-md py-0 pr-2 pl-2 text-sm outline-none focus-visible:ring-0 {active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}"
+            class="flex h-8 max-w-56 shrink-0 cursor-pointer items-center justify-between gap-1 rounded-md py-0 pr-2 pl-2 text-sm outline-none focus-visible:ring-0 {active ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}"
             onclick={() => activateTab(tab.id)}
             oncontextmenu={(event) => openTabMenu(event, tab.id)}
             onkeydown={(event) => event.key === 'Enter' && activateTab(tab.id)}

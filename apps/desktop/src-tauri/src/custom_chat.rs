@@ -251,6 +251,10 @@ pub async fn prehandle_opencode(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("could not start OpenCode: {error}"))?;
@@ -351,6 +355,10 @@ pub async fn prehandle_antigravity(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     let child = command
         .spawn()
         .map_err(|error| format!("could not start Antigravity: {error}"))?;

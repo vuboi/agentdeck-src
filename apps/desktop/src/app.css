@@ -159,6 +159,11 @@ body {
 .scrollbar-slim::-webkit-scrollbar-thumb { border-width: 2px; border-radius: 4px; }
 .scrollbar-slim::-webkit-scrollbar-button:single-button { display: none; }
 
+/* Main chat, network and file viewers stay clean while middle-drag still pans both axes. */
+.middle-pan-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+.middle-pan-scroll::-webkit-scrollbar { display: none; }
+.middle-pan-scroll.middle-pan-active { cursor: grabbing !important; user-select: none; }
+
 /* The narrow sessions drawer uses a compact native scrollbar while keeping the shared arrow buttons. */
 [data-testid='z-drawer'] *::-webkit-scrollbar {
   width: 8px;

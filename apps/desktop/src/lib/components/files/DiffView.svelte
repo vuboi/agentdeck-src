@@ -7,6 +7,7 @@
   import { theme } from '../../app/ui/theme.svelte';
   import { toast } from '../../app/platform/toast';
   import Menu from '../ui/Menu.svelte';
+  import { middlePan } from '../../app/ui/middle-pan';
 
   // Right-click: copy the selected lines or the whole change, or put them in the message box as a code block.
   let menu = $state<{ x: number; y: number } | null>(null);
@@ -101,7 +102,7 @@
   });
 </script>
 
-<div bind:this={scroller} bind:clientHeight={viewHeight} onscroll={() => (scrollTop = scroller?.scrollTop ?? 0)} oncontextmenu={(event) => { event.preventDefault(); picked = window.getSelection()?.toString() ?? ''; menu = { x: event.clientX, y: event.clientY }; menuOpen = true; }} class="isolate h-full min-h-0 select-text overflow-auto bg-background font-mono text-sm leading-5" role="document" aria-label="Changes of the file">
+<div bind:this={scroller} use:middlePan bind:clientHeight={viewHeight} onscroll={() => (scrollTop = scroller?.scrollTop ?? 0)} oncontextmenu={(event) => { event.preventDefault(); picked = window.getSelection()?.toString() ?? ''; menu = { x: event.clientX, y: event.clientY }; menuOpen = true; }} class="middle-pan-scroll isolate h-full min-h-0 select-text overflow-auto bg-background font-mono text-sm leading-5" role="document" aria-label="Changes of the file">
   <div class="w-max min-w-full" style:height="{rows.length * ROW}px" style:padding-top="{first * ROW}px" style:box-sizing="border-box">
     {#each slice as row, index (first + index)}
       {@const line = version >= 0 && row.kind !== 'hunk' ? tokens.get(first + index) : undefined}

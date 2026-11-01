@@ -11,7 +11,8 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
   import { activeSession, workspace } from '../../chat/sessions.svelte';
   import { keepPicture, pictureSrc, saveAttachment, type ImageSettings, type SuggestedKeyword } from '../../chat/agent';
   import { openImages } from '../../browser/preview.svelte';
-  import { clearSuggestions, draft, gen, refreshHistory, runSuggest, startRun, stopRun } from '../../files/image-gen.svelte';
+  import { clearSuggestions, draft, gen, refreshHistory, rememberTemporaryPrompt, runSuggest, startRun, stopRun } from '../../files/image-gen.svelte';
+  import { loadImagePrompts, saveImagePrompt, type ImagePrompt } from '../../files/image-prompt-library.svelte';
   import { findModel, freeFirst, modelSources, modelsReady, parseCustomModel, type ProviderId } from '../../agents/models.svelte';
   import { activeProviderKey, connectors, providerKeyEnv } from '../../agents/connectors.svelte';
   import { inTauri } from '../../app/platform/history';
@@ -35,7 +36,6 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
     SETTING_ICON,
     fold,
     freeImageModels,
-    formatDuration,
     geminiModels,
     glide,
     openAiModels,
@@ -112,8 +112,6 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
   // The run lives in the store, so it goes on while this panel is closed.
   const working = $derived(gen.working);
   const stopping = $derived(gen.stopping);
-  // Time of the current or last run, shown beside the history button.
-  const runMs = $derived(gen.runMs);
 
   // What the inputs hold is kept for the next time the panel opens.
   $effect(() => {
@@ -126,7 +124,6 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
     draft.settings = { ...settings };
     draft.references = [...references];
   });
-  const promptSuggestions = $derived(gen.suggestions);
   let promptModel = $state(draft.promptModel);
   const suggesting = $derived(gen.suggesting);
   let settingsOpen = $state(false);
@@ -139,6 +136,14 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
   let promptSubProvider = $state('codex');
   let nestedCloseTimer: ReturnType<typeof setTimeout> | undefined;
   let historyOpen = $state(false);
+  let promptHistoryOpen = $state(false);
+  let generatedPromptHistory = $state<ImagePrompt[]>([]);
+  const promptSuggestions = $derived.by(() => {
+    const source = promptHistoryOpen
+      ? [...gen.suggestions, ...generatedPromptHistory.map((item) => item.prompt)]
+      : gen.suggestions;
+    return [...new Set(source)].slice(0, 5);
+  });
   let modelPanelMax = $state(600);
   const modelNestedMax = $derived(Math.min(360, Math.max(160, modelPanelMax - 40)));
   const settingsViewportRatio = 0.38;
@@ -198,12 +203,12 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
           workbuddyImageModels = [...workbuddyImageFallback];
         });
     }
+
   });
 
   function selected() {
     return models.filter((item) => selectedModels.includes(item.model));
   }
-
   function toggleModel(model: string) {
     if (!selectedModels.includes(model) && selectedModels.length >= MAX_IMAGE_MODELS) {
       toast.error(`Choose at most ${MAX_IMAGE_MODELS} image models at once`);
@@ -253,7 +258,14 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
 
   function useSuggestion(value: string) {
     prompt = value;
+    rememberTemporaryPrompt(value);
+    promptHistoryOpen = false;
     clearSuggestions();
+  }
+
+  async function togglePromptHistory() {
+    promptHistoryOpen = !promptHistoryOpen;
+    if (promptHistoryOpen) generatedPromptHistory = await loadImagePrompts();
   }
 
   /** A suggested keyword goes to its setting when one of its options fits, otherwise it is added to the prompt. */
@@ -333,6 +345,7 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
       toast.error('Choose at least one image model');
       return;
     }
+    void saveImagePrompt(prompt);
     const project = workspace.projects.find((item) => item.path === projectPath)?.name ?? '';
     void startRun({ prompt, choices, variants: variantCount, cwd: projectPath, project, referencePaths, settings: settingsPayload() });
   }
@@ -443,9 +456,6 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
   <header class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-1.5 text-[0.8125rem]">
     <span class="grid size-7 place-items-center rounded-lg bg-primary/12 text-primary"><ZIcon zType="lucideImage" class="size-4" /></span>
     <h2 class="m-0 min-w-0 flex-1 truncate text-sm font-semibold text-foreground">Image candidates</h2>
-    {#if runMs > 0}
-      <span class="inline-flex h-7 shrink-0 items-center rounded border border-border bg-background px-2.5 text-xs font-medium tabular-nums text-muted-foreground" title="Time of the last run" aria-live="off">{formatDuration(runMs)}</span>
-    {/if}
     <button
       type="button"
       class="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground transition-colors outline-none hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring {historyOpen ? 'bg-primary/10 text-primary' : ''}"
@@ -458,7 +468,7 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
     </button>
   </header>
 
-  <ImageHistoryDrawer bind:open={historyOpen} />
+  <ImageHistoryDrawer bind:open={historyOpen} onselect={(value) => (prompt = value)} />
 
   <div class="min-h-0 flex-1 overflow-hidden p-1.5">
     <div class="flex h-full min-h-0 flex-col gap-3">
@@ -550,6 +560,16 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
           </div>
 
           <div class="flex h-8 shrink-0 items-center gap-0.5 rounded-full border border-border bg-background p-0.5" role="group" aria-label="Image actions">
+            <button
+              type="button"
+              class="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring {promptHistoryOpen ? 'bg-primary/15 text-primary' : ''}"
+              aria-label="Show prompt generation history"
+              title="Show prompt generation history"
+              aria-expanded={promptHistoryOpen}
+              onclick={() => void togglePromptHistory()}
+            >
+              <ZIcon zType="lucideClock3" class="size-3.5" />
+            </button>
             <button
               type="button"
               class="relative grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
@@ -803,18 +823,20 @@ import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
           {/snippet}
         </ZPopover>
 
-        {#if suggesting || promptSuggestions.length}
+        {#if suggesting || promptSuggestions.length || promptHistoryOpen}
           <div transition:fold class="-mx-1.5 -mb-2 mt-2 flex flex-col gap-1 overflow-hidden border-t border-border px-1.5 pt-2 pb-2" aria-label="Prompt suggestions">
-            <span class="px-1 text-[0.6875rem] text-muted-foreground">Suggested prompts · click to use</span>
+            <div class="flex items-center justify-between gap-2 px-1">
+              <span class="text-[0.6875rem] text-muted-foreground">{promptHistoryOpen ? `Prompt generation history · ${promptSuggestions.length}/5 · click to use` : promptSuggestions.length ? `Suggested prompts · ${promptSuggestions.length}/5 · click to use` : 'Recent prompt'}</span>
+            </div>
             {#if suggesting}
               <div class="flex flex-col gap-2 px-1 py-1" role="status" aria-label="Writing prompt suggestions">
-                {#each [0, 1, 2] as line (line)}
-                  <div class="h-3 animate-pulse rounded bg-muted {line === 2 ? 'w-3/5' : 'w-full'}"></div>
+                {#each [0, 1, 2, 3, 4] as line (line)}
+                  <div class="h-3 animate-pulse rounded bg-muted {line === 4 ? 'w-3/5' : 'w-full'}"></div>
                 {/each}
               </div>
             {:else}
-              {#each promptSuggestions as suggestion (suggestion)}
-                <button in:fade={{ duration: 220 }} type="button" class="rounded-md bg-muted/50 px-2 py-1.5 text-left text-sm leading-4 text-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:bg-primary/10 focus-visible:text-primary outline-none" onclick={() => useSuggestion(suggestion)}>
+              {#each promptSuggestions as suggestion, index (`${suggestion}:${index}`)}
+                <button in:fade={{ duration: 220 }} type="button" class="rounded-md bg-muted/50 px-2 py-1.5 text-left text-sm leading-4 text-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:bg-primary/10 focus-visible:text-primary outline-none" aria-label={`Suggested prompt ${index + 1} of ${promptSuggestions.length}`} onclick={() => useSuggestion(suggestion)}>
                   {suggestion}
                 </button>
               {/each}

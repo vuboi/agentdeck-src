@@ -10,6 +10,7 @@
   import DevEmpty from './DevEmpty.svelte';
   import { asCurl, asCurlCmd, asFetch, asPowerShell, failed, loadBody, methodTone, net, sizeText, timeText, TYPES, type NetRequest } from '../../browser/devtools-net.svelte';
   import { toast } from '../../app/platform/toast';
+  import { middlePan } from '../../app/ui/middle-pan';
 
   // The requests of the page, as in a browser's Network tab: a table, and for the chosen one its headers, payload,
   // response, timing and (for a WebSocket or an event stream) its messages.
@@ -343,7 +344,7 @@
 {/snippet}
 
 <div class="flex min-h-0 flex-1 font-mono text-[0.6875rem]">
-  <div bind:this={scroller} bind:clientHeight={viewHeight} onscroll={() => (scrollTop = scroller?.scrollTop ?? 0)} class="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto" role="table" aria-label="Requests" aria-rowcount={rows.length}>
+  <div bind:this={scroller} use:middlePan bind:clientHeight={viewHeight} onscroll={() => (scrollTop = scroller?.scrollTop ?? 0)} class="middle-pan-scroll flex min-h-0 min-w-0 flex-1 flex-col overflow-auto" role="table" aria-label="Requests" aria-rowcount={rows.length}>
     <!-- No header while there is nothing to head. -->
     {#if rows.length > 0}
     <div class="sticky top-0 z-20 grid shrink-0 relative border-b border-border bg-muted/80 text-muted-foreground backdrop-blur select-none" style:grid-template-columns={template} style:min-width="{minWidth}px" role="row">

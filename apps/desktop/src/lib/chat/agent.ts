@@ -292,9 +292,9 @@ export async function stopImageGeneration(): Promise<void> {
 }
 
 /** The newest image runs, saved on this machine, with their candidate files. */
-export async function listImageHistory(limit = 50): Promise<ImageHistoryRun[]> {
+export async function listImageHistory(limit = 50, offset = 0): Promise<ImageHistoryRun[]> {
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<ImageHistoryRun[]>('image_history_list', { limit });
+  return invoke<ImageHistoryRun[]>('image_history_list', { limit, offset });
 }
 
 /** Asks the authenticated Codex Responses API to improve an image prompt. */

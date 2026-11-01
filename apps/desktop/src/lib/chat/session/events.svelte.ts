@@ -684,7 +684,7 @@ function lastRequest(sessionId: string): string {
 function forgetUnstartedConversation(session: SessionItem) {
     const first = session.source ?? session.agents?.[0] ?? session.agent;
     if (session.agent === first) {
-        if (session.agentStarted === true || session.path) return;
+        if (session.agentStarted === true) return;
         session.agentSession = undefined;
         session.agentStarted = false;
     } else if (
@@ -1145,11 +1145,21 @@ function handleEventNow(
     ) {
         // The CLI no longer has the conversation this id named (a thread whose run was cut short, a cleaned-up session).
         // The next turn starts a new one, and is given what was said so far as text, so the work in progress is not lost.
-        // Every provider's own id is reset: the chat's first agent and any agent it moved to later.
-        session.agentStarted = false;
-        session.agentSession = undefined;
-        const own = session.agentIds?.[session.agent];
-        if (own) own.started = false;
+        // Reset only the provider conversation that failed. A mixed chat's other provider ids remain valid.
+        rememberMixed(session);
+        const failedAgent = reply?.agent ?? session.agent;
+        const first = session.source ?? session.agents?.[0] ?? session.agent;
+        if (failedAgent === first) {
+            session.agentStarted = false;
+            session.agentSession = undefined;
+        } else {
+            const own = session.agentIds?.[failedAgent];
+            if (own) {
+                own.id = '';
+                own.started = false;
+            }
+        }
+        rememberMixed(session);
         session.forkContext =
             (session.forkContext ?? '') +
             handoffFor(sessionId, lastRequest(sessionId));
@@ -1281,26 +1291,30 @@ function handleEventNow(
         toolKindOf(event.name) === 'delegate_task'
     )
         bindTasks(sessionId);
-    // The CLI has the conversation once it answers; only then is `--resume` valid for the next turn.
+    // A provider can announce an id before it has persisted anything resumable (Codex's thread.started is one
+    // example). Keep that id for history mapping immediately, but mark it resumable only after a real conversation
+    // event. Ctrl/Cmd+Enter can otherwise interrupt inside that gap and resume a rollout/session that does not exist.
     const first = session.source ?? session.agents?.[0] ?? session.agent;
     const agent = reply.agent ?? session.agent;
-    if (update.agentSession && agent === first) {
-        session.agentSession = update.agentSession;
-        session.agentStarted = true;
-    } else if (agent === first) {
-        if (event.kind !== 'error') session.agentStarted = true;
-    } else if (
-        update.agentSession ||
-        (event.kind !== 'error' && session.agentIds?.[agent])
-    ) {
-        const id = update.agentSession ?? session.agentIds?.[agent]?.id;
+    const confirmsConversation =
+        event.kind !== 'session' &&
+        event.kind !== 'error';
+    if (agent === first) {
+        if (update.agentSession) session.agentSession = update.agentSession;
+        if (confirmsConversation) session.agentStarted = true;
+    } else {
+        const existing = session.agentIds?.[agent];
+        const id = update.agentSession ?? existing?.id;
         if (id)
             (session.agentIds ??= {})[agent] = {
-                ...session.agentIds?.[agent],
+                ...existing,
                 id,
-                started: true,
+                started: confirmsConversation || existing?.started === true,
             };
     }
+    // Persist the provider id as soon as the CLI confirms it. A new model/account/edit can replace the current id,
+    // but every old and new transcript still belongs to this AgentDeck chat and must alias back to the same owner.
+    if (update.agentSession) rememberMixed(session);
     // A failed turn that can be carried on (retry, another account, the next agent) does not end the work: the chat
     // gets a line saying what happens, and the steps below that close the work (failure, reports) are skipped.
     const failureKind =

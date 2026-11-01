@@ -171,7 +171,7 @@
 
 <ZDrawer bind:open zPlacement="right" zWidth="420px" zFloating zClosable={false} class="error-log-drawer" {header} {footer} zScrollMode="inner" zBodyClass="p-0">
   <div bind:this={scroller} class="min-h-0 flex-1" role="region" aria-label="Error log entries">
-    <div class="p-2">
+    <div class="px-3 py-2">
     {#if demo}
       <p class="m-0 rounded-lg border border-dashed border-border px-2.5 py-1.5 text-[0.6875rem] leading-snug text-muted-foreground">Sample entries (dev mode): the real log is empty. They are not saved.</p>
     {/if}

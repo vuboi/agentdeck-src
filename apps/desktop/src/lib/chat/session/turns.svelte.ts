@@ -324,18 +324,14 @@ export function hasTurnWork(sessionId: string): boolean {
 export function forgetUnstartedConversation(sessionId: string) {
   const session = workspace.sessions.find((item) => item.id === sessionId);
   if (!session) return;
-  const list = messagesOf(sessionId);
-  const replyId = replies[sessionId];
-  const wrote = (message: Message | undefined) => Boolean(message?.blocks.some((block) => block.kind !== 'loading'));
-  const earlierAnswer = list.some((item) => item.role === 'assistant' && item.id !== replyId && wrote(item));
   const first = session.source ?? session.agents?.[0] ?? session.agent;
   if (session.agent === first) {
-    if (session.agentStarted === true || session.path || earlierAnswer || wrote(list.find((item) => item.id === replyId))) return;
+    if (session.agentStarted === true) return;
     session.agentSession = undefined;
     session.agentStarted = false;
   } else {
     const own = session.agentIds?.[session.agent];
-    if (own && !own.started && !earlierAnswer && !wrote(list.find((item) => item.id === replyId)) && session.agentIds)
+    if (own && !own.started && session.agentIds)
       delete session.agentIds[session.agent];
   }
 }

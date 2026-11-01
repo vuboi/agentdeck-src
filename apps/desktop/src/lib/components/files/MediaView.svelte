@@ -7,6 +7,7 @@
   import { inTauri } from '../../app/platform/history';
   import { displayPath } from '../../files/paths';
   import LoadingBar from '../ui/LoadingBar.svelte';
+  import { middlePan } from '../../app/ui/middle-pan';
 
   // A sound or a video opened in the file viewer: played, not shown as text. The file is read once into a blob URL
   // (it can be anywhere on the disk: an agent's output folder, not only the project).
@@ -52,7 +53,7 @@
 
 <div class="relative flex min-h-0 flex-1 flex-col bg-background">
   <div class="h-10 shrink-0 border-b border-border"></div>
-  <div class="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
+  <div use:middlePan class="middle-pan-scroll relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
     {#if error}
       <p class="max-w-sm text-center text-sm text-destructive" role="alert">{error}</p>
     {:else if !url}

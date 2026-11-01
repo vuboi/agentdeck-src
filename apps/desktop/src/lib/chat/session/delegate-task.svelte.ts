@@ -75,6 +75,7 @@ void getPref<TaskRecord[]>(TASKS_KEY)
         ? {
             ...item,
             state: 'stopped',
+            ...(item.reportState === 'running' || item.reportState === 'waiting' ? { reportState: 'failed' as const } : {}),
             endedAt: item.endedAt ?? Date.now(),
             note: 'Stopped: AgentDeck was closed or reloaded while it ran.',
           }

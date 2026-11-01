@@ -193,8 +193,9 @@ $effect.root(() => {
 
 // Restore the tools panel state saved last session, then keep saving it.
 let layoutHydrated = false;
+let toolsStateTouched = false;
 getPref<boolean>('layout.toolsOpen').then((saved) => {
-  if (typeof saved === 'boolean') layout.toolsOpen = saved;
+  if (!toolsStateTouched && typeof saved === 'boolean') layout.toolsOpen = saved;
   layoutHydrated = true;
 });
 $effect.root(() => {
@@ -207,6 +208,7 @@ $effect.root(() => {
 let toolsAnimationTimer: ReturnType<typeof setTimeout> | undefined;
 /** Open or fold the tools panel with a short slide animation. */
 export function setToolsOpen(open: boolean): void {
+  toolsStateTouched = true;
   if (layout.toolsOpen === open) return;
   clearTimeout(toolsAnimationTimer);
   layout.toolsWidthAnimating = true;

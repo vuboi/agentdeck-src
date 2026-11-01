@@ -129,13 +129,13 @@ pub fn record(
 }
 
 /// The newest runs first, each with its files.
-pub fn list(limit: usize) -> Result<Vec<HistoryRun>, String> {
+pub fn list(limit: usize, offset: usize) -> Result<Vec<HistoryRun>, String> {
     let conn = open()?;
     let mut runs_query = conn
-        .prepare("SELECT id, created_at, prompt, models, variants, status, failures FROM image_runs ORDER BY created_at DESC LIMIT ?1")
+        .prepare("SELECT id, created_at, prompt, models, variants, status, failures FROM image_runs ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
         .map_err(|error| error.to_string())?;
     let rows = runs_query
-        .query_map(params![limit as i64], |row| {
+        .query_map(params![limit as i64, offset as i64], |row| {
             let models: String = row.get(3)?;
             let failures: String = row.get(6)?;
             Ok(HistoryRun {
@@ -178,6 +178,9 @@ pub fn list(limit: usize) -> Result<Vec<HistoryRun>, String> {
 }
 
 #[tauri::command]
-pub fn image_history_list(limit: Option<u32>) -> Result<Vec<HistoryRun>, String> {
-    list(limit.unwrap_or(50).clamp(1, 200) as usize)
+pub fn image_history_list(limit: Option<u32>, offset: Option<u32>) -> Result<Vec<HistoryRun>, String> {
+    list(
+        limit.unwrap_or(50).clamp(1, 200) as usize,
+        offset.unwrap_or(0) as usize,
+    )
 }
