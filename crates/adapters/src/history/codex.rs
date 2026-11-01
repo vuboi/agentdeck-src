@@ -8,7 +8,9 @@ use std::{collections::HashMap, path::Path};
 
 use serde_json::Value;
 
-use super::util::{describe_tool, jsonl_files, read_lines, strip_ansi, truncate};
+use super::util::{
+    describe_tool, jsonl_files, read_lines, strip_agentdeck_lead, strip_ansi, truncate,
+};
 use super::{HistoryBlock, HistoryMessage, HistorySession, HistoryUsage, Source};
 
 const OUTPUT_LIMIT: usize = 6_000;
@@ -70,7 +72,10 @@ fn index_file(path: &Path) -> Option<HistorySession> {
         if let Some((role, text)) = message_of(line) {
             count += 1;
             if title.is_none() && role == "user" && !text.starts_with('<') {
-                title = Some(truncate(&text, 80));
+                let candidate = strip_agentdeck_lead(&text);
+                if !candidate.is_empty() && !candidate.starts_with('<') {
+                    title = Some(truncate(&candidate, 80));
+                }
             }
         }
     }
@@ -298,7 +303,7 @@ fn message_of(line: &Value) -> Option<(String, String)> {
     if role != "user" && role != "assistant" {
         return None;
     }
-    let text = payload
+    let raw = payload
         .get("content")?
         .as_array()?
         .iter()
@@ -308,10 +313,16 @@ fn message_of(line: &Value) -> Option<(String, String)> {
         .join("\n")
         .trim()
         .to_owned();
+    let text = if role == "user" {
+        strip_agentdeck_lead(&raw)
+    } else {
+        raw
+    };
     let injected = text.starts_with("<environment_context>")
         || text.starts_with("<user_instructions>")
         || text.starts_with("# AGENTS.md")
-        || text.starts_with("<permissions");
+        || text.starts_with("<permissions")
+        || text.starts_with("[AgentDeck]");
     (!text.is_empty() && !injected).then(|| (role.to_owned(), text))
 }
 

@@ -3,6 +3,8 @@
   import { inTauri as hostedInTauri } from '../../app/platform/history';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { ZButton, ZIcon } from '@shival99/z-ui-svelte';
+  import { logError } from '../../app/platform/error-log.svelte';
+  import { logFlow } from '../../tasks/flow-log';
 
   let maximized = $state(false);
   const inTauri = hostedInTauri();
@@ -32,11 +34,17 @@
   async function windowAction(action: 'minimize' | 'toggle' | 'close') {
     if (!inTauri) return;
     const current = getCurrentWindow();
-    if (action === 'minimize') await current.minimize();
-    if (action === 'close') await current.close();
-    if (action === 'toggle') {
-      await current.toggleMaximize();
-      maximized = await current.isMaximized();
+    logFlow('-', 'window control', `action=${action} label=${current.label}`);
+    try {
+      if (action === 'minimize') await current.minimize();
+      if (action === 'close') await current.close();
+      if (action === 'toggle') {
+        await current.toggleMaximize();
+        maximized = await current.isMaximized();
+      }
+      logFlow('-', 'window control completed', `action=${action} label=${current.label}`);
+    } catch (error) {
+      logError('app', 'window control failed', error, { action, label: current.label });
     }
   }
 </script>

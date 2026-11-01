@@ -484,16 +484,16 @@ function workflowInstructions(preset: WorkflowPreset): string {
 
 export const COMPACT_COMMAND = '/compact';
 
-/** The context of `session` is big enough to compact: the last Claude call read COMPRESS_TOKENS. Tokens, not characters:
+/** The context of `session` is big enough to compact: the last model call read COMPRESS_TOKENS. Tokens, not characters:
  *  a short chat is never compacted. */
 function needsCompress(session: SessionItem, messages: Message[]): boolean {
-  if (!automation.compress || session.agent !== 'claude' || !session.agentStarted || !session.agentSession) return false;
-  const last = [...messages].reverse().find((message) => message.role === 'assistant' && message.agent === 'claude');
+  if (!automation.compress || !session.agentStarted) return false;
+  const last = [...messages].reverse().find((message) => message.role === 'assistant' && message.agent === session.agent);
   if (!last?.context || last.compressed) return false;
   return last.context >= COMPRESS_TOKENS;
 }
 
-/** Runs `/compact` in the chat's Claude conversation, shown as one "Compressing context" line. */
+/** Runs `/compact` in the chat's model conversation, shown as one "Compressing context" line. */
 function compressContext(session: SessionItem) {
   startTurn(session, COMPACT_COMMAND);
   const reply = liveReplies[session.id];
@@ -547,7 +547,7 @@ export const MODEL_LEAD = 'The model was changed, so this is a new session of th
 const DIGEST_WHOLE = 6;
 const DIGEST_OLD_CHARS = 400;
 
-/** The tokens a chat's context holds: the last Claude call's read, else the text's size at about 4 characters a token. */
+/** The tokens a chat's context holds: the last model call's read, else the text's size at about 4 characters a token. */
 function chatTokens(list: Message[]): number {
   const last = [...list].reverse().find((message) => message.role === 'assistant' && message.context);
   if (last?.context) return last.context;

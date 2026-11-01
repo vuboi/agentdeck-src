@@ -321,7 +321,7 @@
         <SectionTitle label="AUTOMATION" />
         <div class="flex flex-col gap-2 px-0.5">
           {#each [
-            { key: 'compress', icon: 'lucideShrink', title: 'Auto-compress context', note: 'Claude: compact a long chat before it runs out of room', on: automation.compress, set: (value: boolean) => (automation.compress = value) },
+            { key: 'compress', icon: 'lucideShrink', title: 'Auto-compress context', note: 'Compact a long chat before it runs out of room', on: automation.compress, set: (value: boolean) => (automation.compress = value) },
             { key: 'fallback', icon: 'lucideRoute', title: 'Auto fallback', note: 'At a limit or a server error, the next agent carries on', on: fallbackOn(), set: setFallback },
             { key: 'orchestrate', icon: 'lucideWorkflow', title: 'Auto-orchestrate', note: 'Proactively delegate independent work to other agents', on: automation.orchestrate, set: (value: boolean) => (automation.orchestrate = value) },
             { key: 'prehandle', icon: 'lucideScanText', title: 'Pre-handle attachments', note: 'Summarize images and files with a lightweight vision model before the main agent', on: automation.prehandle, set: (value: boolean) => (automation.prehandle = value) },

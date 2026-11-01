@@ -193,7 +193,10 @@ pub(crate) async fn models() -> Result<Vec<String>, String> {
         .build()
         .map_err(|error| error.to_string())?;
     let response = client
-        .get(format!("{API_BASE}/muse-code/models"))
+        // Muse Code exposes the model catalogue through the OpenAI-compatible
+        // endpoint used by its inference API; /muse-code/models is not that
+        // catalogue path.
+        .get(format!("{API_BASE}/v1/models"))
         .bearer_auth(token)
         .header("Accept", "application/json")
         .send()

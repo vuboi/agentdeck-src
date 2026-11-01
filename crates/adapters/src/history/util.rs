@@ -76,6 +76,22 @@ pub fn strip_reminders(text: &str) -> String {
     out.trim().to_owned()
 }
 
+/// Removes the paragraph AgentDeck prepends to a new conversation before the user's prompt.
+/// The provider stores that paragraph as part of the first user message, so it must not become
+/// the session title after a reload.
+pub fn strip_agentdeck_lead(text: &str) -> String {
+    let text = text.trim();
+    let text = if text.starts_with("[AgentDeck]") {
+        text.split_once("\n\n").map_or("", |(_, rest)| rest.trim())
+    } else {
+        text
+    };
+    let marker = "\n---\nNow the user says:\n";
+    text.rsplit_once(marker)
+        .map_or(text, |(_, prompt)| prompt.trim())
+        .to_owned()
+}
+
 /// Text of a tool result: a plain string, or an array of `{ "type": "text", "text": … }`.
 pub fn result_text(content: &Value) -> String {
     match content {

@@ -36,6 +36,8 @@ export type ArchiveMessage = {
   text: string;
   tools: number;
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number } | null;
+  /** Last model call's context size, kept because provider transcripts may omit it. */
+  context: number | null;
   cost: number | null;
   ms: number | null;
   /** AgentDeck-only fields needed to redraw automatic work reports after the provider transcript is reloaded. */
@@ -114,6 +116,7 @@ export function archiveTurn(
       text: textOf(message),
       tools: message.blocks.filter((block) => block.kind === 'command').length,
       tokens: message.tokens ? { ...message.tokens } : null,
+      context: message.context ?? null,
       cost: message.cost ?? null,
       ms: message.ms ?? null,
       ...(snapshot ? { snapshot } : {}),
@@ -128,7 +131,7 @@ export async function archivedMessages(sessionId: string): Promise<ArchiveMessag
   const entries = await listPrefs<ArchiveMessage>(`archive.m.${sessionId}.`);
   return entries
     .map(([, message]) => message)
-    .filter((message) => message.snapshot?.autoTurn || (message.snapshot && hasWorkBlocks(message.snapshot)));
+    .filter((message) => message.context != null || message.snapshot?.autoTurn || (message.snapshot && hasWorkBlocks(message.snapshot)));
 }
 
 /** Removes the local archive overlay when a chat is deleted. */

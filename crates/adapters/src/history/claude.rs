@@ -12,7 +12,8 @@ use std::{
 use serde_json::Value;
 
 use super::util::{
-    describe_tool, jsonl_files, read_lines, result_text, strip_ansi, strip_reminders, truncate,
+    describe_tool, jsonl_files, read_lines, result_text, strip_agentdeck_lead, strip_ansi,
+    strip_reminders, truncate,
 };
 use super::{HistoryBlock, HistoryMessage, HistorySession, HistoryUsage, Source};
 
@@ -92,6 +93,8 @@ fn index_file(path: &Path) -> Option<Indexed> {
                 if kind == "user" && first_user.is_none() {
                     first_user = user_text(line)
                         .filter(|text| !text.starts_with('<'))
+                        .map(|text| strip_agentdeck_lead(&text))
+                        .filter(|text| !text.is_empty() && !text.starts_with('<'))
                         .map(|text| truncate(&text, 80));
                 }
             }

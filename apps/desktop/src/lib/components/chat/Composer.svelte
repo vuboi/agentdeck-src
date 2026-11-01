@@ -94,6 +94,8 @@
     flatten,
   } from './composer-pickers';
   import { voiceOf } from '../../chat/voice.svelte';
+  import { shortCount } from '../../chat/runs/usage';
+  import { COMPRESS_TOKENS } from '../../app/platform/automation.svelte';
 
   // What is typed belongs to the open session: switch away and back and it is still there.
   const sessionId = $derived(workspace.activeId);
@@ -129,6 +131,24 @@
     typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
   const waiting = $derived(queued[sessionId] ?? []);
   const waitingForUser = $derived(needsUserInput(sessionId));
+  const contextReply = $derived(
+    [...messagesOf(sessionId)]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.agent === agent && message.context != null) ??
+      undefined,
+  );
+  const contextTokens = $derived(contextReply?.context ?? 0);
+  const contextPercent = $derived(
+    contextTokens > 0 ? Math.min(100, Math.round((contextTokens / COMPRESS_TOKENS) * 100)) : 0,
+  );
+  let contextOpen = $state(false);
+  let contextAnchor: HTMLElement | null = $state(null);
+  const contextTone = $derived(
+    contextPercent >= 90 ? 'text-destructive' : contextPercent >= 75 ? 'text-warning' : 'text-primary',
+  );
+  const contextBarTone = $derived(
+    contextPercent >= 90 ? 'bg-destructive' : contextPercent >= 75 ? 'bg-warning' : 'bg-primary',
+  );
 
   // A queued message not sent yet goes back into the field to be changed; sending it again queues it as before. What
   // was in the field takes its place in the queue, so nothing typed is lost.
@@ -274,19 +294,6 @@
       area?.focus();
       if (area) setEditorSelection(area, start + insert.length);
       resize();
-    });
-  }
-  /** The @ button: an `@` where the caret is, which opens the mention picker. */
-  function startMention() {
-    const at = caret().start;
-    const before = draft.slice(0, at);
-    const lead = before && !/\s$/.test(before) ? ' ' : '';
-    setDraft(`${before}${lead}@${draft.slice(at)}`);
-    queueMicrotask(() => {
-      area?.focus();
-      const caret = at + lead.length + 1;
-      if (area) setEditorSelection(area, caret);
-      detectTrigger();
     });
   }
   let innerW = $state(typeof window === 'undefined' ? 1280 : window.innerWidth);
@@ -1073,19 +1080,6 @@
           event.currentTarget.value = '';
         }}
       />
-      <ZButton
-        zWave={false}
-        zType="ghost"
-        zSize="sm"
-        class="hidden size-7! min-[720px]:inline-flex {paletteOpen
-          ? 'bg-primary/15! text-primary!'
-          : '!bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary'}"
-        aria-label="Mention a session, project or AI"
-        title="Mention (@)"
-        onclick={startMention}
-      >
-        <ZIcon zType="lucideAtSign" class="size-3.5" />
-      </ZButton>
       <ModelPicker
         bind:agent
         bind:model
@@ -1095,6 +1089,62 @@
       />
     </div>
     <!-- Composer and workers share a control whose icons never enter the flex layout. -->
+    {#if contextTokens > 0}
+      <ZButton
+        bind:ref={contextAnchor}
+        zWave={false}
+        type="button"
+        zType="ghost"
+        zSize="sm"
+        class="relative size-6! shrink-0 rounded-full p-0! {contextOpen
+          ? 'bg-primary/15! text-primary!'
+          : `${contextTone} hover:bg-accent/50`}"
+        aria-label="Show context usage"
+        aria-expanded={contextOpen}
+        onclick={() => (contextOpen = !contextOpen)}
+      >
+        <svg class="absolute inset-1 size-4 -rotate-90" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-opacity="0.18" stroke-width="2" />
+          <circle
+            cx="10"
+            cy="10"
+            r="8"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-dasharray="50.27"
+            stroke-dashoffset={50.27 - (50.27 * contextPercent) / 100}
+          />
+        </svg>
+      </ZButton>
+      <ZPopover
+        anchor={contextAnchor}
+        bind:open={contextOpen}
+        zTrigger="manual"
+        zPosition="top-right"
+        zOffset={8}
+        zWidth={220}
+      >
+        {#snippet children()}
+          <div class="flex flex-col gap-2 p-3">
+            <div class="flex items-center justify-between gap-4">
+              <span class="text-xs font-medium text-foreground">Context usage</span>
+              <span class="text-[0.6875rem] tabular-nums text-muted-foreground">{contextPercent}%</span>
+            </div>
+            <div class="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+              <div class="h-full rounded-full {contextBarTone}" style:width="{contextPercent}%"></div>
+            </div>
+            <div class="flex items-center justify-between gap-3 text-[0.6875rem] text-muted-foreground">
+              <span>{shortCount(contextTokens >= COMPRESS_TOKENS ? COMPRESS_TOKENS : contextTokens)}{contextTokens >= COMPRESS_TOKENS ? '+' : ''} tokens</span>
+              <span>limit {shortCount(COMPRESS_TOKENS)}</span>
+            </div>
+            <p class="text-[0.6875rem] leading-snug text-muted-foreground">
+              {contextPercent >= 100 ? 'Auto-compress will run before the next queued message.' : 'Auto-compress runs when the context reaches the limit.'}
+            </p>
+          </div>
+        {/snippet}
+      </ZPopover>
+    {/if}
     <span
       class="inline-grid h-7 shrink-0 place-items-center {voice.phase ===
       'recording'

@@ -555,6 +555,7 @@ async function toMessages(
               cacheRead: message.usage.cache_read,
               cacheWrite: message.usage.cache_write,
             },
+            context: message.usage.input + message.usage.cache_read + message.usage.cache_write,
             // The transcript records the plain id: a chat run on the Console credit shows the `credit:` name it was picked by.
             model:
               session.model?.startsWith(CREDIT_PREFIX) &&
@@ -615,10 +616,23 @@ async function restoreArchivedWork(
   messages: Message[],
 ): Promise<Message[]> {
   const records = await archivedMessages(session.id);
-  return mergeWorkMessages(
+  const restored = mergeWorkMessages(
     messages,
     records.flatMap((record) => (record.snapshot ? [record.snapshot] : [])),
   );
+  for (const record of records) {
+    if (record.context == null) continue;
+    const index = restored.findIndex(
+      (message) =>
+        message.role === 'assistant' &&
+        (message.id === record.id ||
+          (responseText(message) === record.text &&
+            (!message.at || !record.at ||
+              Math.abs(Date.parse(message.at) - Date.parse(record.at)) < 10 * 60_000))),
+    );
+    if (index >= 0) restored[index] = { ...restored[index], context: record.context };
+  }
+  return restored;
 }
 
 /** The file's messages minus the deleted ones, with the other agents' turns that fall in the time range `[lower, upper)`. */

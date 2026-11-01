@@ -1,6 +1,6 @@
 // What the app does on its own around a chat, switched in the model popover of the message box:
-// - compress: before a Claude turn whose context is near the model's window, run `/compact` first (Codex compacts by
-//   itself), with a "Compressing context" line in the chat;
+// - compress: before a turn whose context is near the model's window, run `/compact` first, with a
+//   "Compressing context" line in the chat;
 // - fallback: at a usage limit, a sign-out or a server error, the next agent of the chain carries on
 //   (`connectors.recovery.enabled`, turn-failure.ts);
 // - orchestrate: the agent is told it may hand light or separable parts to other agents (delegate_task).

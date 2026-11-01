@@ -1,4 +1,5 @@
 import { neutralTokens, primaryTokens, radiusTokens, type Mode, type Neutral, type Primary } from './theme-tokens';
+import { logFlow } from '../../tasks/flow-log';
 
 const KEY = 'agentdeck.theme';
 export type ChatLayout = 'split' | 'single';
@@ -73,6 +74,7 @@ class Theme {
           // Only removing theme-switching (re-enabling transitions) is deferred: one rAF lets the browser commit the
           // new colours first, so transitions start from the new baseline and never ease across the old→new gap.
           this.settledKey = key;
+          logFlow('-', 'theme applied', `mode=${this.mode} dark=${this.dark} class=${root.classList.contains('dark')} background=${root.style.getPropertyValue('--background')}`);
           unfreeze = requestAnimationFrame(() => root.classList.remove('theme-switching'));
         }
         try {

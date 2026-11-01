@@ -153,7 +153,9 @@ fn tray_update_recent(app: AppHandle, sessions: Vec<TrayRecentSession>) -> Resul
 /// handle — the Preview's child webviews are separate handles, so hiding the parent is all it takes — and the
 /// outcome (`hidden` / `hide failed: …`) is always logged, with `is_visible` checked after each attempt.
 fn hide_main_window(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
+    // Use the runtime window registry here. After a chat has created child webviews, the webview-only lookup can
+    // return None even though the native window that raised CloseRequested still exists.
+    let Some(window) = app.get_window("main") else {
         flow_log::note("rust", "-", "window", "hide failed: no main window");
         return;
     };
@@ -235,7 +237,7 @@ fn hide_main_window(app: &AppHandle) {
 fn show_main_window(app: &AppHandle, source: &str) {
     // A close right after showing is a new press, not part of the burst before it.
     LAST_CLOSE_TO_TRAY_MS.store(0, std::sync::atomic::Ordering::Relaxed);
-    let Some(window) = app.get_webview_window("main") else {
+    let Some(window) = app.get_window("main") else {
         flow_log::note("rust", "-", "window", "show failed: no main window");
         return;
     };
@@ -2803,7 +2805,7 @@ pub fn run() {
                     // Already handled for this press — unless the window is somehow back on screen, where a
                     // fresh close must hide it again rather than be swallowed.
                     let visible = app
-                        .get_webview_window("main")
+                        .get_window("main")
                         .is_some_and(|window| !matches!(window.is_visible(), Ok(false)));
                     if !visible {
                         return;

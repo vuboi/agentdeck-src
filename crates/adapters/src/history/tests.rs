@@ -257,7 +257,7 @@ fn codex_transcript_skips_injected_context_and_reads_tools() {
             json!({"timestamp":"2026-01-01T00:00:00Z","type":"session_meta",
                    "payload":{"id":"abc123","cwd":"C:\\work\\demo","timestamp":"2026-01-01T00:00:00Z"}}),
             msg("user", "input_text", "<environment_context>cwd</environment_context>"),
-            msg("user", "input_text", "list files"),
+            msg("user", "input_text", "[AgentDeck] Reply conventions of this app...\n\nlist files"),
             json!({"timestamp":"t","type":"response_item",
                    "payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"thinking about ls"}]}}),
             json!({"timestamp":"t","type":"response_item",

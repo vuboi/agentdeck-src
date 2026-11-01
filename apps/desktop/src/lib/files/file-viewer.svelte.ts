@@ -41,16 +41,14 @@ $effect.root(() => {
 /** Opens (or focuses) a file in the Files tool. `root` is the folder the file must stay inside. */
 export function openInViewer(path: string, root: string, view?: 'file' | 'changes', options?: { revealPanel?: boolean }) {
   const id = viewerId(path);
-  // With no file open the tree is the only thing shown: the first file opens beside it, not in its place.
-  const treeWasAlone = viewer.tabs.length === 0;
   const open = viewer.tabs.find((tab) => tab.id === id);
   if (!open) viewer.tabs.push({ id, kind: 'file', name: path.split(/[\\/]/).pop() ?? path, path, root, view });
   else if (view) open.view = view;
   viewer.active = id;
   viewer.opened++;
   // A file opened as its changes (the diff) shows the side panel from the start, so the list it came from is there.
-  // A plain file leaves the panel as it is (closed by default).
-  if (view === 'changes' || treeWasAlone) viewer.side.open = true;
+  // A plain file leaves the panel closed until the user opens it.
+  if (view === 'changes') viewer.side.open = true;
   // Opening a file from chat should give the editor the whole workspace. Keep Explore selected so a later manual
   // panel reveal shows this file; reveal the panel only for an explicit side-panel action.
   layout.activeTool = 'Explore';
