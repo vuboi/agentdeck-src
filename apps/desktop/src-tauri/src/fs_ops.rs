@@ -86,7 +86,8 @@ fn relative(root: &Path, path: &Path) -> String {
 const LISTING_TTL: Duration = Duration::from_secs(20);
 
 type Listing = Arc<Vec<String>>;
-static LISTINGS: LazyLock<Mutex<HashMap<PathBuf, (Instant, Listing)>>> = LazyLock::new(Default::default);
+static LISTINGS: LazyLock<Mutex<HashMap<PathBuf, (Instant, Listing)>>> =
+    LazyLock::new(Default::default);
 
 /// Every file of the project as a path relative to `root`, shortest first: the walk is done once per `LISTING_TTL`.
 fn listing(root: &Path) -> Listing {

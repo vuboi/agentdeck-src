@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-connector-logout"
+description = "Enables the connector_logout command without any pre-configured scope."
+commands.allow = ["connector_logout"]
+
+[[permission]]
+identifier = "deny-connector-logout"
+description = "Denies the connector_logout command without any pre-configured scope."
+commands.deny = ["connector_logout"]

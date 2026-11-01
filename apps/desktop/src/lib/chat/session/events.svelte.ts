@@ -10,6 +10,7 @@ import { type AgentEvent, listenAgentEvents } from '../agent';
 import { logError } from '../../app/platform/error-log.svelte';
 import { hangTraceOn, logFlow, markStep } from '../../tasks/flow-log';
 import { activity, trackActivity } from '../runs/activity.svelte';
+import { recordProjectActivity } from '../runs/project-activity.svelte';
 import { guide } from '../../app/ui/guide.svelte';
 import { addUsage, applyAgentEvent, updateHistoricalTask } from '../agent-reply';
 import { finishCommandImages, persistCommandImage } from '../content/command-images';
@@ -889,6 +890,26 @@ function handleEventNow(
         ),
       );
     } finally {
+      if (update.finished && !recovering) {
+        const project = workspace.projects.find((item) => item.id === session.projectId);
+        const status = event.kind === 'done'
+          ? 'completed'
+          : event.kind === 'error' && event.message === 'stopped'
+            ? 'stopped'
+            : 'failed';
+        void recordProjectActivity({
+          root: project?.path ?? '',
+          project: project?.name ?? '',
+          sessionId: session.id,
+          chatTitle: session.title,
+          agent: reply.agent ?? session.agent,
+          model: reply.model ?? session.model,
+          status,
+          request: liveAsks[sessionId],
+          reply,
+          note: event.kind === 'error' && event.message !== 'stopped' ? event.message : undefined,
+        });
+      }
       delete replies[sessionId];
       delete liveReplies[sessionId];
       delete liveAsks[sessionId];

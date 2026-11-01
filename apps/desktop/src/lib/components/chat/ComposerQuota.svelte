@@ -9,10 +9,12 @@
     connectors,
     refreshAccounts,
     refreshAgyQuota,
-    refreshProviderQuota,
+    refreshOpenCodeQuota,
+    refreshProviderQuotas,
     providerQuotas,
     claudeCreditState,
     refreshClaudeCredit,
+    subscribeQuotaRefresh,
     type UsageWindow,
   } from '../../agents/connectors.svelte';
 
@@ -28,10 +30,10 @@
       if (selected === 'antigravity') void refreshAgyQuota();
       else if (selected === 'claude' || selected === 'codex')
         void refreshAccounts(selected);
+      else if (selected === 'opencode') void refreshOpenCodeQuota();
     };
     refresh();
-    const timer = window.setInterval(refresh, 60_000);
-    return () => clearInterval(timer);
+    return subscribeQuotaRefresh(refresh);
   });
 
   // A custom provider (OpenRouter…) of the chosen model: its credit left when it tells it, else what was used today.
@@ -40,9 +42,7 @@
     const provider = customProvider;
     if (!provider || !inTauri()) return;
     activeProviderKey(provider);
-    void refreshProviderQuota(provider);
-    const timer = window.setInterval(() => void refreshProviderQuota(provider), 120_000);
-    return () => clearInterval(timer);
+    return subscribeQuotaRefresh(() => void refreshProviderQuotas(provider));
   });
   /** What this provider's key can still spend (OpenRouter), or its free-tier note. */
   const keyQuota = $derived(customProvider ? providerQuotas[`${customProvider.id}:${activeProviderKey(customProvider)?.id ?? 'default'}`] : undefined);
@@ -52,11 +52,10 @@
   const onCredit = $derived(agent === 'claude' && model.startsWith(CREDIT_PREFIX));
   $effect(() => {
     if (!onCredit || !inTauri()) return;
-    void refreshClaudeCredit();
-    const timer = window.setInterval(() => void refreshClaudeCredit(), 120_000);
-    const stop = onUsage(() => window.setTimeout(() => void refreshClaudeCredit(), 3000));
+    const stopRefresh = subscribeQuotaRefresh(() => void refreshClaudeCredit());
+    const stop = onUsage(() => window.setTimeout(() => void refreshClaudeCredit(true), 3000));
     return () => {
-      clearInterval(timer);
+      stopRefresh();
       stop();
     };
   });
@@ -89,6 +88,9 @@
         windows = [{ label: `${usd(creditReading.balance)} credit`, pct: Math.min(100, 100 - (creditReading.balance / top) * 100), resets_at: null }];
         observedAt = creditReading.at;
       }
+    } else if (keyQuota?.windows?.length) {
+      windows = keyQuota.windows;
+      observedAt = keyQuota.at;
     } else if (keyQuota && keyQuota.limit && keyQuota.remaining !== null) {
       // A key with a credit limit reads like a quota window: the share still left.
       windows = [{ label: 'credit', pct: Math.min(100, ((keyQuota.limit - keyQuota.remaining) / keyQuota.limit) * 100), resets_at: null }];
@@ -113,6 +115,9 @@
         connectors.agyQuota?.groups.find((group) => group.id === family)
           ?.windows ?? [];
       observedAt = connectors.agyQuota?.observed_at ?? null;
+    } else if (agent === 'opencode') {
+      windows = connectors.opencodeQuota?.windows ?? [];
+      observedAt = connectors.opencodeQuota?.observed_at ?? null;
     }
     // The most restrictive window: the one with the least left. A window that already reset is full again. A 5h window
     // that is fresh does not help when the 7d one is used up: the next message would be refused all the same.
@@ -213,7 +218,7 @@
       >
     </div>
     <div
-      class="relative h-1.5 rounded-full bg-muted"
+      class="relative h-1.5 rounded-full bg-muted-foreground/25"
       role="progressbar"
       aria-valuenow={Math.round(quota.remaining)}
       aria-valuemin="0"
@@ -268,11 +273,11 @@
   >
     <span class="min-w-0 truncate text-[10px] leading-[1.25] text-muted-foreground"
       title={onCredit && !connectors.claudeCredit.sessionKey ? 'Add the Console sign-in in Settings > Providers to see the credit left' : undefined}
-      >{#if onCredit}{claudeCreditState.error ? `Credit: ${claudeCreditState.error}` : connectors.claudeCredit.sessionKey ? 'Reading credit…' : 'Credit left unknown'}{:else if keyQuota?.free_tier}Free key: only “:free” models work, with daily request limits{:else if keyQuota}Spent {usd(keyQuota.used)} · this key has no limit{:else}This provider reports no limit{/if}{#if todayUsed && todayUsed.replies > 0}
+      >{#if onCredit}{claudeCreditState.error ? `Credit: ${claudeCreditState.error}` : connectors.claudeCredit.sessionKey ? 'Reading credit…' : 'Credit left unknown'}{:else if keyQuota?.free_tier}Free key: only “:free” models work, with daily request limits{:else if keyQuota?.source === 'balance' && keyQuota.remaining !== null}Balance {keyQuota.currency === 'USD' ? usd(keyQuota.remaining) : `${keyQuota.remaining.toFixed(2)} ${keyQuota.currency ?? ''}`.trim()}{:else if keyQuota?.source === 'headers'}Rate limits from the latest provider response{:else if keyQuota?.source === 'api'}Quota from the provider usage endpoint{:else if keyQuota}Spent {usd(keyQuota.used)} · this key has no limit{:else}This provider reports no limit{/if}{#if todayUsed && todayUsed.replies > 0}
         · today {shortCount(todayUsed.tokens)} tokens{todayUsed.cost > 0 ? ` · ${usd(todayUsed.cost)}` : ''} · {todayUsed.replies} {todayUsed.replies === 1 ? 'reply' : 'replies'}{/if}</span
     >
     <div
-      class="h-1.5 rounded-full bg-muted"
+      class="h-1.5 rounded-full bg-muted-foreground/25"
       role="progressbar"
       aria-valuemin="0"
       aria-valuemax="100"

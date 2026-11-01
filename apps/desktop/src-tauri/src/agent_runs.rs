@@ -423,6 +423,7 @@ pub(crate) async fn custom_send(
     effort: Option<String>,
     restricted: Option<bool>,
     workbuddy: Option<bool>,
+    auth_mode: Option<String>,
 ) -> Result<(), String> {
     let restricted = restricted.unwrap_or(false);
     let config = custom_chat::Turn {
@@ -442,6 +443,7 @@ pub(crate) async fn custom_send(
         effort,
         restricted,
         workbuddy: workbuddy.unwrap_or(false),
+        auth_mode,
     };
     let response = ChatResponseCapabilities::custom();
     let (chat, this_turn) = (session.clone(), turn.clone());

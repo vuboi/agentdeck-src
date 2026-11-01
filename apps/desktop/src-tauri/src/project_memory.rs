@@ -65,22 +65,30 @@ pub fn write_proposals_in(root: &Path, text: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn project_proposals_read(root: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || read_proposals_in(Path::new(&root))).await.map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || read_proposals_in(Path::new(&root)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub async fn project_proposals_write(root: String, text: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || write_proposals_in(Path::new(&root), &text)).await.map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || write_proposals_in(Path::new(&root), &text))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub async fn project_memory_read(root: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || read_in(Path::new(&root))).await.map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || read_in(Path::new(&root)))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub async fn project_memory_write(root: String, text: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || write_in(Path::new(&root), &text)).await.map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || write_in(Path::new(&root), &text))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]
@@ -88,7 +96,8 @@ mod tests {
     use super::*;
 
     fn temp(name: &str) -> PathBuf {
-        let folder = std::env::temp_dir().join(format!("agentdeck-memory-{name}-{}", std::process::id()));
+        let folder =
+            std::env::temp_dir().join(format!("agentdeck-memory-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         folder
     }
@@ -105,7 +114,10 @@ mod tests {
     fn written_memory_reads_back_and_empty_text_removes_it() {
         let folder = temp("roundtrip");
         write_in(&folder, "- uses pnpm\n- Vietnamese UI copy\n").unwrap();
-        assert_eq!(read_in(&folder).unwrap(), "- uses pnpm\n- Vietnamese UI copy\n");
+        assert_eq!(
+            read_in(&folder).unwrap(),
+            "- uses pnpm\n- Vietnamese UI copy\n"
+        );
         assert!(folder.join(FILE).is_file());
         write_in(&folder, "  \n").unwrap();
         assert!(!folder.join(FILE).exists());

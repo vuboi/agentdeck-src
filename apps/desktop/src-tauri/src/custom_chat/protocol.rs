@@ -353,21 +353,19 @@ pub(crate) fn read_messages_chunk(data: &str, step: &mut Step, emit: &mut impl F
         return;
     };
     match json["type"].as_str().unwrap_or_default() {
-        "content_block_start" => {
-            if json["content_block"]["type"].as_str() == Some("tool_use") {
-                step.calls.push(Call {
-                    id: json["content_block"]["id"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    name: json["content_block"]["name"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                    arguments: String::new(),
-                    stream_id: json["index"].as_u64().unwrap_or(0).to_string(),
-                });
-            }
+        "content_block_start" if json["content_block"]["type"].as_str() == Some("tool_use") => {
+            step.calls.push(Call {
+                id: json["content_block"]["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                name: json["content_block"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                arguments: String::new(),
+                stream_id: json["index"].as_u64().unwrap_or(0).to_string(),
+            });
         }
         "content_block_delta" => {
             let delta = &json["delta"];
@@ -475,6 +473,7 @@ async fn model_call_messages(
             format!("{status}: {detail}")
         });
     }
+    crate::connectors::capture_rate_limits(&turn.base_url, turn.api_key.as_deref(), sent.headers());
     let mut response = sent;
     let mut step = Step::default();
     let mut pending = Vec::new();
@@ -628,7 +627,14 @@ async fn model_call_responses(
         _ => {}
     }
     let mut request = client.post(responses_url(&turn.base_url)).json(&body);
-    if let Some(key) = provider_key(turn) {
+    if turn.auth_mode.as_deref() == Some("muse-code") {
+        request = crate::providers::muse_code::authorize(request)
+            .await
+            .map_err(|message| ResponsesAttemptError {
+                message,
+                retry_chat: false,
+            })?;
+    } else if let Some(key) = provider_key(turn) {
         request = request.bearer_auth(key);
     }
     let sent = match tokio::time::timeout(Duration::from_secs(300), request.send()).await {
@@ -652,6 +658,7 @@ async fn model_call_responses(
         let json = serde_json::from_str::<Value>(&body).unwrap_or_default();
         return Err(response_error(&json, status));
     }
+    crate::connectors::capture_rate_limits(&turn.base_url, turn.api_key.as_deref(), sent.headers());
     let mut response = sent;
     let mut step = Step::default();
     let mut pending = Vec::new();
@@ -722,6 +729,19 @@ pub(crate) async fn model_call(
     if responses_provider(turn) {
         match model_call_responses(client, turn, &outgoing_messages, tools, emit).await {
             Ok(step) => return Ok(step),
+            Err(error)
+                if turn.auth_mode.as_deref() == Some("muse-code")
+                    && error.message.starts_with("401") =>
+            {
+                crate::connectors::muse_code::refresh_access_token()
+                    .await
+                    .map_err(|refresh_error| {
+                        format!("{}; key refresh failed: {refresh_error}", error.message)
+                    })?;
+                return model_call_responses(client, turn, &outgoing_messages, tools, emit)
+                    .await
+                    .map_err(|retry_error| retry_error.message);
+            }
             Err(error) if error.retry_chat => {}
             Err(error) => return Err(error.message),
         }
@@ -785,6 +805,11 @@ pub(crate) async fn model_call(
             format!("{status}: {detail}")
         });
     }
+    crate::connectors::capture_rate_limits(
+        &turn.base_url,
+        turn.api_key.as_deref(),
+        response.headers(),
+    );
     let mut step = Step::default();
     // Buffer raw bytes: a network chunk can end inside a Vietnamese character or emoji.
     // Decode only complete lines; ASCII newlines cannot occur inside a multi-byte UTF-8 character.

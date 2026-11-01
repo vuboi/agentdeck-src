@@ -5,7 +5,7 @@
   import { revealTab } from '../../app/ui/tab-strip';
   import { closeOnScroll } from '../../app/ui/close-on-scroll';
   import { toast } from '../../app/platform/toast';
-  import { browser, closeTab, MAX_TABS, newTab, selectTab, tabsFull } from '../../browser/browser.svelte';
+  import { browser, closeOtherTabs, closeTab, MAX_TABS, newTab, selectTab, tabsFull } from '../../browser/browser.svelte';
   import TabListButton from '../ui/TabListButton.svelte';
   import Menu from '../ui/Menu.svelte';
   import type { PickerItem } from '../ui/PickerPopover.svelte';
@@ -16,21 +16,23 @@
   let tabMenuKey = $state(0);
   $effect(() => closeOnScroll(() => tabMenuOpen, () => (tabMenuOpen = false)));
   function openTabMenu(event: MouseEvent, id: string) {
+    if (!browser.tabs.some((item) => item.id === id)) return;
     event.preventDefault();
     tabMenuKey++;
     tabMenu = { x: event.clientX, y: event.clientY, id };
     tabMenuOpen = true;
   }
+  const contextTabId = () => {
+    const id = tabMenu?.id;
+    return id && browser.tabs.some((item) => item.id === id) ? id : undefined;
+  };
   const menuTab = $derived(tabMenu ? browser.tabs.find((item) => item.id === tabMenu?.id) : undefined);
   const tabContextItems = $derived<ZDropdownMenuItem[]>([
     { label: 'New tab', icon: 'lucidePlus', iconSize: '12', class: 'text-sm! py-1', disabled: tabsFull(), onClick: () => addTab() },
     { label: 'Copy address', icon: 'lucideCopy', iconSize: '12', class: 'text-sm! py-1', divide: 'before', disabled: !menuTab?.url, onClick: () => menuTab?.url && void navigator.clipboard.writeText(menuTab.url) },
-    { label: 'Close tab', icon: 'lucideX', iconSize: '12', shortcut: 'Ctrl+W', divide: 'before', class: 'text-sm! py-1', onClick: () => tabMenu && void closeTab(tabMenu.id) },
-    { label: 'Close other tabs', icon: 'lucideX', iconSize: '12', class: 'text-sm! py-1', disabled: browser.tabs.length < 2, onClick: () => tabMenu && closeOtherTabs(tabMenu.id) },
+    { label: 'Close tab', icon: 'lucideX', iconSize: '12', shortcut: 'Ctrl+W', divide: 'before', class: 'text-sm! py-1', disabled: !contextTabId(), onClick: () => { const id = contextTabId(); if (id) void closeTab(id); } },
+    { label: 'Close other tabs', icon: 'lucideX', iconSize: '12', class: 'text-sm! py-1', disabled: !contextTabId() || browser.tabs.length < 2, onClick: () => { const id = contextTabId(); if (id) void closeOtherTabs(id); } },
   ]);
-  function closeOtherTabs(id: string) {
-    for (const item of browser.tabs) if (item.id !== id) void closeTab(item.id);
-  }
 
   // Tabs: no scrollbar; when they do not fit an arrow lists them all, and the front one stays in view.
   let tabStrip: HTMLDivElement | undefined = $state();
@@ -72,6 +74,7 @@
     {#each browser.tabs as item (item.id)}
       <div
         data-tab-id={item.id}
+        data-chat-id={item.chatId ?? undefined}
         role="tab"
         tabindex="0"
         aria-selected={item.id === browser.activeId}

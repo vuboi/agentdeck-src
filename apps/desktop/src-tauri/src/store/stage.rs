@@ -26,7 +26,8 @@ pub enum Source {
 }
 
 pub fn staging_root(home: &Path) -> PathBuf {
-    home.join(crate::channel::home_folder_name()).join("staging")
+    home.join(crate::channel::home_folder_name())
+        .join("staging")
 }
 
 /// A new job id: the time in hex plus the process id, unique enough for one user's machine.
@@ -79,7 +80,17 @@ async fn clone(url: &str, dest: &Path) -> Result<(), String> {
     let hooks = if cfg!(windows) { "NUL" } else { "/dev/null" };
     let mut command = tokio::process::Command::new("git");
     command
-        .args(["-c", &format!("core.hooksPath={hooks}"), "clone", "--depth", "1", "--no-recurse-submodules", "--single-branch", "--", url])
+        .args([
+            "-c",
+            &format!("core.hooksPath={hooks}"),
+            "clone",
+            "--depth",
+            "1",
+            "--no-recurse-submodules",
+            "--single-branch",
+            "--",
+            url,
+        ])
         .arg(dest.join("repo"))
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(std::process::Stdio::null());
@@ -93,8 +104,12 @@ async fn clone(url: &str, dest: &Path) -> Result<(), String> {
     // The clone sits in its own folder so the job root is the repository content.
     let repo = dest.join("repo");
     let _ = std::fs::remove_dir_all(repo.join(".git"));
-    for entry in std::fs::read_dir(&repo).map_err(|error| error.to_string())?.flatten() {
-        std::fs::rename(entry.path(), dest.join(entry.file_name())).map_err(|error| error.to_string())?;
+    for entry in std::fs::read_dir(&repo)
+        .map_err(|error| error.to_string())?
+        .flatten()
+    {
+        std::fs::rename(entry.path(), dest.join(entry.file_name()))
+            .map_err(|error| error.to_string())?;
     }
     std::fs::remove_dir_all(&repo).map_err(|error| error.to_string())
 }
@@ -128,18 +143,32 @@ pub async fn clone_at(url: &str, sha: &str, dest: &Path) -> Result<(), String> {
     let url = checked_https(url)?;
     let repo = dest.join("repo");
     let repo_arg = repo.to_string_lossy().into_owned();
-    git_no_hooks(&["clone", "--filter=blob:none", "--no-checkout", "--", url, &repo_arg]).await?;
+    git_no_hooks(&[
+        "clone",
+        "--filter=blob:none",
+        "--no-checkout",
+        "--",
+        url,
+        &repo_arg,
+    ])
+    .await?;
     git_no_hooks(&["-C", &repo_arg, "checkout", "--detach", sha]).await?;
     let _ = std::fs::remove_dir_all(repo.join(".git"));
-    for entry in std::fs::read_dir(&repo).map_err(|error| error.to_string())?.flatten() {
-        std::fs::rename(entry.path(), dest.join(entry.file_name())).map_err(|error| error.to_string())?;
+    for entry in std::fs::read_dir(&repo)
+        .map_err(|error| error.to_string())?
+        .flatten()
+    {
+        std::fs::rename(entry.path(), dest.join(entry.file_name()))
+            .map_err(|error| error.to_string())?;
     }
     std::fs::remove_dir_all(&repo).map_err(|error| error.to_string())
 }
 
 /// Lists the archive first and refuses absolute paths and `..`, then extracts it with `tar` (which reads zip too).
 async fn extract_zip(path: &Path, dest: &Path) -> Result<(), String> {
-    let size = std::fs::metadata(path).map(|meta| meta.len()).map_err(|error| error.to_string())?;
+    let size = std::fs::metadata(path)
+        .map(|meta| meta.len())
+        .map_err(|error| error.to_string())?;
     if size > MAX_ARCHIVE {
         return Err("the zip file is over 50 MB".to_owned());
     }
@@ -154,7 +183,11 @@ async fn extract_zip(path: &Path, dest: &Path) -> Result<(), String> {
     }
     for line in String::from_utf8_lossy(&listing.stdout).lines() {
         let entry = line.trim();
-        if entry.starts_with('/') || entry.starts_with('\\') || entry.contains(':') || entry.split(['/', '\\']).any(|part| part == "..") {
+        if entry.starts_with('/')
+            || entry.starts_with('\\')
+            || entry.contains(':')
+            || entry.split(['/', '\\']).any(|part| part == "..")
+        {
             return Err(format!("the zip has an unsafe path: {entry}"));
         }
     }
@@ -187,7 +220,13 @@ async fn download(url: &str, dest: &Path) -> Result<(), String> {
     if body.len() > MAX_DOWNLOAD {
         return Err("the download is over 1 MB".to_owned());
     }
-    let name = if url.split('?').next().unwrap_or(url).to_lowercase().ends_with(".md") {
+    let name = if url
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .to_lowercase()
+        .ends_with(".md")
+    {
         "SKILL.md"
     } else {
         "mcp.json"
@@ -199,12 +238,32 @@ async fn download(url: &str, dest: &Path) -> Result<(), String> {
 /// descend into a skill's bundled resources, dependency trees, build output or test fixtures.
 pub fn find_skills(root: &Path) -> Vec<(String, PathBuf)> {
     let mut found = Vec::new();
-    let mut entries = walkdir::WalkDir::new(root).follow_links(false).max_depth(12).into_iter();
+    let mut entries = walkdir::WalkDir::new(root)
+        .follow_links(false)
+        .max_depth(12)
+        .into_iter();
     while let Some(entry) = entries.next() {
         let Ok(entry) = entry else { continue };
-        if !entry.file_type().is_dir() { continue; }
+        if !entry.file_type().is_dir() {
+            continue;
+        }
         let name = entry.file_name().to_string_lossy();
-        if entry.depth() > 0 && matches!(name.as_ref(), ".git" | "node_modules" | "target" | "dist" | "build" | ".venv" | "venv" | "__pycache__" | "test" | "tests" | "fixtures") {
+        if entry.depth() > 0
+            && matches!(
+                name.as_ref(),
+                ".git"
+                    | "node_modules"
+                    | "target"
+                    | "dist"
+                    | "build"
+                    | ".venv"
+                    | "venv"
+                    | "__pycache__"
+                    | "test"
+                    | "tests"
+                    | "fixtures"
+            )
+        {
             entries.skip_current_dir();
             continue;
         }
@@ -238,7 +297,10 @@ mod tests {
             std::fs::create_dir_all(dir.join("skills").join(name)).expect("makes");
             std::fs::write(dir.join("skills").join(name).join("SKILL.md"), "x").expect("writes");
         }
-        let found: Vec<String> = find_skills(&dir).into_iter().map(|(name, _)| name).collect();
+        let found: Vec<String> = find_skills(&dir)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
         assert_eq!(found, vec!["alpha".to_owned(), "beta".to_owned()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -246,12 +308,24 @@ mod tests {
     #[test]
     fn nested_provider_and_plugin_skills_exclude_fixtures_and_bundled_skills() {
         let dir = std::env::temp_dir().join(format!("agentdeck-nested-skills-{}", new_job_id()));
-        for folder in [".agents/skills/review-pr", "plugins/official/web/skills/web", "tests/fixtures/fixture", "node_modules/dependency", ".agents/skills/review-pr/resources/example"] {
+        for folder in [
+            ".agents/skills/review-pr",
+            "plugins/official/web/skills/web",
+            "tests/fixtures/fixture",
+            "node_modules/dependency",
+            ".agents/skills/review-pr/resources/example",
+        ] {
             std::fs::create_dir_all(dir.join(folder)).expect("creates folder");
             std::fs::write(dir.join(folder).join("SKILL.md"), "skill").expect("writes manifest");
         }
         let found = find_skills(&dir);
-        assert_eq!(found.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["review-pr", "web"]);
+        assert_eq!(
+            found
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["review-pr", "web"]
+        );
         assert!(found.iter().all(|(_, path)| path.starts_with(&dir)));
         std::fs::write(dir.join("SKILL.md"), "root skill").expect("writes root manifest");
         assert_eq!(find_skills(&dir).len(), 1);

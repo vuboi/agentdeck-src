@@ -46,7 +46,10 @@
     <div
       class="flex items-center justify-between border-b border-border px-4 py-1 text-[0.6875rem] text-muted-foreground"
     >
-      <span>{queuePaused[sessionId] === 'interrupted' ? 'Queue paused because you interrupted' : queuePaused[sessionId] ? 'Queue paused' : `${waiting.length} queued`}{waitingForUser ? ' · waiting for your answer' : ''}</span>
+      <span class="flex items-center gap-2">
+        <ZIcon zType={'lucideListChecks' as ZIconName} class="size-3.5 shrink-0" />
+        <span>{queuePaused[sessionId] === 'interrupted' ? 'Queue paused because you interrupted' : queuePaused[sessionId] ? 'Queue paused' : `${waiting.length} queued`}{waitingForUser ? ' · waiting for your answer' : ''}</span>
+      </span>
       <span class="flex items-center gap-1">
         <button
           type="button"
@@ -74,7 +77,7 @@
     >
       {#each waiting as item (item)}
         <div
-          class="flex items-center gap-2.5 border-t border-border bg-card px-4 py-1 text-sm first:border-t-0"
+          class="flex min-h-10 items-center gap-2.5 border-t border-border bg-card px-4 py-2 text-sm first:border-t-0"
           role="listitem"
         >
           <!-- The list icon turns into a drag handle while the pointer is on it. -->
@@ -100,13 +103,13 @@
                   ? 'File'
                   : 'Element')}</span
           >
-          {#if item.priority}<span class="shrink-0 text-[0.6875rem] text-primary">Next</span>{/if}
+          {#if item.priority}<span class="shrink-0 text-xs text-primary">Next</span>{/if}
           <span class="flex shrink-0 items-center gap-0.5">
             <button
               type="button"
               disabled={waitingForUser}
               title={waitingForUser ? 'Answer the pending question or permission first' : 'Send this message now'}
-              class="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              class="inline-flex min-h-6 shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
               onclick={() => steerQueued(sessionId, item)}
             >
               <ZIcon zType={'lucideArrowRight' as ZIconName} class="size-3" />
@@ -114,7 +117,7 @@
             </button>
             <button
               type="button"
-              class="grid size-5 shrink-0 cursor-pointer place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+              class="grid size-6 shrink-0 cursor-pointer place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
               aria-label="Edit in the message box"
               {@attach zTooltip({
                 content: 'Edit',
@@ -130,7 +133,7 @@
             </button>
             <button
               type="button"
-              class="grid size-5 shrink-0 cursor-pointer place-items-center rounded text-muted-foreground hover:bg-accent hover:text-destructive"
+              class="grid size-6 shrink-0 cursor-pointer place-items-center rounded text-muted-foreground hover:bg-accent hover:text-destructive"
               aria-label="Remove from the queue"
               onclick={() =>
                 (queued[sessionId] = waiting.filter((entry) => entry !== item))}

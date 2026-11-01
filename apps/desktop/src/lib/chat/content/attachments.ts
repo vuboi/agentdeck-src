@@ -1,6 +1,6 @@
 // Helpers for the things that go with a message: documents (icon and colour by type, size) and the clipboard format
 // that "Copy all" writes so pasting into the message box restores text, pictures, notes and files.
-import { fileSize, pictureUrl, readImageDataUrl } from '../agent';
+import { fileSize, readImageDataUrl } from '../agent';
 import type { Block } from '../mock';
 import type { Attachment, FileAttachment, PageElement } from '../sessions.svelte';
 
@@ -224,11 +224,13 @@ export function imagePathsIn(output: string): string[] {
 }
 
 const loaded = new Map<string, Promise<string | null>>();
-/** The picture at a path as a URL the page draws from its file (asset protocol); null when there is no such file. */
+/** The picture at a path, read from the file itself; null when there is no such file. The asset protocol is not
+ *  used: a path outside its scope (a project folder, `generated-images`) gets a URL the WebView refuses, so a
+ *  picture that is really on disk drew as broken in the chat. */
 export function loadImagePath(path: string): Promise<string | null> {
   let found = loaded.get(path);
   if (!found) {
-    found = fileSize(path).then((size) => (size === null ? null : pictureUrl(path))).catch(() => null);
+    found = readImageDataUrl(path).catch(() => null);
     loaded.set(path, found);
   }
   return found;

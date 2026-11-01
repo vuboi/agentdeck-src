@@ -128,7 +128,6 @@
         <!-- The field is the same place whether models are loaded (a picker) or not (a typed id); the note sits right under it. -->
         <div class="flex min-w-0 flex-col gap-1">
           {#if draft.models.length > 0}
-            <span class="text-[0.75rem] text-muted-foreground">Default model</span>
             <ZSelect zOptions={[...new Set([draft.defaultModel, ...draft.models].filter(Boolean))].map((model) => ({ label: model, value: model }))} zShowSearch={draft.models.length > 8} value={draft.defaultModel} onValueChange={(value) => { if (draft) draft.defaultModel = String(value ?? ''); }} />
           {:else}
             <ZInput bind:value={draft.defaultModel} zPlaceholder="qwen3-coder:30b" aria-label="Model id" />

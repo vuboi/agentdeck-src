@@ -55,7 +55,10 @@ pub async fn ask(app: &AppHandle, op: &str, args: Value) -> Result<String, Strin
     if let Ok(mut pending) = PENDING.lock() {
         pending.insert(id.clone(), sender);
     }
-    if let Err(error) = app.emit("page-memory", json!({ "callId": id, "op": op, "args": args })) {
+    if let Err(error) = app.emit(
+        "page-memory",
+        json!({ "callId": id, "op": op, "args": args }),
+    ) {
         if let Ok(mut pending) = PENDING.lock() {
             pending.remove(&id);
         }
@@ -74,7 +77,10 @@ pub async fn ask(app: &AppHandle, op: &str, args: Value) -> Result<String, Strin
 
 /// A write nobody waits for: what was seen on a page.
 pub fn store(app: &AppHandle, args: Value) {
-    let _ = app.emit("page-memory", json!({ "callId": "", "op": "store", "args": args }));
+    let _ = app.emit(
+        "page-memory",
+        json!({ "callId": "", "op": "store", "args": args }),
+    );
 }
 
 /// The webview's answer to a call.
@@ -84,7 +90,11 @@ pub fn page_memory_reply(call_id: String, text: String, is_error: bool) -> bool 
         .lock()
         .ok()
         .and_then(|mut pending| pending.remove(&call_id));
-    sender.is_some_and(|sender| sender.send(if is_error { Err(text) } else { Ok(text) }).is_ok())
+    sender.is_some_and(|sender| {
+        sender
+            .send(if is_error { Err(text) } else { Ok(text) })
+            .is_ok()
+    })
 }
 
 /// Runs in the page: the selectors of the elements the agent was shown (`window.__adEls`), steadiest form first, with
@@ -148,12 +158,20 @@ pub fn format_recall(found: &Value, live: &[Value]) -> String {
             found["site"].as_str().unwrap_or("this site")
         );
     }
-    let mut lines = vec![format!("Remembered on {}:", found["site"].as_str().unwrap_or("this site"))];
+    let mut lines = vec![format!(
+        "Remembered on {}:",
+        found["site"].as_str().unwrap_or("this site")
+    )];
     for (index, hit) in hits.iter().enumerate() {
         let state = match live.get(index) {
-            Some(check) if check["present"] == true && check["visible"] == true => "on this page now".to_string(),
+            Some(check) if check["present"] == true && check["visible"] == true => {
+                "on this page now".to_string()
+            }
             Some(check) if check["present"] == true => "on this page, hidden".to_string(),
-            Some(_) => format!("not on this page (seen on {})", hit["pathKey"].as_str().unwrap_or("/")),
+            Some(_) => format!(
+                "not on this page (seen on {})",
+                hit["pathKey"].as_str().unwrap_or("/")
+            ),
             None => String::new(),
         };
         lines.push(format!(
@@ -169,9 +187,16 @@ pub fn format_recall(found: &Value, live: &[Value]) -> String {
         lines.push("Use the selector with browser_click_element or browser_fill. One marked \"not on this page\" needs its page first (browser_open); one that fails there changed: use browser_elements.".to_string());
     }
     for recipe in recipes {
-        lines.push(format!("Steps that worked for \"{}\":", recipe["goal"].as_str().unwrap_or_default()));
+        lines.push(format!(
+            "Steps that worked for \"{}\":",
+            recipe["goal"].as_str().unwrap_or_default()
+        ));
         for (number, step) in recipe["steps"].as_array().into_iter().flatten().enumerate() {
-            lines.push(format!("  {}. {}", number + 1, step.as_str().unwrap_or_default()));
+            lines.push(format!(
+                "  {}. {}",
+                number + 1,
+                step.as_str().unwrap_or_default()
+            ));
         }
     }
     lines.join("\n")
@@ -183,7 +208,10 @@ mod tests {
 
     #[test]
     fn an_empty_memory_says_what_to_do_next() {
-        let text = format_recall(&json!({ "site": "shop.com", "query": "sign in", "hits": [], "recipes": [] }), &[]);
+        let text = format_recall(
+            &json!({ "site": "shop.com", "query": "sign in", "hits": [], "recipes": [] }),
+            &[],
+        );
         assert!(text.contains("Nothing remembered") && text.contains("browser_elements"));
     }
 
@@ -193,7 +221,10 @@ mod tests {
             { "selector": "#login", "name": "Sign in", "kind": "button", "seen": 3, "pathKey": "/login" },
             { "selector": "#gone", "name": "Old", "kind": "a", "seen": 1, "pathKey": "/old" } ],
             "recipes": [ { "goal": "sign in", "steps": ["click Sign in", "fill email"] } ] });
-        let live = [json!({ "present": true, "visible": true }), json!({ "present": false })];
+        let live = [
+            json!({ "present": true, "visible": true }),
+            json!({ "present": false }),
+        ];
         let text = format_recall(&found, &live);
         assert!(text.contains("button \"Sign in\" #login · seen 3x · on this page now"));
         assert!(text.contains("not on this page (seen on /old)"));
@@ -204,6 +235,8 @@ mod tests {
     fn the_tools_are_named_and_described() {
         let defs = tool_defs();
         assert_eq!(defs.len(), TOOLS.len());
-        assert!(TOOLS.iter().all(|name| defs.iter().any(|tool| tool["name"] == *name)));
+        assert!(TOOLS
+            .iter()
+            .all(|name| defs.iter().any(|tool| tool["name"] == *name)));
     }
 }

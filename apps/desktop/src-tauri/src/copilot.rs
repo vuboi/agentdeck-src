@@ -10,11 +10,11 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use github_copilot_sdk::handler::{PermissionHandler, PermissionResult};
-use github_copilot_sdk::types::{
-    Attachment, DeliveryMode, MessageOptions, PermissionRequestData, ResumeSessionConfig, SessionConfig,
-    SystemMessageConfig,
-};
 use github_copilot_sdk::subscription::RecvErrorKind;
+use github_copilot_sdk::types::{
+    Attachment, DeliveryMode, MessageOptions, PermissionRequestData, ResumeSessionConfig,
+    SessionConfig, SystemMessageConfig,
+};
 use github_copilot_sdk::{CliProgram, Client, ClientOptions};
 use serde_json::{json, Value};
 use sha2::Digest;
@@ -24,7 +24,8 @@ use tokio::sync::oneshot;
 use ag_adapters::agent::permission::{verdict, Action, Mode, Verdict};
 use ag_adapters::agent::stall::{Watchdog, DEFAULT_STALL_LIMIT};
 use ag_adapters::agent::{
-    begin_file_snapshot, file_change, finish_file_snapshot, AgentEvent, FileSnapshot, TaskStatus, TurnRequest,
+    begin_file_snapshot, file_change, finish_file_snapshot, AgentEvent, FileSnapshot, TaskStatus,
+    TurnRequest,
 };
 
 use crate::connectors::{capture, which};
@@ -84,7 +85,10 @@ async fn list_models_now() -> Result<Vec<ag_adapters::models::ModelInfo>, String
         .await
         .map_err(|error| format!("GitHub Copilot could not be reached: {error}"))?;
     if !response.status().is_success() {
-        return Err(format!("GitHub Copilot refused the model list ({})", response.status()));
+        return Err(format!(
+            "GitHub Copilot refused the model list ({})",
+            response.status()
+        ));
     }
     let body: Value = response.json().await.map_err(|error| error.to_string())?;
     let listed = body["data"]
@@ -96,7 +100,12 @@ async fn list_models_now() -> Result<Vec<ag_adapters::models::ModelInfo>, String
             let value = model["id"].as_str()?.to_owned();
             let efforts = model["capabilities"]["supports"]["reasoning_effort"]
                 .as_array()
-                .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_owned))
+                        .collect()
+                })
                 .unwrap_or_default();
             Some(ag_adapters::models::ModelInfo {
                 label: model["name"].as_str().unwrap_or(&value).to_owned(),
@@ -134,7 +143,13 @@ pub(crate) async fn run_turn(
     let result = run_turn_core(&chat_id, request, permissions, stop, refused, sink).await;
     forget_pending(&turn_id);
     if let Err(error) = result {
-        emit(&app, &chat_id, &turn_id, message_id.as_deref(), AgentEvent::Error { message: error });
+        emit(
+            &app,
+            &chat_id,
+            &turn_id,
+            message_id.as_deref(),
+            AgentEvent::Error { message: error },
+        );
     }
 }
 
@@ -238,7 +253,9 @@ async fn run_session(
         Ok(session) => session,
         Err(error) => return Err(error.to_string()),
     };
-    out(AgentEvent::Session { session_id: session_id.clone() });
+    out(AgentEvent::Session {
+        session_id: session_id.clone(),
+    });
     let mut events = session.subscribe();
     // A message the user writes while the turn runs is steered into it (`immediate`): the work goes on and reads it at its
     // next model call, as a CLI that takes input at any time would.
@@ -418,11 +435,20 @@ async fn run_session(
     }
     let _ = session.disconnect().await;
     // The refusals of the turn come before its end, as Claude's `permission_denials` do.
-    let refusals = refused.lock().map(|mut list| std::mem::take(&mut *list)).unwrap_or_default();
+    let refusals = refused
+        .lock()
+        .map(|mut list| std::mem::take(&mut *list))
+        .unwrap_or_default();
     if !refusals.is_empty() {
         out(AgentEvent::PermissionDenied { requests: refusals });
     }
-    if let Some(event) = closing(aborting.is_some(), finished, turn_error, &session_id, last_message.unwrap_or(answer))? {
+    if let Some(event) = closing(
+        aborting.is_some(),
+        finished,
+        turn_error,
+        &session_id,
+        last_message.unwrap_or(answer),
+    )? {
         out(event);
     }
     Ok(())
@@ -431,14 +457,29 @@ async fn run_session(
 /// The event that ends a turn that the run loop left, or `None` when it ends without one. A stopped turn closes as Claude's
 /// and Codex's do (`interrupt::stopped`): an empty `Done` that keeps the conversation, so an error that follows the stop is not
 /// shown. A failure that was not asked for is returned as the turn's error; a finished run is `Done` with its answer.
-fn closing(aborted: bool, finished: bool, turn_error: Option<String>, session_id: &str, text: String) -> Result<Option<AgentEvent>, String> {
+fn closing(
+    aborted: bool,
+    finished: bool,
+    turn_error: Option<String>,
+    session_id: &str,
+    text: String,
+) -> Result<Option<AgentEvent>, String> {
     if aborted {
-        return Ok(Some(ag_adapters::agent::interrupt::stopped(AgentEvent::Error { message: "stopped".into() }, Some(session_id))));
+        return Ok(Some(ag_adapters::agent::interrupt::stopped(
+            AgentEvent::Error {
+                message: "stopped".into(),
+            },
+            Some(session_id),
+        )));
     }
     if let Some(error) = turn_error {
         return Err(error);
     }
-    Ok(finished.then(|| AgentEvent::Done { session_id: Some(session_id.to_owned()), text, cost_usd: None }))
+    Ok(finished.then(|| AgentEvent::Done {
+        session_id: Some(session_id.to_owned()),
+        text,
+        cost_usd: None,
+    }))
 }
 
 /// How long a Copilot CLI stays running with no turn. The same as the CLIs in `warm.rs`.
@@ -461,12 +502,17 @@ struct PooledClient {
     last_used: tokio::time::Instant,
 }
 
-static POOL: LazyLock<tokio::sync::Mutex<Vec<PooledClient>>> = LazyLock::new(|| tokio::sync::Mutex::new(Vec::new()));
+static POOL: LazyLock<tokio::sync::Mutex<Vec<PooledClient>>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(Vec::new()));
 static NEXT_CLIENT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// The pooled client of this chat. It is started when the chat has none, or when its account or folder changed; the old
 /// one stops once no running turn still holds it. When the pool is full, the least recently used idle client makes room.
-async fn acquire_client(chat: &str, token: String, cwd: Option<&Path>) -> Result<(u64, Client), String> {
+async fn acquire_client(
+    chat: &str,
+    token: String,
+    cwd: Option<&Path>,
+) -> Result<(u64, Client), String> {
     let cwd = cwd.map(Path::to_path_buf);
     {
         let mut pool = POOL.lock().await;
@@ -486,15 +532,31 @@ async fn acquire_client(chat: &str, token: String, cwd: Option<&Path>) -> Result
     // Another start for this chat (a prewarm and a first message) may have finished first: its client is the one kept.
     if !pool.iter().any(|entry| entry.chat == chat) {
         if pool.len() >= MAX_CLIENTS {
-            let idle = pool.iter().enumerate().filter(|(_, entry)| entry.busy == 0).min_by_key(|(_, entry)| entry.last_used);
+            let idle = pool
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.busy == 0)
+                .min_by_key(|(_, entry)| entry.last_used);
             if let Some((index, _)) = idle {
                 pool.remove(index);
             }
         }
         let id = NEXT_CLIENT_ID.fetch_add(1, Ordering::Relaxed);
-        pool.push(PooledClient { id, chat: chat.to_owned(), token, cwd, client, busy: 0, generation: 0, last_used: tokio::time::Instant::now() });
+        pool.push(PooledClient {
+            id,
+            chat: chat.to_owned(),
+            token,
+            cwd,
+            client,
+            busy: 0,
+            generation: 0,
+            last_used: tokio::time::Instant::now(),
+        });
     }
-    let entry = pool.iter_mut().find(|entry| entry.chat == chat).ok_or("GitHub Copilot did not start")?;
+    let entry = pool
+        .iter_mut()
+        .find(|entry| entry.chat == chat)
+        .ok_or("GitHub Copilot did not start")?;
     entry.busy += 1;
     entry.generation += 1;
     Ok((entry.id, entry.client.clone()))
@@ -506,7 +568,9 @@ const CLIENT_START: Duration = Duration::from_secs(90);
 /// Starts the chat's Copilot CLI ahead of its first message and keeps it in the pool. Errors are left to the first turn,
 /// which reports them.
 pub(crate) async fn prewarm(chat: String, cwd: Option<PathBuf>) {
-    let Ok(token) = github_token().await else { return };
+    let Ok(token) = github_token().await else {
+        return;
+    };
     if let Ok((id, _client)) = acquire_client(&chat, token, cwd.as_deref()).await {
         drop(ClientHold(id));
     }
@@ -582,15 +646,31 @@ impl Children {
     }
 
     /// The task event a `subagent.*` event stands for, remembering which call started the sub-agent.
-    fn lifecycle(&mut self, kind: &str, agent_id: Option<&str>, data: &Value) -> Option<AgentEvent> {
-        if !matches!(kind, "subagent.started" | "subagent.completed" | "subagent.failed") {
+    fn lifecycle(
+        &mut self,
+        kind: &str,
+        agent_id: Option<&str>,
+        data: &Value,
+    ) -> Option<AgentEvent> {
+        if !matches!(
+            kind,
+            "subagent.started" | "subagent.completed" | "subagent.failed"
+        ) {
             return None;
         }
         let tool = data["toolCallId"].as_str().map(str::to_owned);
         let id = agent_id.map(str::to_owned).or_else(|| tool.clone())?;
-        let tools = data["totalToolCalls"].as_u64().and_then(|count| u32::try_from(count).ok());
-        let name = data["agentDisplayName"].as_str().or_else(|| data["agentName"].as_str()).unwrap_or("sub-agent");
-        let label = match data["agentDescription"].as_str().filter(|text| !text.is_empty()) {
+        let tools = data["totalToolCalls"]
+            .as_u64()
+            .and_then(|count| u32::try_from(count).ok());
+        let name = data["agentDisplayName"]
+            .as_str()
+            .or_else(|| data["agentName"].as_str())
+            .unwrap_or("sub-agent");
+        let label = match data["agentDescription"]
+            .as_str()
+            .filter(|text| !text.is_empty())
+        {
             Some(description) => format!("{name}: {description}"),
             None => name.to_owned(),
         };
@@ -599,14 +679,36 @@ impl Children {
                 if let Some(tool) = &tool {
                     self.parents.insert(id.clone(), tool.clone());
                 }
-                Some(AgentEvent::Task { id, tool_use_id: tool, status: TaskStatus::Started, label: Some(label), summary: None, tools: None })
+                Some(AgentEvent::Task {
+                    id,
+                    tool_use_id: tool,
+                    status: TaskStatus::Started,
+                    label: Some(label),
+                    summary: None,
+                    tools: None,
+                })
             }
-            "subagent.completed" => {
-                Some(AgentEvent::Task { id, tool_use_id: tool, status: TaskStatus::Done, label: Some(label), summary: None, tools })
-            }
+            "subagent.completed" => Some(AgentEvent::Task {
+                id,
+                tool_use_id: tool,
+                status: TaskStatus::Done,
+                label: Some(label),
+                summary: None,
+                tools,
+            }),
             _ => {
-                let error = data["error"]["message"].as_str().or_else(|| data["error"].as_str()).map(str::to_owned);
-                Some(AgentEvent::Task { id, tool_use_id: tool, status: TaskStatus::Failed, label: Some(label), summary: error, tools })
+                let error = data["error"]["message"]
+                    .as_str()
+                    .or_else(|| data["error"].as_str())
+                    .map(str::to_owned);
+                Some(AgentEvent::Task {
+                    id,
+                    tool_use_id: tool,
+                    status: TaskStatus::Failed,
+                    label: Some(label),
+                    summary: error,
+                    tools,
+                })
             }
         }
     }
@@ -616,9 +718,16 @@ impl Children {
 /// that are not drawn per block (usage, errors) pass unchanged.
 fn scoped(parent: Option<String>, event: AgentEvent) -> AgentEvent {
     match (parent, &event) {
-        (Some(parent), AgentEvent::Delta { .. } | AgentEvent::Thinking { .. } | AgentEvent::ToolCall { .. } | AgentEvent::ToolResult { .. }) => {
-            AgentEvent::Scoped { parent, event: Box::new(event) }
-        }
+        (
+            Some(parent),
+            AgentEvent::Delta { .. }
+            | AgentEvent::Thinking { .. }
+            | AgentEvent::ToolCall { .. }
+            | AgentEvent::ToolResult { .. },
+        ) => AgentEvent::Scoped {
+            parent,
+            event: Box::new(event),
+        },
         _ => event,
     }
 }
@@ -626,7 +735,8 @@ fn scoped(parent: Option<String>, event: AgentEvent) -> AgentEvent {
 /// Starts a request-scoped SDK client using the account selected in GitHub CLI. The SDK runs the Copilot CLI that
 /// AgentDeck installed (Settings > Connectors); it does not search PATH itself.
 async fn start_client(token: String, cwd: Option<&Path>) -> Result<Client, String> {
-    let cli = which("copilot").ok_or("GitHub Copilot CLI is not installed: install it in Settings > Connectors")?;
+    let cli = which("copilot")
+        .ok_or("GitHub Copilot CLI is not installed: install it in Settings > Connectors")?;
     let mut options = ClientOptions::new()
         .with_program(CliProgram::Path(cli))
         .with_github_token(token)
@@ -728,7 +838,8 @@ pub(crate) fn copilot_permission_answer(request_id: String, allow: bool) -> Resu
         .lock()
         .map_err(|_| "permission state is unavailable".to_string())?
         .remove(&request_id);
-    let (_, answer) = waiting.ok_or_else(|| "that permission request is no longer waiting".to_string())?;
+    let (_, answer) =
+        waiting.ok_or_else(|| "that permission request is no longer waiting".to_string())?;
     answer
         .send(allow)
         .map_err(|_| "the turn has already ended".to_string())
@@ -797,10 +908,20 @@ impl PermissionHandler for CopilotPermissions {
         // refused in every mode, a risky one is asked about each time (plan mode still refuses every command).
         let mut careful = None;
         if kind == "shell" {
-            let command = data.extra.get("fullCommandText").and_then(Value::as_str).unwrap_or(&summary);
+            let command = data
+                .extra
+                .get("fullCommandText")
+                .and_then(Value::as_str)
+                .unwrap_or(&summary);
             match ag_adapters::agent::guard::assess(command) {
-                Some(ag_adapters::agent::guard::Risk::Block(reason)) => return PermissionResult::reject(Some(reason.to_string())),
-                Some(ag_adapters::agent::guard::Risk::Confirm(reason)) if self.mode != Mode::Plan => careful = Some(reason),
+                Some(ag_adapters::agent::guard::Risk::Block(reason)) => {
+                    return PermissionResult::reject(Some(reason.to_string()))
+                }
+                Some(ag_adapters::agent::guard::Risk::Confirm(reason))
+                    if self.mode != Mode::Plan =>
+                {
+                    careful = Some(reason)
+                }
                 _ => {}
             }
         }
@@ -814,12 +935,21 @@ impl PermissionHandler for CopilotPermissions {
         if careful.is_none() && self.allowed.contains(&allow) {
             return PermissionResult::approve_once();
         }
-        match if careful.is_some() { Verdict::Ask } else { verdict(self.mode, action_of(&kind)) } {
+        match if careful.is_some() {
+            Verdict::Ask
+        } else {
+            verdict(self.mode, action_of(&kind))
+        } {
             Verdict::Approve => return PermissionResult::approve_once(),
             Verdict::Refuse => {
                 // Not a card now: a card for a request that is not waiting would not be answered. It is shown when the turn ends.
                 if let Ok(mut refused) = self.refused.lock() {
-                    refused.push(ag_adapters::agent::PermissionRequest { id: request_id.to_string(), tool, summary, allow });
+                    refused.push(ag_adapters::agent::PermissionRequest {
+                        id: request_id.to_string(),
+                        tool,
+                        summary,
+                        allow,
+                    });
                 }
                 return PermissionResult::reject(Some(
                     "Plan mode is read-only. Describe the change instead of making it.".to_string(),
@@ -853,7 +983,13 @@ impl PermissionHandler for CopilotPermissions {
     }
 }
 
-pub(crate) fn emit(app: &AppHandle, session: &str, turn: &str, message_id: Option<&str>, event: AgentEvent) {
+pub(crate) fn emit(
+    app: &AppHandle,
+    session: &str,
+    turn: &str,
+    message_id: Option<&str>,
+    event: AgentEvent,
+) {
     // Only the main window: a Preview page is a copy of this app and must not replay the chats' events.
     let _ = app.emit_to(
         "main",
@@ -907,14 +1043,25 @@ mod tests {
         let stopped = closing(true, false, Some("aborted".into()), "s1", String::new());
         assert_eq!(
             stopped,
-            Ok(Some(AgentEvent::Done { session_id: Some("s1".into()), text: String::new(), cost_usd: None }))
+            Ok(Some(AgentEvent::Done {
+                session_id: Some("s1".into()),
+                text: String::new(),
+                cost_usd: None
+            }))
         );
         // A finished run ends with its answer; a failure that was not asked for is the turn's error.
         assert_eq!(
             closing(false, true, None, "s1", "PONG".into()),
-            Ok(Some(AgentEvent::Done { session_id: Some("s1".into()), text: "PONG".into(), cost_usd: None }))
+            Ok(Some(AgentEvent::Done {
+                session_id: Some("s1".into()),
+                text: "PONG".into(),
+                cost_usd: None
+            }))
         );
-        assert_eq!(closing(false, false, Some("boom".into()), "s1", String::new()), Err("boom".to_string()));
+        assert_eq!(
+            closing(false, false, Some("boom".into()), "s1", String::new()),
+            Err("boom".to_string())
+        );
         assert_eq!(closing(false, false, None, "s1", String::new()), Ok(None));
     }
 
@@ -934,30 +1081,78 @@ mod tests {
                 tools: None,
             })
         );
-        assert_eq!(children.parent_of(Some("agent-1"), &json!({})), Some("call_1".into()));
-        assert_eq!(children.parent_of(None, &json!({})), None, "the main agent's events stay in the answer");
-        let delta = scoped(children.parent_of(Some("agent-1"), &json!({})), AgentEvent::Delta { text: "SUBDONE".into() });
+        assert_eq!(
+            children.parent_of(Some("agent-1"), &json!({})),
+            Some("call_1".into())
+        );
+        assert_eq!(
+            children.parent_of(None, &json!({})),
+            None,
+            "the main agent's events stay in the answer"
+        );
+        let delta = scoped(
+            children.parent_of(Some("agent-1"), &json!({})),
+            AgentEvent::Delta {
+                text: "SUBDONE".into(),
+            },
+        );
         assert!(matches!(delta, AgentEvent::Scoped { ref parent, .. } if parent == "call_1"));
-        let usage = AgentEvent::Usage { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_write_tokens: 0, new_call: true };
-        assert_eq!(scoped(Some("call_1".into()), usage.clone()), usage, "usage is counted on the message, not under a card");
-        let done = children.lifecycle("subagent.completed", Some("agent-1"), &json!({ "toolCallId": "call_1", "totalToolCalls": 3 }));
-        assert!(matches!(done, Some(AgentEvent::Task { status: TaskStatus::Done, tools: Some(3), .. })));
-        assert!(children.lifecycle("assistant.message", Some("agent-1"), &json!({})).is_none());
+        let usage = AgentEvent::Usage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            new_call: true,
+        };
+        assert_eq!(
+            scoped(Some("call_1".into()), usage.clone()),
+            usage,
+            "usage is counted on the message, not under a card"
+        );
+        let done = children.lifecycle(
+            "subagent.completed",
+            Some("agent-1"),
+            &json!({ "toolCallId": "call_1", "totalToolCalls": 3 }),
+        );
+        assert!(matches!(
+            done,
+            Some(AgentEvent::Task {
+                status: TaskStatus::Done,
+                tools: Some(3),
+                ..
+            })
+        ));
+        assert!(children
+            .lifecycle("assistant.message", Some("agent-1"), &json!({}))
+            .is_none());
     }
 
     #[test]
     fn an_unknown_sub_agent_falls_back_to_the_parent_named_in_the_event() {
         let children = Children::default();
-        assert_eq!(children.parent_of(Some("a"), &json!({ "parentToolCallId": "call_9" })), Some("call_9".into()));
+        assert_eq!(
+            children.parent_of(Some("a"), &json!({ "parentToolCallId": "call_9" })),
+            Some("call_9".into())
+        );
         assert_eq!(children.parent_of(Some("a"), &json!({})), Some("a".into()));
     }
 
     #[test]
     fn a_sub_agents_tools_count_up_as_its_task_progress() {
         let mut children = Children::default();
-        assert!(children.tool_started(Some("agent-1")).is_none(), "no task was started for it yet");
-        children.lifecycle("subagent.started", Some("agent-1"), &json!({ "toolCallId": "call_1" }));
-        assert!(children.tool_started(None).is_none(), "the main agent's tools are not a task's");
+        assert!(
+            children.tool_started(Some("agent-1")).is_none(),
+            "no task was started for it yet"
+        );
+        children.lifecycle(
+            "subagent.started",
+            Some("agent-1"),
+            &json!({ "toolCallId": "call_1" }),
+        );
+        assert!(
+            children.tool_started(None).is_none(),
+            "the main agent's tools are not a task's"
+        );
         for expected in 1..=2 {
             assert_eq!(
                 children.tool_started(Some("agent-1")),
@@ -976,8 +1171,14 @@ mod tests {
     #[test]
     fn a_failed_sub_agent_carries_its_error() {
         let mut children = Children::default();
-        let failed = children.lifecycle("subagent.failed", Some("a"), &json!({ "toolCallId": "c", "error": "boom" }));
-        assert!(matches!(failed, Some(AgentEvent::Task { status: TaskStatus::Failed, summary: Some(ref text), .. }) if text == "boom"));
+        let failed = children.lifecycle(
+            "subagent.failed",
+            Some("a"),
+            &json!({ "toolCallId": "c", "error": "boom" }),
+        );
+        assert!(
+            matches!(failed, Some(AgentEvent::Task { status: TaskStatus::Failed, summary: Some(ref text), .. }) if text == "boom")
+        );
     }
 }
 
@@ -999,7 +1200,12 @@ mod real {
 
     #[async_trait::async_trait]
     impl PermissionHandler for ApproveAll {
-        async fn handle(&self, _session: SessionId, _request: RequestId, _data: PermissionRequestData) -> PermissionResult {
+        async fn handle(
+            &self,
+            _session: SessionId,
+            _request: RequestId,
+            _data: PermissionRequestData,
+        ) -> PermissionResult {
             PermissionResult::approve_once()
         }
     }
@@ -1035,19 +1241,32 @@ mod real {
 
     fn short(event: &AgentEvent) -> String {
         let text = format!("{event:?}");
-        if text.len() > 230 { format!("{}…", text.chars().take(230).collect::<String>()) } else { text }
+        if text.len() > 230 {
+            format!("{}…", text.chars().take(230).collect::<String>())
+        } else {
+            text
+        }
     }
 
     /// One scenario: the prompt, an optional second message sent after a delay (as the chat's inject does), an optional stop.
-    async fn scenario(name: &str, prompt: &str, steer: Option<(u64, &str)>, stop_after: Option<u64>, limit: u64) -> Run {
-        let dir = std::env::temp_dir().join(format!("agentdeck-copilot-real-{}", std::process::id()));
+    async fn scenario(
+        name: &str,
+        prompt: &str,
+        steer: Option<(u64, &str)>,
+        stop_after: Option<u64>,
+        limit: u64,
+    ) -> Run {
+        let dir =
+            std::env::temp_dir().join(format!("agentdeck-copilot-real-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("work folder");
         let chat = format!("copilot-real-{name}-{}", std::process::id());
         let request = TurnRequest {
             prompt: prompt.to_owned(),
             session_id: Some(uuid::Uuid::new_v4().to_string()),
             resume: false,
-            model: Some(std::env::var("COPILOT_REAL_MODEL").unwrap_or_else(|_| "gpt-5.6-luna".to_owned())),
+            model: Some(
+                std::env::var("COPILOT_REAL_MODEL").unwrap_or_else(|_| "gpt-5.6-luna".to_owned()),
+            ),
             permission_mode: None,
             effort: Some("low".to_owned()),
             allowed_tools: Vec::new(),
@@ -1082,14 +1301,25 @@ mod real {
         });
         let result = tokio::time::timeout(
             Duration::from_secs(limit),
-            run_turn_core(&chat, request, Arc::new(ApproveAll), token, Refusals::default(), sink),
+            run_turn_core(
+                &chat,
+                request,
+                Arc::new(ApproveAll),
+                token,
+                Refusals::default(),
+                sink,
+            ),
         )
         .await
         .unwrap_or_else(|_| Err(format!("the turn did not end in {limit} s")));
         helper.abort();
         let events = log.lock().expect("log").clone();
         println!("[{name}] ended after {:?}: {result:?}", started.elapsed());
-        Run { events, result, took: started.elapsed() }
+        Run {
+            events,
+            result,
+            took: started.elapsed(),
+        }
     }
 
     fn wanted(name: &str) -> bool {
@@ -1100,11 +1330,28 @@ mod real {
     #[ignore = "uses the real Copilot account (network, quota): see the module docs"]
     async fn copilot_real() {
         if wanted("plain") {
-            let run = scenario("plain", "Reply with exactly the word PONG and nothing else.", None, None, 120).await;
+            let run = scenario(
+                "plain",
+                "Reply with exactly the word PONG and nothing else.",
+                None,
+                None,
+                120,
+            )
+            .await;
             assert!(run.result.is_ok(), "{:?}", run.result);
-            assert!(run.done_text().is_some_and(|text| text.contains("PONG")), "{:?}", run.done_text());
-            assert!(matches!(run.kinds().last(), Some(AgentEvent::Done { .. })), "Done is the last event");
-            assert!(!run.kinds().iter().any(|event| matches!(event, AgentEvent::Scoped { .. })));
+            assert!(
+                run.done_text().is_some_and(|text| text.contains("PONG")),
+                "{:?}",
+                run.done_text()
+            );
+            assert!(
+                matches!(run.kinds().last(), Some(AgentEvent::Done { .. })),
+                "Done is the last event"
+            );
+            assert!(!run
+                .kinds()
+                .iter()
+                .any(|event| matches!(event, AgentEvent::Scoped { .. })));
         }
         if wanted("tools") {
             let run = scenario(
@@ -1116,9 +1363,20 @@ mod real {
             )
             .await;
             assert!(run.result.is_ok(), "{:?}", run.result);
-            let calls = run.kinds().iter().filter(|event| matches!(event, AgentEvent::ToolCall { .. })).count();
-            let results = run.kinds().iter().filter(|event| matches!(event, AgentEvent::ToolResult { .. })).count();
-            assert!(calls >= 2 && results >= 2, "calls={calls} results={results}");
+            let calls = run
+                .kinds()
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::ToolCall { .. }))
+                .count();
+            let results = run
+                .kinds()
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::ToolResult { .. }))
+                .count();
+            assert!(
+                calls >= 2 && results >= 2,
+                "calls={calls} results={results}"
+            );
             assert!(matches!(run.kinds().last(), Some(AgentEvent::Done { .. })));
         }
         if wanted("subagent") {
@@ -1131,8 +1389,24 @@ mod real {
             )
             .await;
             assert!(run.result.is_ok(), "{:?}", run.result);
-            let started = run.kinds().iter().any(|event| matches!(event, AgentEvent::Task { status: TaskStatus::Started, .. }));
-            let done = run.kinds().iter().any(|event| matches!(event, AgentEvent::Task { status: TaskStatus::Done, .. }));
+            let started = run.kinds().iter().any(|event| {
+                matches!(
+                    event,
+                    AgentEvent::Task {
+                        status: TaskStatus::Started,
+                        ..
+                    }
+                )
+            });
+            let done = run.kinds().iter().any(|event| {
+                matches!(
+                    event,
+                    AgentEvent::Task {
+                        status: TaskStatus::Done,
+                        ..
+                    }
+                )
+            });
             println!("[subagent] task started={started} done={done}");
             let calls: Vec<String> = run
                 .kinds()
@@ -1144,10 +1418,17 @@ mod real {
                 .collect();
             for event in run.kinds() {
                 if let AgentEvent::Scoped { parent, .. } = event {
-                    assert!(calls.contains(parent), "a scoped event names a call that was shown: {parent}");
+                    assert!(
+                        calls.contains(parent),
+                        "a scoped event names a call that was shown: {parent}"
+                    );
                 }
             }
-            assert!(!run.main_text().contains("SUBDONE"), "the sub-agent's words stay out of the main answer: {}", run.main_text());
+            assert!(
+                !run.main_text().contains("SUBDONE"),
+                "the sub-agent's words stay out of the main answer: {}",
+                run.main_text()
+            );
             assert!(matches!(run.kinds().last(), Some(AgentEvent::Done { .. })));
         }
         if wanted("background") {
@@ -1160,9 +1441,20 @@ mod real {
             )
             .await;
             assert!(run.result.is_ok(), "{:?}", run.result);
-            let auto = run.kinds().iter().filter(|event| matches!(event, AgentEvent::AutoTurn { .. })).count();
-            println!("[background] auto turns = {auto}, took {:?}, answer = {:?}", run.took, run.done_text());
-            assert!(matches!(run.kinds().last(), Some(AgentEvent::Done { .. })), "the turn ends, it never hangs");
+            let auto = run
+                .kinds()
+                .iter()
+                .filter(|event| matches!(event, AgentEvent::AutoTurn { .. }))
+                .count();
+            println!(
+                "[background] auto turns = {auto}, took {:?}, answer = {:?}",
+                run.took,
+                run.done_text()
+            );
+            assert!(
+                matches!(run.kinds().last(), Some(AgentEvent::Done { .. })),
+                "the turn ends, it never hangs"
+            );
             assert!(run.took < Duration::from_secs(200));
         }
         if wanted("steer") {
@@ -1178,7 +1470,10 @@ mod real {
             let text = run.done_text().unwrap_or_default().to_owned();
             println!("[steer] answer = {text:?}");
             assert!(matches!(run.kinds().last(), Some(AgentEvent::Done { .. })));
-            assert!(text.contains("SECOND-MSG"), "the steered message was read: {text}");
+            assert!(
+                text.contains("SECOND-MSG"),
+                "the steered message was read: {text}"
+            );
         }
         if wanted("abort") {
             let run = scenario(
@@ -1189,9 +1484,20 @@ mod real {
                 120,
             )
             .await;
-            assert!(run.result.is_ok(), "a stop is not a failure: {:?}", run.result);
-            assert!(!run.kinds().iter().any(|event| matches!(event, AgentEvent::Error { .. })));
-            assert!(run.took < Duration::from_secs(30), "the stop ended the turn: {:?}", run.took);
+            assert!(
+                run.result.is_ok(),
+                "a stop is not a failure: {:?}",
+                run.result
+            );
+            assert!(!run
+                .kinds()
+                .iter()
+                .any(|event| matches!(event, AgentEvent::Error { .. })));
+            assert!(
+                run.took < Duration::from_secs(30),
+                "the stop ended the turn: {:?}",
+                run.took
+            );
         }
     }
 }

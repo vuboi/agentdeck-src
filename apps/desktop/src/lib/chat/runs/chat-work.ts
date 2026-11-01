@@ -77,7 +77,7 @@ export function projectChatWork(events: readonly Activity[], tasks: readonly Tas
   for (const task of tasks) {
     work.push({
       id: `delegate:${task.id}`, sessionId: task.caller, title: task.task,
-      state: task.state === 'stopped' && /closed or reloaded/.test(task.note ?? '') ? 'unknown' : task.pausedAt !== undefined && ['queued', 'running'].includes(task.state) ? 'paused' : task.state === 'approval' ? 'input' : task.state === 'done' && task.reportState === 'waiting' ? 'waiting' : task.state === 'done' && task.reportState === 'running' ? 'running' : task.state,
+      state: task.state === 'stopped' && /closed or reloaded/.test(task.note ?? '') ? 'unknown' : task.pausedAt !== undefined && ['queued', 'running'].includes(task.state) ? 'paused' : task.state === 'approval' ? 'input' : task.state,
       agent: task.agent, model: task.model, kind: 'agent', sourceMessageId: task.sourceMessageId, sourceTitle: task.sourceTask,
       childId: task.childId, delegateId: task.id, startedAt: task.startedAt, endedAt: task.endedAt,
       canStop: ['queued', 'running', 'approval'].includes(task.state),

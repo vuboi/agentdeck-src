@@ -9,6 +9,7 @@
   import StoreView from '../store/StoreView.svelte';
   import WorkflowView from '../tasks/WorkflowView.svelte';
   import UsageView from '../settings/UsageView.svelte';
+  import ProjectActivityView from '../tasks/ProjectActivityView.svelte';
   import ImageGenerator from '../files/ImageGenerator.svelte';
 
   // The body of a workspace tool. Same view in the right panel and in the detached modal.
@@ -34,6 +35,8 @@
   <StoreView />
 {:else if tool === 'Usage'}
   <UsageView />
+{:else if tool === 'Activity'}
+  <ProjectActivityView />
 {:else}
 
 <div class="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground" role="tabpanel" aria-label={current.label}>

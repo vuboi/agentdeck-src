@@ -1,6 +1,11 @@
 {
   "identifier": "dev.agentdeck.desktop.dev",
   "productName": "AgentDeck Dev",
+  "app": {
+    "windows": [
+      { "label": "main", "create": false, "title": "AgentDeck Dev", "width": 1280, "height": 800, "minWidth": 320, "minHeight": 480, "center": true, "decorations": false, "transparent": false }
+    ]
+  },
   "build": {
     "devUrl": "http://127.0.0.1:1431",
     "beforeDevCommand": "pnpm dev:web"

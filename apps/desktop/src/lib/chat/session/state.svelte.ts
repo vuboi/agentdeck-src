@@ -1,10 +1,18 @@
-import { BUILT_IN_AGENTS, agentDisplayName } from '../../agents/provider-registry';
+import {
+  BUILT_IN_AGENTS,
+  agentDisplayName,
+} from '../../agents/provider-registry';
 import type { ZIconName } from '@shival99/z-ui-svelte';
 import { modelCatalog } from '../../agents/models.svelte';
-import { inTauri, isPreviewCopy } from '../../app/platform/history';
+import { fakeData, inTauri, isPreviewCopy } from '../../app/platform/history';
 import { type RunState, IDLE, type RunEvent, step } from '../runs/run-state';
 import { type Message } from '../mock';
-import { getPref, listPrefs, setPref, setPrefs } from '../../app/platform/prefs';
+import {
+  getPref,
+  listPrefs,
+  setPref,
+  setPrefs,
+} from '../../app/platform/prefs';
 import { applyAgentEvent } from '../agent-reply';
 import { answerCopilotPermission } from '../agent';
 import { samePath } from '../../files/paths';
@@ -13,10 +21,14 @@ import { lastChat } from './turns.svelte';
 import { prewarmChat } from './run.svelte';
 import { hidden } from './sending.svelte';
 import { folderName } from './history.svelte';
-import { restoreCommandImages, stripCommandImageData } from '../content/command-images';
+import {
+  restoreCommandImages,
+  stripCommandImageData,
+} from '../content/command-images';
 
 // Mock workspace. Real data arrives from agentd (M2); the shapes follow crates/protocol.
-export type Agent = 'claude' | 'codex' | 'antigravity' | 'opencode' | 'copilot' | 'custom';
+export type Agent =
+  'claude' | 'codex' | 'antigravity' | 'opencode' | 'copilot' | 'custom';
 export type Status = 'working' | 'idle' | 'waiting';
 /** Reasoning effort and the approval modes shared by the agent CLIs. */
 export type Effort =
@@ -48,7 +60,7 @@ export type SessionItem = {
   messageCount?: number;
   /** Created in the app and still empty. */
   draft?: boolean;
-  /** Started in AgentDeck itself, not imported from Claude / Codex history (the sidebar's "This computer" vs "Other"). */
+  /** Started in AgentDeck itself, not imported from Claude / Codex history; used by the sidebar source filter. */
   made?: boolean;
   /** The agent CLI's conversation id: sent with `--session-id` on the first turn, `--resume` after. */
   agentSession?: string;
@@ -62,7 +74,15 @@ export type SessionItem = {
   agentModels?: Partial<Record<Agent, string>>;
   /** Per agent: its own conversation id and whether it has one yet. `agentSession` / `agentStarted` belong to
    *  the chat's first agent; an agent the chat moved to later keeps its ids here. */
-  agentIds?: Partial<Record<Agent, { id: string; started: boolean; epoch?: number }>>;
+  agentIds?: Partial<
+    Record<Agent, { id: string; started: boolean; epoch?: number }>
+  >;
+};
+
+export type SessionPlacementOrigin = 'agentdeck' | 'imported';
+export type SessionPlacement = {
+  projectId: string;
+  origin: SessionPlacementOrigin;
 };
 
 /**
@@ -76,7 +96,9 @@ export const AGENT_TEXT: Record<Agent, string> = {
   opencode:
     BUILT_IN_AGENTS.find((item) => item.id === 'opencode')?.tone ??
     'text-foreground',
-  copilot: BUILT_IN_AGENTS.find((item) => item.id === 'copilot')?.tone ?? 'text-foreground',
+  copilot:
+    BUILT_IN_AGENTS.find((item) => item.id === 'copilot')?.tone ??
+    'text-foreground',
   custom: 'text-violet-500',
 };
 
@@ -88,7 +110,9 @@ export const AGENT_ICON: Record<Agent, ZIconName> = {
   opencode:
     BUILT_IN_AGENTS.find((item) => item.id === 'opencode')?.icon ??
     ('lucideTerminal' as ZIconName),
-  copilot: BUILT_IN_AGENTS.find((item) => item.id === 'copilot')?.icon ?? ('lucideBot' as ZIconName),
+  copilot:
+    BUILT_IN_AGENTS.find((item) => item.id === 'copilot')?.icon ??
+    ('lucideBot' as ZIconName),
   custom: 'lucideServer' as ZIconName,
 };
 
@@ -183,13 +207,15 @@ const mockWorkspace = {
 
 // In the desktop app start empty and show the real history; the mock only serves plain-browser dev.
 export const workspace = $state(
-  inTauri()
-    ? {
-        activeId: '',
-        projects: [] as Project[],
-        sessions: [] as SessionItem[],
-      }
-    : mockWorkspace,
+  fakeData
+    ? mockWorkspace
+    : inTauri()
+      ? {
+          activeId: '',
+          projects: [] as Project[],
+          sessions: [] as SessionItem[],
+        }
+      : mockWorkspace,
 );
 
 // Mirror the open chat synchronously: IndexedDB writes are async, so a quick F5 after switching chats can otherwise
@@ -223,7 +249,8 @@ export type Mention = {
 // goes through `advanceRun`. The reducer decides what counts as finished, stopped, crashed or waiting; `runOf` reads it.
 export const runStates = $state<Record<string, RunState>>({});
 export const runEpochs: Record<string, number> = {};
-export const runOf = (sessionId: string): RunState => runStates[sessionId] ?? IDLE;
+export const runOf = (sessionId: string): RunState =>
+  runStates[sessionId] ?? IDLE;
 export function advanceRun(sessionId: string, event: RunEvent) {
   runStates[sessionId] = step(runOf(sessionId), event).state;
 }
@@ -367,10 +394,13 @@ function persistLocalNow() {
   const writes: [string, unknown][] = [];
   for (const item of sessions) {
     // Only the chats that changed are copied and serialised; the rest keep what was saved last time.
-    if (!allDirty && !dirtyChats.has(item.id) && savedMessages.has(item.id)) continue;
+    if (!allDirty && !dirtyChats.has(item.id) && savedMessages.has(item.id))
+      continue;
     // Screenshots are kept as files (their path is in the screenshot index), never as base64 in this state.
     // Plain copies: the store holds proxies that IndexedDB cannot store.
-    const text = JSON.stringify(stripCommandImageData(localMessages[item.id] ?? []));
+    const text = JSON.stringify(
+      stripCommandImageData(localMessages[item.id] ?? []),
+    );
     if (savedMessages.get(item.id) === text) continue;
     savedMessages.set(item.id, text);
     writes.push([`${LOCAL_MESSAGES}${item.id}`, JSON.parse(text)]);
@@ -434,10 +464,17 @@ function renamedSession(item: SessionItem): SessionItem {
 }
 
 /** Read the saved local sessions back. Runs once at start-up, before the history import merges them. */
-type LocalState = { sessions: SessionItem[]; messages: Record<string, Message[]>; activeId?: string };
+type LocalState = {
+  sessions: SessionItem[];
+  messages: Record<string, Message[]>;
+  activeId?: string;
+};
 
 /** The saved local chats: the index and every chat's messages. A save from before the per-chat records is read once. */
-async function loadLocalState(): Promise<{ saved: LocalState | null; legacy: boolean }> {
+async function loadLocalState(): Promise<{
+  saved: LocalState | null;
+  legacy: boolean;
+}> {
   // Folder records ("This computer", each project); saves from before them keep one index, or one blob.
   // The reads of start-up go out together, not one after another.
   const [folders, active, index, records, legacyState] = await Promise.all([
@@ -447,8 +484,11 @@ async function loadLocalState(): Promise<{ saved: LocalState | null; legacy: boo
     listPrefs<Message[]>(LOCAL_MESSAGES),
     getPref<LocalState>('local.state'),
   ]);
-  if (!folders.length && !index) return { saved: legacyState ?? null, legacy: true };
-  const sessions = folders.length ? folders.flatMap(([, rows]) => rows) : (index?.sessions ?? []);
+  if (!folders.length && !index)
+    return { saved: legacyState ?? null, legacy: true };
+  const sessions = folders.length
+    ? folders.flatMap(([, rows]) => rows)
+    : (index?.sessions ?? []);
   const activeId = folders.length ? (active ?? undefined) : index?.activeId;
   const messages: Record<string, Message[]> = {};
   const listed = new Set(sessions.map((item) => item.id));
@@ -473,31 +513,49 @@ const localReady = loadLocalState().then(
         agent: renamedAgent(message.agent),
         live: false,
         blocks: [
-          ...applyAgentEvent(message.blocks, { kind: 'error', message: 'stopped' }).blocks,
+          ...applyAgentEvent(message.blocks, {
+            kind: 'error',
+            message: 'stopped',
+          }).blocks,
           // Said once, on the reply that was cut: the work may be half done, and "continue" picks it up.
           ...(message.live && message.role === 'assistant'
-            ? [{ kind: 'response' as const, text: '> ↻ The app closed while this reply was being written. Send "continue" to pick it up.' }]
+            ? [
+                {
+                  kind: 'response' as const,
+                  text: '> ↻ The app closed while this reply was being written. Send "continue" to pick it up.',
+                },
+              ]
             : []),
         ].map((block) => {
           // A card still waiting when the app reloaded has nobody to answer it: it is closed, not Allow-able again.
-          if (block.kind !== 'permission' || block.state !== 'pending') return block;
+          if (block.kind !== 'permission' || block.state !== 'pending')
+            return block;
           // A Copilot turn holds its request open until it is answered: refuse it so the turn ends.
-          if (message.agent === 'copilot') for (const request of block.requests) void answerCopilotPermission(request.id, false).catch(() => {});
+          if (message.agent === 'copilot')
+            for (const request of block.requests)
+              void answerCopilotPermission(request.id, false).catch(() => {});
           return { ...block, state: 'expired' as const };
         }),
       }));
     for (const savedItem of saved.sessions ?? []) {
-      const item = { ...renamedSession(savedItem), status: 'idle' as const };
+      const item = {
+        ...renamedSession(savedItem),
+        status: 'idle' as const,
+      };
       // Empty new chats saved by an earlier version are not restored.
       if (isEmptyDraft(item)) continue;
       if (!workspace.sessions.some((existing) => existing.id === item.id))
         workspace.sessions.push(item);
+      rememberSessionPlacement(item.id, item.projectId, 'agentdeck');
     }
     if (saved.activeId && !workspace.activeId)
       workspace.activeId = saved.activeId;
     // Screenshots of these chats: their files are drawn again from the screenshot index (the saved copy has none).
     for (const id of Object.keys(saved.messages ?? {}))
-      localMessages[id] = await restoreCommandImages(id, localMessages[id] ?? []);
+      localMessages[id] = await restoreCommandImages(
+        id,
+        localMessages[id] ?? [],
+      );
     if (legacy) {
       // The one-blob save (or the single index) is moved to the folder records; the old keys go.
       persistLocalNow();
@@ -528,9 +586,11 @@ const activeReady = getPref<string>('workspace.activeId').then(
   () => '',
 );
 // Set the open session only after its local messages are back, so the chat opens with them.
-export const restored = Promise.all([localReady, activeReady]).then(([, id]) => {
-  if (id && !workspace.activeId) workspace.activeId = id;
-});
+export const restored = Promise.all([localReady, activeReady]).then(
+  ([, id]) => {
+    if (id && !workspace.activeId) workspace.activeId = id;
+  },
+);
 $effect.root(() => {
   $effect(() => {
     const id = workspace.activeId;
@@ -549,6 +609,38 @@ export const mockIds = new Set(mockWorkspace.sessions.map((item) => item.id));
 
 /** Sessions that belong to no project: a plain chat with the computer. */
 export const NO_PROJECT = 'none';
+
+/** Explicit placement survives the transition from an AgentDeck draft to a provider history file. */
+const SESSION_PLACEMENTS = 'chat.placements';
+export const sessionPlacements: Record<string, SessionPlacement> = {};
+export const sessionPlacementsReady = getPref<Record<string, SessionPlacement>>(
+  SESSION_PLACEMENTS,
+)
+  .then((saved) => {
+    if (saved) Object.assign(sessionPlacements, saved);
+  })
+  .catch(() => undefined);
+function saveSessionPlacements() {
+  void setPref(SESSION_PLACEMENTS, { ...sessionPlacements });
+}
+export const placementOf = (id: string) => sessionPlacements[id];
+export function rememberSessionPlacement(
+  id: string,
+  projectId: string,
+  origin: SessionPlacementOrigin = 'agentdeck',
+) {
+  const next = { projectId, origin };
+  const current = sessionPlacements[id];
+  if (current?.projectId === next.projectId && current.origin === next.origin)
+    return;
+  sessionPlacements[id] = next;
+  saveSessionPlacements();
+}
+export function forgetSessionPlacement(id: string) {
+  if (!sessionPlacements[id]) return;
+  delete sessionPlacements[id];
+  saveSessionPlacements();
+}
 
 /** Projects removed from the sidebar, by folder path. Their chats stay on disk; the list just leaves them out. */
 export const hiddenProjects = $state<string[]>([]);
@@ -706,6 +798,7 @@ export function moveDraftToProject(sessionId: string, projectId: string) {
   }
   item.projectId = projectId;
   item.gitBranch = undefined;
+  rememberSessionPlacement(sessionId, projectId);
   persistLocal();
 }
 
@@ -735,6 +828,7 @@ export function newSession(projectId = NO_PROJECT) {
     draft: true,
     made: true,
   });
+  rememberSessionPlacement(id, projectId);
   workspace.activeId = id;
   persistLocal();
 }

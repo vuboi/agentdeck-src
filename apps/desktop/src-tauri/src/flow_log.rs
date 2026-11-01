@@ -60,14 +60,22 @@ fn live() -> std::sync::MutexGuard<'static, HashMap<(String, String), Live>> {
 }
 
 fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|error| error.to_string())?.join("logs");
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("logs");
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     Ok(dir.join("debug.log"))
 }
 
 /// The time as `2026-10-29T04:12:09.123Z` (UTC), like the page writes it.
 fn now() -> String {
-    time_at(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+    time_at(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default(),
+    )
 }
 
 /// How long the log keeps its lines: older ones are dropped at start-up.
@@ -76,15 +84,25 @@ const KEEP: Duration = Duration::from_secs(2 * 24 * 3600);
 /// Drops the lines older than `KEEP` from the log and its older file. Each line starts with its time (`"at"`), in the
 /// same UTC form, so the lines compare as text. A line that does not say its time is kept.
 fn prune_old(path: &Path) {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
     let cutoff = time_at(since.saturating_sub(KEEP));
     for file in [path.with_file_name("debug.1.log"), path.to_path_buf()] {
-        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
         let kept: String = text
             .lines()
-            .filter(|line| match line.split("\"at\":\"").nth(1).and_then(|rest| rest.split('"').next()) {
-                Some(at) => at >= cutoff.as_str(),
-                None => true,
+            .filter(|line| {
+                match line
+                    .split("\"at\":\"")
+                    .nth(1)
+                    .and_then(|rest| rest.split('"').next())
+                {
+                    Some(at) => at >= cutoff.as_str(),
+                    None => true,
+                }
             })
             .map(|line| format!("{line}\n"))
             .collect();
@@ -101,17 +119,30 @@ fn time_at(since: std::time::Duration) -> String {
     let shifted = days + 719_468;
     let era = shifted.div_euclid(146_097);
     let day_of_era = shifted.rem_euclid(146_097);
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_index = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
+    let month = if month_index < 10 {
+        month_index + 3
+    } else {
+        month_index - 9
+    };
     let year = year_of_era + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{millis:03}Z", rest / 3600, rest % 3600 / 60, rest % 60)
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{millis:03}Z",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    )
 }
 
 fn clip(text: &str, limit: usize) -> String {
-    let flat: String = text.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let flat: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
     if flat.chars().count() <= limit {
         flat
     } else {
@@ -127,7 +158,9 @@ fn write_all(path: &PathBuf, lines: &[String]) {
     if std::fs::metadata(path).is_ok_and(|meta| meta.len() > ROTATE_BYTES) {
         let _ = std::fs::rename(path, path.with_file_name("debug.1.log"));
     }
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else { return };
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
     for line in lines {
         let _ = writeln!(file, "{}", line.replace(['\r', '\n'], " "));
     }
@@ -155,7 +188,9 @@ pub fn install(app: &AppHandle) {
             write_all(&path, &batch);
         }
     });
-    ag_adapters::agent::trace::set_sink(Arc::new(|chat, kind, detail| note("rust", chat, kind, detail)));
+    ag_adapters::agent::trace::set_sink(Arc::new(|chat, kind, detail| {
+        note("rust", chat, kind, detail)
+    }));
     // A panic is written at once (the writer thread may not get to it before the process goes), then handed on.
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -177,7 +212,12 @@ pub fn install(app: &AppHandle) {
         "rust",
         "-",
         "app started",
-        &format!("v{} {} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH),
+        &format!(
+            "v{} {} {}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
     );
 }
 
@@ -195,9 +235,21 @@ pub fn note(src: &str, chat: &str, kind: &str, detail: &str) {
 pub fn turn_started(chat: &str, turn: &str, agent: &str, model: &str) {
     live().insert(
         (chat.to_owned(), turn.to_owned()),
-        Live { agent: agent.to_owned(), started: Instant::now(), last_event: Instant::now(), last_kind: "start", events: 0, stream: None },
+        Live {
+            agent: agent.to_owned(),
+            started: Instant::now(),
+            last_event: Instant::now(),
+            last_kind: "start",
+            events: 0,
+            stream: None,
+        },
     );
-    note("rust", chat, "turn start", &format!("turn={turn} agent={agent} model={model}"));
+    note(
+        "rust",
+        chat,
+        "turn start",
+        &format!("turn={turn} agent={agent} model={model}"),
+    );
 }
 
 /// A turn's task ended (it finished, was stopped, or was aborted): `why` says which.
@@ -207,13 +259,23 @@ pub fn turn_ended(chat: &str, turn: &str, why: &str) {
         let pending = entry.stream;
         drop(turns);
         if let Some((kind, count, chars, _)) = pending {
-            note("rust", chat, "stream", &format!("turn={turn} {kind} x{count} chars={chars}"));
+            note(
+                "rust",
+                chat,
+                "stream",
+                &format!("turn={turn} {kind} x{count} chars={chars}"),
+            );
         }
         note(
             "rust",
             chat,
             "turn end",
-            &format!("turn={turn} why={why} after={:.1}s events={} last={}", entry.started.elapsed().as_secs_f32(), entry.events, entry.last_kind),
+            &format!(
+                "turn={turn} why={why} after={:.1}s events={} last={}",
+                entry.started.elapsed().as_secs_f32(),
+                entry.events,
+                entry.last_kind
+            ),
         );
     }
 }
@@ -229,7 +291,11 @@ pub struct TurnGuard {
 impl TurnGuard {
     pub fn new(chat: &str, turn: &str, agent: &str, model: &str) -> TurnGuard {
         turn_started(chat, turn, agent, model);
-        TurnGuard { chat: chat.to_owned(), turn: turn.to_owned(), why: "aborted" }
+        TurnGuard {
+            chat: chat.to_owned(),
+            turn: turn.to_owned(),
+            why: "aborted",
+        }
     }
 
     pub fn finish(&mut self, why: &'static str) {
@@ -248,12 +314,42 @@ fn describe(event: &AgentEvent) -> (&'static str, String) {
     match event {
         AgentEvent::Delta { .. } => ("delta", String::new()),
         AgentEvent::Thinking { .. } => ("thinking", String::new()),
-        AgentEvent::ToolCall { id, name, input, background, .. } => ("tool_call", format!("id={id} {name} bg={background} {}", clip(input, 120))),
-        AgentEvent::ToolResult { id, output, is_error, .. } => ("tool_result", format!("id={id} error={is_error} bytes={}", output.len())),
+        AgentEvent::ToolCall {
+            id,
+            name,
+            input,
+            background,
+            ..
+        } => (
+            "tool_call",
+            format!("id={id} {name} bg={background} {}", clip(input, 120)),
+        ),
+        AgentEvent::ToolResult {
+            id,
+            output,
+            is_error,
+            ..
+        } => (
+            "tool_result",
+            format!("id={id} error={is_error} bytes={}", output.len()),
+        ),
         AgentEvent::ToolOutputDelta { .. } => ("tool_output", String::new()),
-        AgentEvent::PermissionDenied { requests } => ("permission_denied", format!("{} request(s)", requests.len())),
+        AgentEvent::PermissionDenied { requests } => (
+            "permission_denied",
+            format!("{} request(s)", requests.len()),
+        ),
         AgentEvent::Session { session_id } => ("session", format!("id={session_id}")),
-        AgentEvent::Done { session_id, cost_usd, .. } => ("done", format!("session={} cost={cost_usd:?}", session_id.as_deref().unwrap_or("-"))),
+        AgentEvent::Done {
+            session_id,
+            cost_usd,
+            ..
+        } => (
+            "done",
+            format!(
+                "session={} cost={cost_usd:?}",
+                session_id.as_deref().unwrap_or("-")
+            ),
+        ),
         AgentEvent::Usage { .. } => ("usage", String::new()),
         AgentEvent::Error { message } => ("error", clip(message, 300)),
         AgentEvent::Raw { source, label, .. } => ("raw", format!("{source}/{label}")),
@@ -261,7 +357,14 @@ fn describe(event: &AgentEvent) -> (&'static str, String) {
             let (kind, detail) = describe(event);
             ("scoped", format!("parent={parent} {kind} {detail}"))
         }
-        AgentEvent::Task { id, tool_use_id, status, label, tools, .. } => (
+        AgentEvent::Task {
+            id,
+            tool_use_id,
+            status,
+            label,
+            tools,
+            ..
+        } => (
             "task",
             format!(
                 "id={id} call={} {} {} tools={tools:?}",
@@ -295,14 +398,16 @@ pub fn tap(chat: &str, turn: &str, event: &AgentEvent) {
     let mut out: Vec<String> = Vec::new();
     {
         let mut turns = live();
-        let entry = turns.entry((chat.to_owned(), turn.to_owned())).or_insert_with(|| Live {
-            agent: "?".to_owned(),
-            started: Instant::now(),
-            last_event: Instant::now(),
-            last_kind: "start",
-            events: 0,
-            stream: None,
-        });
+        let entry = turns
+            .entry((chat.to_owned(), turn.to_owned()))
+            .or_insert_with(|| Live {
+                agent: "?".to_owned(),
+                started: Instant::now(),
+                last_event: Instant::now(),
+                last_kind: "start",
+                events: 0,
+                stream: None,
+            });
         entry.last_event = Instant::now();
         entry.last_kind = kind;
         entry.events += 1;
@@ -312,22 +417,42 @@ pub fn tap(chat: &str, turn: &str, event: &AgentEvent) {
             *chars += size;
             if since.elapsed() >= COALESCE {
                 if let Some((stream_kind, count, chars, _)) = entry.stream.take() {
-                    out.push(line("rust", chat, "stream", &format!("turn={turn} {stream_kind} x{count} chars={chars}")));
+                    out.push(line(
+                        "rust",
+                        chat,
+                        "stream",
+                        &format!("turn={turn} {stream_kind} x{count} chars={chars}"),
+                    ));
                 }
             } else if let Some(open) = entry.stream.as_mut() {
                 // A different kind of stream starts: the first one is written now.
                 if open.0 != kind {
                     let (stream_kind, count, chars, _) = (open.0, open.1, open.2, open.3);
                     entry.stream = Some((kind, 1, size, Instant::now()));
-                    out.push(line("rust", chat, "stream", &format!("turn={turn} {stream_kind} x{count} chars={chars}")));
+                    out.push(line(
+                        "rust",
+                        chat,
+                        "stream",
+                        &format!("turn={turn} {stream_kind} x{count} chars={chars}"),
+                    ));
                 }
             }
         } else if let Some((stream_kind, count, chars, _)) = entry.stream.take() {
-            out.push(line("rust", chat, "stream", &format!("turn={turn} {stream_kind} x{count} chars={chars}")));
+            out.push(line(
+                "rust",
+                chat,
+                "stream",
+                &format!("turn={turn} {stream_kind} x{count} chars={chars}"),
+            ));
         }
     }
     if !streamed {
-        out.push(line("rust", chat, "event", &format!("turn={turn} {kind} {detail}")));
+        out.push(line(
+            "rust",
+            chat,
+            "event",
+            &format!("turn={turn} {kind} {detail}"),
+        ));
     }
     if let Some(writer) = WRITER.get() {
         for entry in out {
@@ -354,16 +479,47 @@ fn heartbeat() {
                 )
             })
             .collect();
-        format!("running={} [{}] {}", turns.len(), parts.join("; "), ag_adapters::agent::trace::stats())
+        format!(
+            "running={} [{}] {}",
+            turns.len(),
+            parts.join("; "),
+            ag_adapters::agent::trace::stats()
+        )
     };
-    let page = PAGE_LAST.lock().ok().and_then(|seen| seen.as_ref().map(|(at, text)| (at.elapsed(), text.clone())));
+    let page = PAGE_LAST
+        .lock()
+        .ok()
+        .and_then(|seen| seen.as_ref().map(|(at, text)| (at.elapsed(), text.clone())));
     match page {
         Some((silent, last)) if silent >= PAGE_SILENT => {
-            note("rust", "-", "page silent", &format!("no page line for {}s; page last wrote: {last}", silent.as_secs()));
-            note("rust", "-", "heartbeat", &format!("{report} page_silent={}s", silent.as_secs()));
+            note(
+                "rust",
+                "-",
+                "page silent",
+                &format!(
+                    "no page line for {}s; page last wrote: {last}",
+                    silent.as_secs()
+                ),
+            );
+            note(
+                "rust",
+                "-",
+                "heartbeat",
+                &format!("{report} page_silent={}s", silent.as_secs()),
+            );
         }
-        Some((silent, _)) => note("rust", "-", "heartbeat", &format!("{report} page_silent={}s", silent.as_secs())),
-        None => note("rust", "-", "heartbeat", &format!("{report} page_silent=no page line yet")),
+        Some((silent, _)) => note(
+            "rust",
+            "-",
+            "heartbeat",
+            &format!("{report} page_silent={}s", silent.as_secs()),
+        ),
+        None => note(
+            "rust",
+            "-",
+            "heartbeat",
+            &format!("{report} page_silent=no page line yet"),
+        ),
     }
 }
 
@@ -410,9 +566,11 @@ fn read_tail(path: &PathBuf, keep: usize) -> String {
 /// The end of the log (the older file first when the current one is short), as text.
 #[tauri::command]
 pub async fn flow_log_read(app: AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || Ok(read_tail(&log_path(&app)?, READ_BYTES as usize)))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(read_tail(&log_path(&app)?, READ_BYTES as usize))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Saves one file for a bug report where the user picks: this version and machine, the error log, the debug log (both
@@ -430,7 +588,9 @@ pub async fn debug_bundle_save(app: AppHandle, name: String) -> Result<Option<St
             std::env::consts::ARCH,
             now()
         );
-        text.push_str(&std::fs::read_to_string(errors.with_file_name("errors.1.log")).unwrap_or_default());
+        text.push_str(
+            &std::fs::read_to_string(errors.with_file_name("errors.1.log")).unwrap_or_default(),
+        );
         text.push_str(&std::fs::read_to_string(&errors).unwrap_or_default());
         text.push_str("\n== debug.log ==\n");
         text.push_str(&read_tail(&path, 64 * 1024 * 1024));

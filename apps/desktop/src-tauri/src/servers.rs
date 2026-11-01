@@ -193,7 +193,11 @@ pub struct Options {
 /// The stable identity of a project server. The command is trimmed, while Windows paths are compared
 /// case-insensitively and with one separator style so a moved port does not create a second server.
 pub fn identity(command: &str, cwd: &str) -> String {
-    let cwd = cwd.replace('\\', "/").trim_end_matches('/').to_string();
+    let mut cwd = cwd.replace('\\', "/");
+    while cwd.contains("//") {
+        cwd = cwd.replace("//", "/");
+    }
+    let cwd = cwd.trim_end_matches('/').to_string();
     #[cfg(windows)]
     let cwd = cwd.to_ascii_lowercase();
     format!("{}\0{cwd}", command.trim())
@@ -336,6 +340,7 @@ fn answer_questions(
 
 /// Starts `command` in `cwd` for the server expected on `port`, with `options`: a keyboard and answers for a script
 /// that asks, and extra environment. A server this app started earlier on the same port is stopped first.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn start_with(
     command: &str,
     cwd: &str,

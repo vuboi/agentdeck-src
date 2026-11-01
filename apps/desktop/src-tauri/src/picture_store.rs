@@ -35,7 +35,9 @@ fn to_webp(bytes: &[u8]) -> Result<Vec<u8>, String> {
     };
     let rgba = picture.to_rgba8();
     let (width, height) = rgba.dimensions();
-    Ok(webp::Encoder::from_rgba(&rgba, width, height).encode(QUALITY).to_vec())
+    Ok(webp::Encoder::from_rgba(&rgba, width, height)
+        .encode(QUALITY)
+        .to_vec())
 }
 
 #[cfg(test)]
@@ -45,7 +47,9 @@ mod tests {
     fn png(width: u32, height: u32) -> Vec<u8> {
         let mut out = Vec::new();
         let picture = image::RgbaImage::from_pixel(width, height, image::Rgba([200, 30, 30, 255]));
-        picture.write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png).expect("a png");
+        picture
+            .write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png)
+            .expect("a png");
         out
     }
 

@@ -87,7 +87,9 @@ pub fn subpath_within(root: &Path, folder: &Path) -> String {
 pub fn kind_of(root: &Path, skills: &[(String, PathBuf)]) -> &'static str {
     if !skills.is_empty() {
         "skill"
-    } else if root.join(".claude-plugin").join("plugin.json").is_file() || root.join("plugin.json").is_file() {
+    } else if root.join(".claude-plugin").join("plugin.json").is_file()
+        || root.join("plugin.json").is_file()
+    {
         "plugin"
     } else if mcp_config(root).is_some() {
         "mcp"
@@ -98,7 +100,10 @@ pub fn kind_of(root: &Path, skills: &[(String, PathBuf)]) -> &'static str {
 
 /// The MCP config file of a folder (`mcp.json` or `.mcp.json`), if it has one.
 pub fn mcp_config(root: &Path) -> Option<PathBuf> {
-    ["mcp.json", ".mcp.json"].into_iter().map(|name| root.join(name)).find(|path| path.is_file())
+    ["mcp.json", ".mcp.json"]
+        .into_iter()
+        .map(|name| root.join(name))
+        .find(|path| path.is_file())
 }
 
 /// Turns an MCP config into one add spec per server, in the shape `mcp_add` reads.
@@ -111,7 +116,9 @@ fn mcp_specs(config: &Value, agents: &[String]) -> Vec<Value> {
             .as_object()
             .map(|map| {
                 map.iter()
-                    .map(|(key, value)| format!("{key}{separator}{}", value.as_str().unwrap_or_default()))
+                    .map(|(key, value)| {
+                        format!("{key}{separator}{}", value.as_str().unwrap_or_default())
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -134,9 +141,13 @@ fn mcp_specs(config: &Value, agents: &[String]) -> Vec<Value> {
 
 /// Adds one spec through `mcp_add`, which runs each agent's own `mcp add`. Returns one line per agent.
 pub async fn add_mcp(spec: Value) -> Result<Vec<String>, String> {
-    let spec: crate::mcp_manage::AddSpec = serde_json::from_value(spec).map_err(|error| error.to_string())?;
+    let spec: crate::mcp_manage::AddSpec =
+        serde_json::from_value(spec).map_err(|error| error.to_string())?;
     let results = crate::mcp_manage::mcp_add(spec).await?;
-    Ok(results.iter().map(|result| serde_json::to_string(result).unwrap_or_default()).collect())
+    Ok(results
+        .iter()
+        .map(|result| serde_json::to_string(result).unwrap_or_default())
+        .collect())
 }
 
 /// Adds every server of an MCP config file for `agents`.
@@ -152,7 +163,12 @@ pub async fn add_mcp_file(file: &Path, agents: &[String]) -> Result<Vec<String>,
 }
 
 /// Installs what a staged job holds: its skills into the library, or its MCP servers. The gate was passed before.
-pub async fn install_job(home: &Path, job: &str, root: &Path, agents: &[String]) -> Result<Vec<String>, String> {
+pub async fn install_job(
+    home: &Path,
+    job: &str,
+    root: &Path,
+    agents: &[String],
+) -> Result<Vec<String>, String> {
     let skills = stage::find_skills(root);
     match kind_of(root, &skills) {
         "skill" => {
@@ -185,9 +201,15 @@ mod tests {
         }});
         let specs = mcp_specs(&config, &["codex".to_owned()]);
         assert_eq!(specs.len(), 2);
-        let files = specs.iter().find(|spec| spec["name"] == "files").expect("stdio server");
+        let files = specs
+            .iter()
+            .find(|spec| spec["name"] == "files")
+            .expect("stdio server");
         assert_eq!(files["env"][0], "ROOT=/tmp");
-        let remote = specs.iter().find(|spec| spec["name"] == "remote").expect("http server");
+        let remote = specs
+            .iter()
+            .find(|spec| spec["name"] == "remote")
+            .expect("http server");
         assert_eq!(remote["transport"], "http");
         assert_eq!(remote["headers"][0], "Authorization: Bearer t");
     }

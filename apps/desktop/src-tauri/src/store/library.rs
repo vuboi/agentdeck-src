@@ -29,7 +29,9 @@ pub struct SkillItem {
 }
 
 pub fn library_root(home: &Path) -> PathBuf {
-    home.join(crate::channel::home_folder_name()).join("library").join("skills")
+    home.join(crate::channel::home_folder_name())
+        .join("library")
+        .join("skills")
 }
 
 /// The folders where an agent keeps its own skills. The first one is where AgentDeck links new skills.
@@ -67,7 +69,10 @@ pub fn project_skill_folders(agent: &str) -> &'static [&'static str] {
 
 /// Every supported project destination, deduplicating folders shared by providers.
 pub fn project_folders() -> std::collections::BTreeSet<&'static str> {
-    SKILL_AGENTS.iter().flat_map(|agent| project_skill_folders(agent).iter().copied()).collect()
+    SKILL_AGENTS
+        .iter()
+        .flat_map(|agent| project_skill_folders(agent).iter().copied())
+        .collect()
 }
 
 /// A skill name is one folder name: no separators, no `.` or `..`.
@@ -146,7 +151,11 @@ pub fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
             continue;
         }
         let target = to.join(entry.file_name());
-        if entry.file_type().map_err(|error| error.to_string())?.is_dir() {
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
             copy_tree(&source, &target)?;
         } else {
             std::fs::copy(&source, &target).map_err(|error| error.to_string())?;
@@ -244,7 +253,14 @@ pub fn import(home: &Path, name: &str, from: &str) -> Result<(), String> {
 
 /// Puts one skill folder into the library, records where it came from, and gives it to `agents`. Every install path
 /// (a staged job, the catalog, a shared plugin) ends here.
-pub fn add(home: &Path, name: &str, folder: &Path, source: &str, subpath: &str, agents: &[String]) -> Result<(), String> {
+pub fn add(
+    home: &Path,
+    name: &str,
+    folder: &Path,
+    source: &str,
+    subpath: &str,
+    agents: &[String],
+) -> Result<(), String> {
     let name = checked_name(name)?;
     let target = library_root(home).join(name);
     if target.exists() {
@@ -275,7 +291,9 @@ pub fn assign(home: &Path, name: &str, agents: &[String]) -> Result<(), String> 
         let linked = points_into(&link, &library);
         if wanted && !linked {
             if link.symlink_metadata().is_ok() {
-                return Err(format!("{agent} already has its own {name} folder; it is not overwritten"));
+                return Err(format!(
+                    "{agent} already has its own {name} folder; it is not overwritten"
+                ));
             }
             std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
             link_dir(&link, &source)?;
@@ -301,7 +319,9 @@ pub fn remove(home: &Path, name: &str) -> Result<(), String> {
     for project in super::sync::known_projects(home) {
         for folder in project_folders() {
             let link = project.join(folder).join(name);
-            if points_into(&link, &library) { unlink(&link).map_err(|e| e.to_string())?; }
+            if points_into(&link, &library) {
+                unlink(&link).map_err(|e| e.to_string())?;
+            }
         }
     }
     let source = library.join(name);
@@ -316,7 +336,8 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("agentdeck-store-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("agentdeck-store-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("makes the folder");
         dir
@@ -335,7 +356,10 @@ mod tests {
     #[test]
     fn each_provider_has_explicit_global_and_project_skill_destinations() {
         for agent in SKILL_AGENTS {
-            assert!(!skill_folders(Path::new("user"), agent).is_empty(), "global: {agent}");
+            assert!(
+                !skill_folders(Path::new("user"), agent).is_empty(),
+                "global: {agent}"
+            );
             assert!(!project_skill_folders(agent).is_empty(), "project: {agent}");
         }
         let folders = project_folders();
@@ -362,20 +386,44 @@ mod tests {
 
         import(&home, "notes", "claude").expect("imports");
         assert!(library_root(&home).join("notes").join("SKILL.md").is_file());
-        assert!(home.join(".claude").join("skills").join("notes").join("SKILL.md").is_file());
-        assert!(lock::read(&home).contains_key("notes"), "the import is recorded");
+        assert!(home
+            .join(".claude")
+            .join("skills")
+            .join("notes")
+            .join("SKILL.md")
+            .is_file());
+        assert!(
+            lock::read(&home).contains_key("notes"),
+            "the import is recorded"
+        );
 
         let skills = installed_skills(&home);
-        let notes = skills.iter().find(|item| item.name == "notes").expect("listed");
+        let notes = skills
+            .iter()
+            .find(|item| item.name == "notes")
+            .expect("listed");
         assert_eq!(notes.origin, "library");
         assert_eq!(notes.agents, vec!["claude".to_owned()]);
         assert!(notes.linked.is_empty());
 
-        assert!(import(&home, "notes", "claude").is_err(), "a second import is refused");
+        assert!(
+            import(&home, "notes", "claude").is_err(),
+            "a second import is refused"
+        );
         remove(&home, "notes").expect("removes");
         assert!(!library_root(&home).join("notes").exists());
-        assert!(!lock::read(&home).contains_key("notes"), "its lock entry goes too");
-        assert!(home.join(".claude").join("skills").join("notes").join("SKILL.md").is_file(), "the agent's own copy stays");
+        assert!(
+            !lock::read(&home).contains_key("notes"),
+            "its lock entry goes too"
+        );
+        assert!(
+            home.join(".claude")
+                .join("skills")
+                .join("notes")
+                .join("SKILL.md")
+                .is_file(),
+            "the agent's own copy stays"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -385,7 +433,8 @@ mod tests {
         write_skill(&library_root(&home), "shared", "Shared");
         write_skill(&home.join(".codex").join("skills"), "shared", "Mine");
 
-        let error = assign(&home, "shared", &["codex".to_owned()]).expect_err("refuses to overwrite");
+        let error =
+            assign(&home, "shared", &["codex".to_owned()]).expect_err("refuses to overwrite");
         assert!(error.contains("codex"));
         let _ = std::fs::remove_dir_all(&home);
     }

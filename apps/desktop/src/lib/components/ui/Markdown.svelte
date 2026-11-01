@@ -51,6 +51,8 @@
   import { openInViewer } from '../../files/file-viewer.svelte';
   import { activeSession, workspace } from '../../chat/sessions.svelte';
 
+  const IMAGE_NOT_FOUND_SRC = '/assets/image-not-found.png';
+
   // An answer as rich text: headings, lists, tables, quotes, links and code cards with a copy button.
   // Code is coloured once the answer has stopped streaming, so nothing flickers while text arrives.
   let { text, streaming = false, onrendered, flush = false }: { text: string; streaming?: boolean; onrendered?: () => void; /** Show the rest at once (a newer message came after this one). */ flush?: boolean } = $props();
@@ -469,12 +471,26 @@
     }
   }
 
+  function installImageFallbacks(container: HTMLElement) {
+    for (const image of container.querySelectorAll<HTMLImageElement>('img:not([data-fallback-installed])')) {
+      image.dataset.fallbackInstalled = '1';
+      image.addEventListener('error', () => {
+        if (image.dataset.fallback) return;
+        image.dataset.fallback = '1';
+        image.alt = 'Image not found';
+        image.src = IMAGE_NOT_FOUND_SRC;
+      });
+    }
+  }
+
   // After each render (and whenever the text settles): mark the file links and fetch the pictures. Blocks that were
   // already marked are skipped (`data-checked`), so only the block being written is looked at again.
   $effect(() => {
     void html;
     const container = root;
-    if (!container || !inTauri()) return;
+    if (!container) return;
+    installImageFallbacks(container);
+    if (!inTauri()) return;
     const id = setTimeout(() => {
       void checkPaths(container);
       void loadPictures(container);
@@ -483,6 +499,12 @@
   });
 
   const linkOf = (event: Event) => (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
+
+  // Running a command opens the terminal, but clicking its button must not steal focus from a prompt being written.
+  function onmousedown(event: MouseEvent) {
+    const run = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-run]');
+    if (run && document.activeElement instanceof HTMLElement && document.activeElement.matches('[data-composer-editor]')) event.preventDefault();
+  }
 
   /** A link the agent wrote to a file: `E:/repo/a.txt`, `/home/me/a.txt`, `file:///…`, or `src/a.ts:42` inside the
    *  project. Answers the file's absolute path, or null for a web address. */
@@ -585,8 +607,8 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (the copy buttons inside are real buttons) -->
-<div bind:this={root} class="md" {onclick} {oncontextmenu}>{#each html as block, index (index)}<div class="md-block">{@html block}</div>{/each}</div>
+<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_mouse_events_have_key_events (the controls inside are real buttons) -->
+<div bind:this={root} class="md" {onclick} {oncontextmenu} {onmousedown}>{#each html as block, index (index)}<div class="md-block">{@html block}</div>{/each}</div>
 
 <style>
   /* A word that has just arrived fades in, quickly and without blur, as in Claude Code: fast text never smears. */

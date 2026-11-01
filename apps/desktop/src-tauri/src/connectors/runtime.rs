@@ -112,7 +112,7 @@ pub(crate) fn account_tool_allows(program: &Path, args: &[&str]) -> Result<(), S
         .unwrap_or_default();
     let allowed: &[&str] = match name.as_str() {
         "codex-auth" => &["list", "switch", "remove", "login"],
-        "cswap" => &["list", "switch"],
+        "cswap" => &["list", "switch", "add", "remove"],
         _ => return Ok(()),
     };
     match args.first() {

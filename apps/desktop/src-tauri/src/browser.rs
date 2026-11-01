@@ -335,8 +335,10 @@ fn destination(tab: &str, url: &str) -> Result<tauri::Url, String> {
 
 /// The address without terminal colour codes: a server's log prints its port in colour (`\x1b[1m1431\x1b[22m`).
 fn without_colours(text: &str) -> String {
-    regex::Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]")
-        .map_or_else(|_| text.to_string(), |codes| codes.replace_all(text, "").into_owned())
+    regex::Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]").map_or_else(
+        |_| text.to_string(),
+        |codes| codes.replace_all(text, "").into_owned(),
+    )
 }
 
 pub(crate) fn parse(url: &str) -> Result<tauri::Url, String> {
@@ -499,8 +501,7 @@ pub async fn browser_show(
             .map_err(|error| error.to_string())?
             .join("browser-extensions");
         std::fs::create_dir_all(&extension_root).map_err(|error| error.to_string())?;
-        builder = builder
-            .extensions_path(extension_root);
+        builder = builder.extensions_path(extension_root);
     }
     // Opaque white under the page: while the page's window is resized (the mark-up bar or the developer tools open and
     // shrink the area) the strip not yet painted shows this, not black.
@@ -1018,7 +1019,10 @@ pub async fn browser_capture(
 ) -> Result<String, String> {
     let bytes = capture_png(&app, &tab, scale, full_page.unwrap_or(false)).await?;
     use base64::Engine;
-    Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    Ok(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 /// The same picture as `browser_capture`, saved straight to a WebP file (see picture_store.rs): only its path goes back,
@@ -1047,7 +1051,10 @@ pub async fn browser_element_capture(
 ) -> Result<String, String> {
     use base64::Engine;
     let bytes = element_png(&app, &tab, x, y, w, h).await?;
-    Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    Ok(format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 /// `browser_element_capture`, saved to a WebP file: returns its path.
@@ -1065,7 +1072,12 @@ pub async fn browser_element_capture_file(
 }
 
 /// The PNG bytes of a tab: the whole page (`full_page`), a scaled capture (`scale` above 1), or the visible page.
-async fn capture_png(app: &AppHandle, tab: &str, scale: Option<f64>, full_page: bool) -> Result<Vec<u8>, String> {
+async fn capture_png(
+    app: &AppHandle,
+    tab: &str,
+    scale: Option<f64>,
+    full_page: bool,
+) -> Result<Vec<u8>, String> {
     let view = webview(app, tab)?;
     if full_page {
         return crate::cdp::screenshot_full_page(&view).await;
@@ -1080,7 +1092,14 @@ async fn capture_png(app: &AppHandle, tab: &str, scale: Option<f64>, full_page: 
         .map_err(|_| "the capture was dropped".to_string())?
 }
 
-async fn element_png(app: &AppHandle, tab: &str, x: f64, y: f64, w: f64, h: f64) -> Result<Vec<u8>, String> {
+async fn element_png(
+    app: &AppHandle,
+    tab: &str,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<Vec<u8>, String> {
     let view = webview(app, tab)?;
     crate::cdp::screenshot_clip(&view, x, y, w.max(1.0), h.max(1.0)).await
 }
@@ -1699,8 +1718,14 @@ mod tests {
     #[test]
     fn colour_codes_from_a_log_are_not_part_of_the_address() {
         let coloured = "http://127.0.0.1:\u{1b}[1m1431\u{1b}[22m/\u{1b}[39m";
-        assert_eq!(parse(coloured).expect("url").as_str(), "http://127.0.0.1:1431/");
-        assert_eq!(parse("  localhost:4200 ").expect("url").as_str(), "http://localhost:4200/");
+        assert_eq!(
+            parse(coloured).expect("url").as_str(),
+            "http://127.0.0.1:1431/"
+        );
+        assert_eq!(
+            parse("  localhost:4200 ").expect("url").as_str(),
+            "http://localhost:4200/"
+        );
     }
 
     #[test]

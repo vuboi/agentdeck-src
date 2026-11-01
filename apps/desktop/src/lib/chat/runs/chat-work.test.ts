@@ -48,10 +48,10 @@ test('Stop targets the row-owned work and never falls back to the main chat', ()
   assert.equal(stopTarget({ canStop: true }), null);
 });
 
-test('a completed worker waiting for integration remains visible as work awaiting its result', () => {
+test('a completed worker waiting for integration stays checked while its result is being returned', () => {
   const item = projectChatWork([], [{ ...worker, state: 'done', reportState: 'waiting', digest: 'Review passed' }], [])[0];
-  assert.equal(item.state, 'waiting');
-  assert.equal(isWorkActive(item), true);
+  assert.equal(item.state, 'done');
+  assert.equal(isWorkActive(item), false);
   assert.equal(item.canStop, false);
   assert.match(item.detail, /Review passed/);
 });

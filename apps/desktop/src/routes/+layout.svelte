@@ -5,7 +5,7 @@
 
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { inTauri, isPreviewCopy } from '../lib/app/platform/history';
+  import { fakeData, inTauri, isPreviewCopy } from '../lib/app/platform/history';
   import TitleTooltip from '../lib/components/ui/TitleTooltip.svelte';
   import { ZToaster } from '@shival99/z-ui-svelte';
   let { children } = $props();
@@ -50,7 +50,7 @@
     document.addEventListener('pointerdown', scrollArrow, true);
 
     void import('../lib/app/platform/icons').then(({ warmIcons }) => warmIcons());
-    void import('../lib/chat/sessions.svelte').then(({ importHistory }) => void importHistory());
+    if (!fakeData) void import('../lib/chat/sessions.svelte').then(({ importHistory }) => void importHistory());
     void import('../lib/browser/browser.svelte').then(({ listenToPage, resetBrowser }) => {
       // An F5 reloads this window but not the pages it opened, which would stay on screen.
       void resetBrowser();

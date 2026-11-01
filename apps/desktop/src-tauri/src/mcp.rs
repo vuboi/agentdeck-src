@@ -35,7 +35,7 @@ const TOOLS: &[Tool] = &[
     Tool { name: "browser_key", route: "/key", description: "Presses a key: Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space.", args: &[("key", "string", "", true)] },
     Tool { name: "browser_fill", route: "/fill", description: "Sets the value of the field matching a CSS selector and fires input and change.", args: &[("selector", "string", "", true), ("value", "string", "", true)] },
     Tool { name: "browser_device", route: "/device", description: "Switches the Preview between desktop, tablet and mobile (a phone or tablet user agent and screen size), to check a responsive layout. Answers with the viewport after the switch.", args: &[("mode", "string", "desktop, tablet or mobile", true), ("landscape", "boolean", "rotate the device", false)] },
-    Tool { name: "browser_serve", route: "/serve", description: "Starts a local dev server that AgentDeck owns, waits until its address answers, then opens it in the Preview panel. Use it for every dev server: one started in your own shell dies when your command or turn ends. If the address already answers, it only opens it. The start command may ask questions (a menu, a port): AgentDeck answers them and moves to a free port if the address is taken. A failed start returns the end of the server's log.", args: &[("command", "string", "the start command, for example pnpm start:svelte", true), ("cwd", "string", "absolute path of the project folder", true), ("url", "string", "the address the server answers at, for example http://localhost:4301/", true), ("answers", "string", "answers to the questions the start command asks (a menu of projects, a port), in the order they come, separated by |: a number, or words from the option the user asked for (for example \"shop|4301\"). Left out: AgentDeck answers by itself (the first option, a free port, the default).", false), ("new_tab", "boolean", "true: open it in a tab of its own, leaving the current tab as it is; false: use the current tab. Left out: the current tab, unless another chat is driving it.", false)] },
+    Tool { name: "browser_serve", route: "/serve", description: "Checks first for an existing live server for the same project and command, or an address that already answers; repeated calls from chats and workers reuse it and do not spawn another process. Otherwise starts a local dev server that AgentDeck owns, waits until its address answers, then opens it in the Preview panel. Use it for every dev server: one started in your own shell dies when your command or turn ends. The result includes server.reused=true when no new process was started. The start command may ask questions (a menu, a port): AgentDeck answers them and moves to a free port if the address is taken. A failed start returns the end of the server's log.", args: &[("command", "string", "the start command, for example pnpm start:svelte", true), ("cwd", "string", "absolute path of the project folder", true), ("url", "string", "the address the server answers at, for example http://localhost:4301/", true), ("answers", "string", "answers to the questions the start command asks (a menu of projects, a port), in the order they come, separated by |: a number, or words from the option the user asked for (for example \"shop|4301\"). Left out: AgentDeck answers by itself (the first option, a free port, the default).", false), ("new_tab", "boolean", "true: open it in a tab of its own, leaving the current tab as it is; false: use the current tab. Left out: the current tab, unless another chat is driving it.", false)] },
     Tool { name: "browser_open", route: "/open", description: "Opens an address in AgentDeck's Preview panel (a tab of its own when another page is open) and waits until the page is ready. Use it right after starting a dev server, then screenshot and act in the same turn.", args: &[("url", "string", "full address, for example http://localhost:4301/", true), ("new_tab", "boolean", "true: open it in a tab of its own, leaving the current tab as it is (use it when another chat is driving the current tab, to compare, to debug side by side, or to look something up). false: use the current tab. Left out: the current tab, unless another chat is driving it.", false)] },
     Tool { name: "browser_drag", route: "/drag", description: "Drags one element onto another, as HTML5 drag and drop (dragstart, dragover, drop). Both are CSS selectors.", args: &[("from", "string", "CSS selector of the element to drag", true), ("to", "string", "CSS selector of the element to drop on", true)] },
     Tool { name: "browser_upload", route: "/upload", description: "Uploads a file from disk: sets it on an <input type=file>, or drops it on a drop zone. Give the absolute file path.", args: &[("selector", "string", "CSS selector of the file input or drop zone", true), ("path", "string", "absolute path of the file", true)] },
@@ -341,14 +341,18 @@ fn find_js(query: &str) -> String {
 
 /// Stores the elements the last `browser_elements` / `browser_find` numbered (`window.__adEls`), with their selectors.
 async fn remember_seen(app: &AppHandle, params: &HashMap<String, String>) {
-    let Ok(answer) = crate::bridge::answer(app, "/eval", params, crate::page_memory::MEMO_JS).await else {
+    let Ok(answer) = crate::bridge::answer(app, "/eval", params, crate::page_memory::MEMO_JS).await
+    else {
         return;
     };
     let Some(text) = answer["result"].as_str() else {
         return;
     };
     if let Ok(seen) = serde_json::from_str::<Value>(text) {
-        if seen["elements"].as_array().is_some_and(|list| !list.is_empty()) {
+        if seen["elements"]
+            .as_array()
+            .is_some_and(|list| !list.is_empty())
+        {
             crate::page_memory::store(app, seen);
         }
     }
@@ -361,7 +365,11 @@ async fn memory_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> V
         params.insert("chat".to_string(), chat.to_string());
     }
     let url = match crate::bridge::answer(app, "/eval", &params, "location.href").await {
-        Ok(answer) => answer["result"].as_str().unwrap_or_default().trim_matches('"').to_owned(),
+        Ok(answer) => answer["result"]
+            .as_str()
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_owned(),
         Err(error) => return error_reply(error),
     };
     if !url.starts_with("http") {
@@ -379,7 +387,13 @@ async fn memory_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> V
         if goal.is_empty() || steps.is_empty() {
             return error_reply("give a goal and at least one step".into());
         }
-        return match crate::page_memory::ask(app, "remember", json!({ "url": url, "goal": goal, "steps": steps })).await {
+        return match crate::page_memory::ask(
+            app,
+            "remember",
+            json!({ "url": url, "goal": goal, "steps": steps }),
+        )
+        .await
+        {
             Ok(_) => text_reply(format!("Remembered {} steps for \"{goal}\".", steps.len())),
             Err(error) => error_reply(error),
         };
@@ -389,7 +403,13 @@ async fn memory_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> V
         return error_reply("say what you are looking for".into());
     }
     let limit = args["limit"].as_u64().unwrap_or(8).clamp(1, 20);
-    let found = match crate::page_memory::ask(app, "recall", json!({ "url": url, "query": query, "limit": limit })).await {
+    let found = match crate::page_memory::ask(
+        app,
+        "recall",
+        json!({ "url": url, "query": query, "limit": limit }),
+    )
+    .await
+    {
         Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(Value::Null),
         Err(error) => return error_reply(error),
     };
@@ -402,7 +422,14 @@ async fn memory_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> V
     let live = if selectors.is_empty() {
         Vec::new()
     } else {
-        match crate::bridge::answer(app, "/eval", &params, &crate::page_memory::verify_js(&selectors)).await {
+        match crate::bridge::answer(
+            app,
+            "/eval",
+            &params,
+            &crate::page_memory::verify_js(&selectors),
+        )
+        .await
+        {
             Ok(answer) => answer["result"]
                 .as_str()
                 .and_then(|text| serde_json::from_str::<Vec<Value>>(text).ok())
@@ -510,7 +537,10 @@ const TAB_ID_ABOUT: &str = "the Preview tab to act on (the `tab` an earlier answ
 /// Whether a tool acts on a page of the Preview, so it can be told which tab.
 fn takes_tab(name: &str) -> bool {
     (name.starts_with("browser_") || name == "ui_audit")
-        && !matches!(name, "browser_serve" | "browser_open" | "browser_record_start" | "browser_record_stop")
+        && !matches!(
+            name,
+            "browser_serve" | "browser_open" | "browser_record_start" | "browser_record_stop"
+        )
 }
 
 /// The `tab_id` a tool call names, passed on as a request parameter.
@@ -562,7 +592,12 @@ fn save_shot(path: &str, bytes: &[u8]) -> Result<String, String> {
     if !path.is_absolute() {
         return Err("save_as must be an absolute path".into());
     }
-    if path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.eq_ignore_ascii_case("png")) != Some(true) {
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("png"))
+        != Some(true)
+    {
         return Err("save_as must end in .png".into());
     }
     if let Some(folder) = path.parent() {
@@ -583,7 +618,10 @@ async fn call_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> Val
         let file_name = args["file_name"].as_str().unwrap_or_default();
         if !file_name.is_empty()
             && (std::path::Path::new(file_name).components().count() != 1
-                || std::path::Path::new(file_name).file_name().map(|name| name != file_name).unwrap_or(true)
+                || std::path::Path::new(file_name)
+                    .file_name()
+                    .map(|name| name != file_name)
+                    .unwrap_or(true)
                 || !file_name.ends_with(".webm"))
         {
             return error_reply("file_name must be a simple filename ending in .webm".into());
@@ -605,7 +643,10 @@ async fn call_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> Val
         };
         let tab = crate::bridge::tab_for(app, chat, args["tab_id"].as_str());
         return match crate::browser::browser_zoom(app.clone(), tab, factor) {
-            Ok(()) => text_reply(format!("Preview zoom set to {:.0}%", factor.clamp(0.25, 3.0) * 100.0)),
+            Ok(()) => text_reply(format!(
+                "Preview zoom set to {:.0}%",
+                factor.clamp(0.25, 3.0) * 100.0
+            )),
             Err(error) => error_reply(error),
         };
     }
@@ -672,10 +713,17 @@ async fn call_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> Val
             Some(Ok(bytes)) => {
                 use base64::Engine;
                 let image = json!({ "type": "image", "mimeType": "image/png", "data": base64::engine::general_purpose::STANDARD.encode(&bytes) });
-                match args["save_as"].as_str().filter(|path| !path.trim().is_empty()) {
+                match args["save_as"]
+                    .as_str()
+                    .filter(|path| !path.trim().is_empty())
+                {
                     Some(path) => match save_shot(path, &bytes) {
-                        Ok(saved) => json!({ "content": [image, { "type": "text", "text": format!("Saved to {saved}") }] }),
-                        Err(error) => json!({ "content": [image, { "type": "text", "text": format!("Not saved: {error}") }], "isError": true }),
+                        Ok(saved) => {
+                            json!({ "content": [image, { "type": "text", "text": format!("Saved to {saved}") }] })
+                        }
+                        Err(error) => {
+                            json!({ "content": [image, { "type": "text", "text": format!("Not saved: {error}") }], "isError": true })
+                        }
                     },
                     None => json!({ "content": [image] }),
                 }
@@ -719,28 +767,40 @@ async fn control_guide_recording(
         "chat": chat,
     });
     if let Err(error) = app.emit("agentdeck:guide-record-control", event) {
-        GUIDE_RECORDING_REPLIES.lock().ok().and_then(|mut replies| replies.remove(&request_id));
+        GUIDE_RECORDING_REPLIES
+            .lock()
+            .ok()
+            .and_then(|mut replies| replies.remove(&request_id));
         return Err(error.to_string());
     }
     match tokio::time::timeout(Duration::from_secs(90), receiver).await {
         Ok(Ok(result)) => result,
         Ok(Err(_)) => Err("the guide recorder closed before replying".into()),
         Err(_) => {
-            GUIDE_RECORDING_REPLIES.lock().ok().and_then(|mut replies| replies.remove(&request_id));
+            GUIDE_RECORDING_REPLIES
+                .lock()
+                .ok()
+                .and_then(|mut replies| replies.remove(&request_id));
             Err("the guide recorder did not respond within 90 seconds".into())
         }
     }
 }
 
 /// Completes one pending browser_record_start or browser_record_stop tool call.
-pub(crate) fn guide_recording_reply(request_id: String, ok: bool, message: String) -> Result<(), String> {
+pub(crate) fn guide_recording_reply(
+    request_id: String,
+    ok: bool,
+    message: String,
+) -> Result<(), String> {
     let sender = GUIDE_RECORDING_REPLIES
         .lock()
         .map_err(|_| "guide recorder is busy".to_string())?
         .remove(&request_id)
         .ok_or_else(|| "the recording request expired".to_string())?;
     let result = if ok { Ok(message) } else { Err(message) };
-    sender.send(result).map_err(|_| "the browser tool already ended".to_string())
+    sender
+        .send(result)
+        .map_err(|_| "the browser tool already ended".to_string())
 }
 
 async fn computer_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> Value {

@@ -131,6 +131,8 @@ pub struct Turn {
     pub restricted: bool,
     /// WorkBuddy is OpenAI-shaped but requires its own gateway headers and prompt normalization.
     pub workbuddy: bool,
+    /// Native subscription auth selected by a custom provider (`muse-code`, for example).
+    pub auth_mode: Option<String>,
 }
 
 /// The only tools a restricted provider may call: they read the public web, never this machine.
@@ -1188,6 +1190,7 @@ mod tests {
             effort: None,
             restricted: false,
             workbuddy: false,
+            auth_mode: None,
         }
     }
 
@@ -1314,6 +1317,7 @@ mod tests {
             effort: None,
             restricted: false,
             workbuddy: false,
+            auth_mode: None,
         };
         assert!(responses_provider(&make("deepseek/deepseek-v4-flash")));
         let mut muse = make("muse-spark-1.3");

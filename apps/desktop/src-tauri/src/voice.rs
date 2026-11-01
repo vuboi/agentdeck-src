@@ -132,7 +132,7 @@ fn convert_pcm(samples: &[f32], sample_rate: u32, channels: usize) -> VoiceResul
             "sample rate and channels must be positive",
         ));
     }
-    if samples.is_empty() || samples.len() % channels != 0 {
+    if samples.is_empty() || !samples.len().is_multiple_of(channels) {
         return Err(VoiceError::InvalidAudio("channel data is incomplete"));
     }
     let frames = samples.len() / channels;

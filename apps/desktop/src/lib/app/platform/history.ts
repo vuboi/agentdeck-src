@@ -37,6 +37,9 @@ const bridge = () => (typeof window === 'undefined' ? undefined : (window as unk
  */
 export const isPreviewCopy = () => Boolean(bridge()?.metadata?.currentWebview?.label?.startsWith('browser-'));
 
+/** Development-only fixture mode for checking the chat UI without importing local provider history. */
+export const fakeData = import.meta.env.DEV && import.meta.env.VITE_FAKE_DATA === '1';
+
 /**
  * Whether this page can call the app's commands. A release build grants them to the app's own window only, so the
  * Preview's copy runs as a plain web page there (the same as in a browser). A debug build grants them to that copy too

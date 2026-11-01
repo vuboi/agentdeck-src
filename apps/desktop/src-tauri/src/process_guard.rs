@@ -61,7 +61,9 @@ mod tests {
     #[test]
     fn the_watchdog_waits_for_the_app_and_leaves_when_the_process_ends_first() {
         let script = watchdog_script(100, 200);
-        assert!(script.starts_with("while kill -0 100 2>/dev/null; do kill -0 200 2>/dev/null || exit 0; sleep 2; done;"));
+        assert!(script.starts_with(
+            "while kill -0 100 2>/dev/null; do kill -0 200 2>/dev/null || exit 0; sleep 2; done;"
+        ));
         assert!(script.contains("kill -KILL -- -200"));
     }
 
@@ -71,15 +73,26 @@ mod tests {
         use std::process::{Command, Stdio};
         use std::time::{Duration, Instant};
         // A stand-in "app" that dies at once, and a process to guard.
-        let mut app = Command::new("sh").args(["-c", "sleep 30"]).stdin(Stdio::null()).spawn().unwrap();
-        let mut guarded = Command::new("sh").args(["-c", "sleep 30"]).stdin(Stdio::null()).spawn().unwrap();
+        let mut app = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut guarded = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
         let script = watchdog_script(app.id(), guarded.id());
         let mut dog = Command::new("sh").args(["-c", &script]).spawn().unwrap();
         app.kill().unwrap();
         let _ = app.wait();
         let started = Instant::now();
         while guarded.try_wait().unwrap().is_none() {
-            assert!(started.elapsed() < Duration::from_secs(10), "the guarded process was not ended");
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the guarded process was not ended"
+            );
             std::thread::sleep(Duration::from_millis(200));
         }
         let _ = dog.wait();

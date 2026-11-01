@@ -458,10 +458,19 @@ pub async fn bring_up(
         },
         |server| server.key,
     );
-    let log = if existing.is_some() {
-        crate::servers::log_path(key)?
+    // Keep the log path only when this call owns the process. An existing server may still be warming up, but
+    // waiting for it must remain a reuse so browser_serve can tell other chats and workers no new process was made.
+    let mut log = if existing.is_some() {
+        None
     } else {
-        crate::servers::start_with_identity(&command, cwd, key, &options, &requested_command, cwd)?
+        Some(crate::servers::start_with_identity(
+            &command,
+            cwd,
+            key,
+            &options,
+            &requested_command,
+            cwd,
+        )?)
     };
     let mut started = std::time::Instant::now();
     // The log as it was at the last look, and since when it has not changed: a script waiting for an answer is silent.
@@ -481,7 +490,7 @@ pub async fn bring_up(
         if let Some(printed) = printed {
             if let Some(target) = crate::browser::ready(&printed).await {
                 crate::servers::set_url(key, target.as_str());
-                return Ok((target, Some(log)));
+                return Ok((target, log));
             }
         }
         // It printed nothing we know: the guess, once it answers, is the page.
@@ -491,7 +500,7 @@ pub async fn bring_up(
                 None => None,
             } {
                 crate::servers::set_url(key, target.as_str());
-                return Ok((target, Some(log)));
+                return Ok((target, log));
             }
         }
         if crate::servers::exited(key) {
@@ -504,7 +513,7 @@ pub async fn bring_up(
                 return Err(failure(&command, cwd, &seen, Ended::Asking));
             }
             options.interactive = true;
-            crate::servers::start_with_identity(
+            let restarted_log = crate::servers::start_with_identity(
                 &command,
                 cwd,
                 key,
@@ -512,6 +521,7 @@ pub async fn bring_up(
                 &requested_command,
                 cwd,
             )?;
+            log = Some(restarted_log);
             started = std::time::Instant::now();
             seen = String::new();
             quiet_since = started;

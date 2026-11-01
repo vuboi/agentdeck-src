@@ -2,6 +2,8 @@ import { connectors } from '../agents/connectors.svelte';
 import { creditModel } from '../agents/credit-model';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
+export const IMAGE_NOT_FOUND_SRC = '/assets/image-not-found.png';
+
 // The UI side of the agent event stream. The Rust side (crates/adapters/src/agent) turns each CLI's output
 // into these events; nothing here knows a CLI's format.
 
@@ -96,6 +98,7 @@ export async function sendCustomTurn(args: {
   restricted?: boolean;
   /** WorkBuddy uses the OpenAI wire format with Tencent-specific gateway headers. */
   workbuddy?: boolean;
+  authMode?: 'workbuddy' | 'muse-code';
 }): Promise<void> {
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('custom_send', args);
@@ -168,13 +171,35 @@ export async function pictureUrl(path: string): Promise<string> {
 
 /** Where a picture is drawn from: its file when it has one (asset URL), else its data URL. Synchronous, for templates. */
 export function pictureSrc(picture: { src?: string; path?: string }): string {
-  if (picture.src && (/^https?:\/\//i.test(picture.src) || picture.src.startsWith('/'))) {
+  if (picture.src && (/^(https?:|data:|blob:)/i.test(picture.src) || picture.src.startsWith('/'))) {
     return picture.src;
   }
   if (picture.path && /^https?:\/\//i.test(picture.path)) {
     return picture.path;
   }
   return picture.path ? convertFileSrc(picture.path) : (picture.src ?? '');
+}
+
+const pictureDataUrls = new Map<string, Promise<string>>();
+
+/**
+ * A picture to draw, read from its file when the asset protocol cannot reach it: `generated-images`, a project
+ * folder or any other path outside the scope in tauri.conf.json gets an asset URL that the WebView refuses, so
+ * the chat drew image-not-found over a file that is really there. Data and remote pictures are already drawable.
+ */
+export function resolvedPictureSrc(picture: { src?: string; path?: string }): Promise<string> {
+  const direct = pictureSrc(picture);
+  if (!picture.path || /^https?:\/\//i.test(picture.path) || (picture.src && /^(data:|blob:)/.test(picture.src))) return Promise.resolve(direct);
+  let pending = pictureDataUrls.get(picture.path);
+  if (!pending) {
+    // A failed read is not kept: the file may only be on its way (an agent still writing it).
+    pending = readImageDataUrl(picture.path).catch(() => {
+      pictureDataUrls.delete(picture.path!);
+      return direct;
+    });
+    pictureDataUrls.set(picture.path, pending);
+  }
+  return pending;
 }
 
 /** The MIME type of a picture file, from its extension. */

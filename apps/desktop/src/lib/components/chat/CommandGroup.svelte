@@ -13,6 +13,7 @@
   import { ASK, WEB_SEARCH } from '../../chat/content/tool-kind';
   import { argOf, describeStep, elapsed, groupIcon, liveState, stepLine, summarize, toolOf, totalChange, type CommandBlock, type Counts, type ThinkingBlock } from '../../chat/content/blocks';
   import { openImages } from '../../browser/preview.svelte';
+  import { IMAGE_NOT_FOUND_SRC } from '../../chat/agent';
   import { imagePathsIn, loadImagePath } from '../../chat/content/attachments';
   import { groupState } from '../../app/ui/open-groups.svelte';
   import { openProjectFile } from '../../files/file-viewer.svelte';
@@ -29,6 +30,13 @@
     event.stopPropagation();
     openImages([{ src, name: 'screenshot.png' }], 0);
   };
+  function useImageFallback(event: Event) {
+    const image = event.currentTarget as HTMLImageElement;
+    if (image.dataset.fallback) return;
+    image.dataset.fallback = '1';
+    image.alt = 'Image not found';
+    image.src = IMAGE_NOT_FOUND_SRC;
+  }
 
   // The steps an agent took, as one quiet line: "Created 2 files, ran 8 commands  +222 −0". While the agent
   // is still working that line carries the only loader, with the current step and a running clock; open it
@@ -435,7 +443,7 @@
                   {/if}
                   {#if item.image}
                     <button type="button" class="w-fit max-w-full cursor-zoom-in overflow-hidden rounded-md border border-border outline-none hover:ring-2 hover:ring-primary/50" aria-label="See the screenshot" onclick={(event) => showShot(event, item.image!)}>
-                      <img src={item.image} alt="Screenshot" class="block max-h-48 max-w-full object-contain" />
+                      <img src={item.image} alt="Screenshot" class="block max-h-48 max-w-full object-contain" onerror={useImageFallback} />
                     </button>
                   {/if}
                   {#if item.output && !item.change}
@@ -480,7 +488,7 @@
     <div class="mt-1.5 flex flex-wrap gap-2" aria-label="Images from the tools">
       {#each shots as shot, position (position)}
         <button type="button" class="block cursor-zoom-in overflow-hidden rounded-lg border border-border outline-none transition hover:ring-2 hover:ring-primary/50 focus-visible:ring-2 focus-visible:ring-ring" aria-label="Open image {position + 1} of {shots.length}" onclick={() => openImages(shots, position)}>
-          <img src={shot.src} alt={shot.name} class="block max-h-36 max-w-60 object-contain" />
+          <img src={shot.src} alt={shot.name} class="block max-h-36 max-w-60 object-contain" onerror={useImageFallback} />
         </button>
       {/each}
     </div>

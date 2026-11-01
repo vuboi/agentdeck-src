@@ -11,32 +11,60 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
-use reqwest::header::{ACCEPT, AUTHORIZATION, REFERER, USER_AGENT};
 use serde::Serialize;
 
 use crate::endpoints::ENDPOINTS;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
-use tokio::process::Command;
 
+#[path = "connectors/antigravity.rs"]
+pub(crate) mod antigravity;
+#[path = "connectors/claude.rs"]
+pub(crate) mod claude;
+#[path = "connectors/codex.rs"]
+pub(crate) mod codex;
+#[path = "connectors/copilot.rs"]
+pub(crate) mod copilot;
+#[path = "connectors/github.rs"]
+pub(crate) mod github;
+#[path = "connectors/opencode.rs"]
+pub(crate) mod opencode;
+#[path = "connectors/providers.rs"]
+pub(crate) mod providers;
 #[path = "connectors/runtime.rs"]
 pub(crate) mod runtime;
 #[path = "connectors/secrets.rs"]
 pub(crate) mod secrets;
 #[path = "connectors/workbuddy.rs"]
 pub(crate) mod workbuddy;
+#[path = "connectors/muse_code.rs"]
+pub(crate) mod muse_code;
 
-pub(crate) use runtime::{account_tool_allows, capture, command, version_of, which, Captured, KillTree};
+pub(crate) use antigravity::{
+    agy_saved_active_email, agy_sign_in, antigravity_sign_in_another_account,
+};
+#[cfg(test)]
+pub(crate) use antigravity::{mode_unavailable, parse_agy_quota};
+pub(crate) use claude::{parse_cswap, ConsoleCredit};
+pub(crate) use codex::{
+    fetch_reset_credits as fetch_codex_reset_credits, fetch_usage as fetch_codex_usage,
+    parse_registry as parse_codex_registry,
+};
+#[cfg(test)]
+pub(crate) use copilot::parse_usage as parse_copilot_usage;
+pub(crate) use copilot::usage as copilot_usage;
+pub(crate) use providers::{capture_rate_limits, ProviderQuota};
+
 #[cfg(test)]
 pub(crate) use crate::providers::custom::{models_url, parse_models};
+pub(crate) use runtime::{
+    account_tool_allows, capture, command, version_of, which, Captured, KillTree,
+};
 pub(crate) use secrets::{delete_secret, stored_secret, write_secret};
 
 /// Keep the Tauri command symbols in this facade while the credential-store implementation lives in `secrets.rs`.
@@ -53,6 +81,89 @@ pub fn secret_load(target: String) -> Option<String> {
 #[tauri::command]
 pub fn secret_delete(target: String) -> Result<(), String> {
     secrets::secret_delete(target)
+}
+
+/// Keep the Tauri command symbol in this facade while Codex's reset-credit implementation lives in `codex.rs`.
+#[tauri::command]
+pub async fn codex_consume_reset_credit(email: String) -> Result<(), String> {
+    codex::consume_reset_credit(email).await
+}
+
+/// Keep the Tauri command symbol in this facade while Claude's Console implementation lives in `claude.rs`.
+#[tauri::command]
+pub async fn claude_console_credit(session_key: String) -> Result<ConsoleCredit, String> {
+    claude::console_credit(session_key).await
+}
+
+/// Keep the Tauri command symbol in this facade while custom provider probing lives in `providers.rs`.
+#[tauri::command]
+pub async fn provider_probe(
+    kind: String,
+    base_url: String,
+    api_key: Option<String>,
+    key_env: Option<String>,
+) -> crate::providers::custom::Probe {
+    providers::probe(kind, base_url, api_key, key_env).await
+}
+
+/// Keep the Tauri command symbol in this facade while provider quota sources live in `providers.rs`.
+#[tauri::command]
+pub async fn provider_quota(
+    base_url: String,
+    api_key: Option<String>,
+    key_env: Option<String>,
+) -> Option<ProviderQuota> {
+    providers::quota(base_url, api_key, key_env).await
+}
+
+/// Keep the Tauri command symbol in this facade while OpenCode Go usage lives in `opencode.rs`.
+#[tauri::command]
+pub async fn opencode_quota() -> opencode::OpenCodeQuota {
+    opencode::quota().await
+}
+
+/// Keep the Tauri command symbols in this facade while Antigravity account and quota logic lives in `antigravity.rs`.
+#[tauri::command]
+pub async fn antigravity_quota() -> Option<antigravity::AgyQuota> {
+    antigravity::antigravity_quota().await
+}
+
+#[tauri::command]
+pub fn antigravity_quota_cached() -> Option<antigravity::AgyQuota> {
+    antigravity::antigravity_quota_cached()
+}
+
+#[tauri::command]
+pub async fn antigravity_quotas(
+    force: Option<bool>,
+    account_id: Option<String>,
+) -> Vec<antigravity::AgyAccountQuota> {
+    antigravity::antigravity_quotas(force, account_id).await
+}
+
+#[tauri::command]
+pub async fn antigravity_accounts_list() -> Vec<antigravity::AgyAccount> {
+    antigravity::antigravity_accounts_list().await
+}
+
+#[tauri::command]
+pub async fn antigravity_account_adopt() -> Result<(), String> {
+    antigravity::antigravity_account_adopt().await
+}
+
+#[tauri::command]
+pub async fn antigravity_account_switch(id: String) -> Result<(), String> {
+    antigravity::antigravity_account_switch(id).await
+}
+
+#[tauri::command]
+pub async fn agy_modes(force: bool) -> antigravity::AgyModes {
+    antigravity::agy_modes(force).await
+}
+
+#[tauri::command]
+pub async fn antigravity_account_remove(id: String) -> Result<(), String> {
+    antigravity::antigravity_account_remove(id).await
 }
 
 struct LoginTask {
@@ -270,8 +381,10 @@ async fn login_status(provider: &str) -> Login {
             None => Login::default(),
         },
         "codex" => codex_login(),
-        "copilot" => github_login().await,
+        "copilot" => github::login().await,
+        "opencode" => opencode::login_status().await,
         "workbuddy" => workbuddy::login_status(),
+        "muse-code" => muse_code::login_status(),
         _ => Login::default(),
     }
 }
@@ -312,11 +425,26 @@ pub struct Detected {
     opencode: Login,
     copilot: Login,
     workbuddy: Login,
+    muse_code: Login,
 }
 
 #[tauri::command]
 pub async fn workbuddy_models() -> Result<Vec<String>, String> {
     workbuddy::models().await
+}
+
+#[tauri::command]
+pub async fn muse_code_models() -> Result<Vec<String>, String> {
+    muse_code::models().await
+}
+
+#[tauri::command]
+pub fn connector_logout(id: String) -> Result<(), String> {
+    match id.as_str() {
+        "workbuddy" => workbuddy::logout(),
+        "muse-code" => muse_code::logout(),
+        _ => Err("this connector does not have a native logout flow".to_string()),
+    }
 }
 
 const TOOLS: [&str; 10] = [
@@ -331,40 +459,6 @@ const TOOLS: [&str; 10] = [
     "npm",
     "gh",
 ];
-
-async fn github_login() -> Login {
-    let Some(gh) = which("gh") else {
-        return Login::default();
-    };
-    match capture(
-        &gh,
-        &["auth", "status", "--hostname", "github.com"],
-        Duration::from_secs(10),
-    )
-    .await
-    {
-        Ok(out) => {
-            let text = format!("{}\n{}", out.stdout, out.stderr);
-            let email = text.lines().find_map(|line| {
-                let (_, account) = line.split_once("Logged in to github.com account ")?;
-                Some(
-                    account
-                        .split_whitespace()
-                        .next()?
-                        .trim_matches(['(', ')'])
-                        .to_owned(),
-                )
-            });
-            Login {
-                logged_in: Some(out.ok || email.is_some()),
-                email,
-                plan: None,
-                detail: Some("GitHub CLI".into()),
-            }
-        }
-        Err(_) => Login::default(),
-    }
-}
 
 pub(crate) fn codex_home() -> PathBuf {
     std::env::var_os("CODEX_HOME")
@@ -555,31 +649,16 @@ pub async fn connectors_detect() -> Detected {
         },
         None => Login::default(),
     };
-    let opencode = match which("opencode") {
-        Some(path) => match capture(
-            &path,
-            &["auth", "list", "--format", "json"],
-            Duration::from_secs(10),
-        )
-        .await
-        {
-            Ok(out) => Login {
-                logged_in: Some(out.ok),
-                detail: (!out.stdout.trim().is_empty()).then_some("OpenCode auth available".into()),
-                ..Login::default()
-            },
-            Err(_) => Login::default(),
-        },
-        None => Login::default(),
-    };
+    let opencode = opencode::login_status().await;
     Detected {
         tools,
         claude,
         codex: codex_login(),
         antigravity: antigravity_login(),
         opencode,
-        copilot: github_login().await,
+        copilot: github::login().await,
         workbuddy: workbuddy::login_status(),
+        muse_code: muse_code::login_status(),
     }
 }
 
@@ -692,6 +771,7 @@ pub async fn connector_install(app: AppHandle, id: String) -> Result<(), String>
 /// when it is installed, so the account is also added to its list.
 #[tauri::command]
 pub async fn connector_login(app: AppHandle, id: String) -> Result<(), String> {
+    let id = normalize_connector_id(&id);
     let generation = LOGIN_GENERATION.fetch_add(1, Ordering::Relaxed);
     let task = {
         let mut tasks = LOGIN_TASKS
@@ -726,6 +806,20 @@ pub async fn connector_login(app: AppHandle, id: String) -> Result<(), String> {
     result
 }
 
+fn normalize_connector_id(id: &str) -> String {
+    id.trim().to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod login_tests {
+    use super::normalize_connector_id;
+
+    #[test]
+    fn native_muse_code_id_is_normalized_before_dispatch() {
+        assert_eq!(normalize_connector_id("  Muse-Code "), "muse-code");
+    }
+}
+
 /// Cancels an in-progress connector sign-in and drops its child process.
 #[tauri::command]
 pub fn connector_login_cancel(id: String) -> Result<(), String> {
@@ -744,6 +838,7 @@ async fn connector_login_inner(app: AppHandle, id: String) -> Result<(), String>
     let idle_limit = Some(Duration::from_secs(120));
     match id.as_str() {
         "workbuddy" => workbuddy::sign_in().await,
+        "muse-code" => muse_code::sign_in().await,
         "claude" => {
             let claude = which("claude").ok_or("Claude Code is not installed")?;
             run_logged_with_idle_timeout(
@@ -820,11 +915,17 @@ async fn connector_login_inner(app: AppHandle, id: String) -> Result<(), String>
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct UsageWindow {
-    /// `5h`, `7d`, `30d`…
+    /// `5h`, `7d`, `30d`…, or `requests`/`tokens` for a rate-limit window.
     label: String,
     pct: f64,
     /// Epoch seconds. May be in the past when the figure is old.
     resets_at: Option<i64>,
+    /// Units left and the window's ceiling, when the provider gives counts rather than a percentage
+    /// (rate-limit headers: requests or tokens still allowed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    remaining: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    limit: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -910,284 +1011,6 @@ fn read_codex_registry(codex_home: &Path) -> Result<(Vec<Account>, Option<AutoSw
     parse_codex_registry(&text)
 }
 
-fn parse_codex_usage(payload: &Value) -> (Vec<UsageWindow>, Option<String>) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64);
-    let windows = ["primary_window", "secondary_window"]
-        .iter()
-        .filter_map(|name| {
-            let window = payload.pointer(&format!("/rate_limit/{name}"))?;
-            let used_percent = window["used_percent"].as_f64()?;
-            let seconds = window["limit_window_seconds"].as_i64()?;
-            if seconds <= 0 {
-                return None;
-            }
-            let resets_at = window["reset_at"].as_i64().or_else(|| {
-                window["reset_after_seconds"]
-                    .as_i64()
-                    .filter(|remaining| *remaining >= 0)
-                    .map(|remaining| now + remaining)
-            });
-            Some(UsageWindow {
-                label: window_label((seconds + 59) / 60),
-                pct: used_percent.clamp(0.0, 100.0),
-                resets_at,
-            })
-        })
-        .collect();
-    let plan = payload["plan_type"].as_str().map(str::to_owned);
-    (windows, plan)
-}
-
-async fn fetch_codex_usage(
-    codex_home: &Path,
-    email: &str,
-) -> Result<(Vec<UsageWindow>, Option<String>), String> {
-    let (access_token, account_id) = codex_account_auth(codex_home, email)?;
-    let response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|error| format!("Could not create Codex usage client: {error}"))?
-        .get(ENDPOINTS.chatgpt.usage.as_str())
-        .headers(codex_reset_headers(
-            &access_token,
-            account_id.as_deref(),
-            "/backend-api/wham/usage",
-        ))
-        .send()
-        .await
-        .map_err(|error| format!("Could not fetch Codex usage: {error}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("Codex usage API returned HTTP {status}"));
-    }
-    let payload: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("Could not parse Codex usage response: {error}"))?;
-    let (windows, plan) = parse_codex_usage(&payload);
-    if windows.is_empty() {
-        return Err("Codex usage API returned no rate-limit windows".to_string());
-    }
-    Ok((windows, plan))
-}
-
-fn codex_account_auth(codex_home: &Path, email: &str) -> Result<(String, Option<String>), String> {
-    let registry_path = codex_home.join("accounts").join("registry.json");
-    let registry_text = std::fs::read_to_string(&registry_path)
-        .map_err(|error| format!("Could not read Codex account registry: {error}"))?;
-    let registry: Value = serde_json::from_str(&registry_text)
-        .map_err(|error| format!("Could not parse Codex account registry: {error}"))?;
-    let account_key = registry["accounts"]
-        .as_array()
-        .and_then(|accounts| {
-            accounts.iter().find_map(|account| {
-                (account["email"].as_str() == Some(email))
-                    .then(|| account["account_key"].as_str())
-                    .flatten()
-            })
-        })
-        .ok_or_else(|| "Codex account was not found in codex-auth registry".to_string())?;
-    let auth_path = codex_home
-        .join("accounts")
-        .join(format!("{}.auth.json", URL_SAFE_NO_PAD.encode(account_key)));
-    let auth_text = std::fs::read_to_string(&auth_path)
-        .map_err(|error| format!("Could not read saved Codex account credentials: {error}"))?;
-    let auth: Value = serde_json::from_str(&auth_text)
-        .map_err(|error| format!("Could not parse saved Codex account credentials: {error}"))?;
-    if auth["auth_mode"].as_str() == Some("apikey")
-        || auth["OPENAI_API_KEY"]
-            .as_str()
-            .is_some_and(|key| !key.is_empty())
-    {
-        return Err("API key accounts do not support Codex reset credits".to_string());
-    }
-    let access_token = auth["tokens"]["access_token"]
-        .as_str()
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| "Saved Codex account has no access token; sign in again".to_string())?
-        .to_owned();
-    let account_id = auth["tokens"]["account_id"].as_str().map(str::to_owned);
-    Ok((access_token, account_id))
-}
-
-fn codex_reset_headers(
-    access_token: &str,
-    account_id: Option<&str>,
-    target_path: &str,
-) -> reqwest::header::HeaderMap {
-    let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        ACCEPT,
-        reqwest::header::HeaderValue::from_static("application/json"),
-    );
-    headers.insert(
-        REFERER,
-        reqwest::header::HeaderValue::from_str(&ENDPOINTS.chatgpt.home)
-            .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static("https://chatgpt.com/")),
-    );
-    headers.insert(
-        USER_AGENT,
-        reqwest::header::HeaderValue::from_static(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-        ),
-    );
-    if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {access_token}")) {
-        headers.insert(AUTHORIZATION, value);
-    }
-    if let Ok(value) = reqwest::header::HeaderValue::from_str(target_path) {
-        headers.insert("x-openai-target-path", value.clone());
-        headers.insert("x-openai-target-route", value);
-    }
-    if let Some(account_id) = account_id {
-        if let Ok(value) = reqwest::header::HeaderValue::from_str(account_id) {
-            headers.insert("ChatGPT-Account-Id", value);
-        }
-    }
-    headers
-}
-
-async fn fetch_codex_reset_credits(codex_home: &Path, email: &str) -> Result<i64, String> {
-    let (access_token, account_id) = codex_account_auth(codex_home, email)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|error| format!("Could not create Codex reset credits client: {error}"))?;
-    let response = client
-        .get(ENDPOINTS.chatgpt.reset_credits.as_str())
-        .headers(codex_reset_headers(
-            &access_token,
-            account_id.as_deref(),
-            "/backend-api/wham/rate-limit-reset-credits",
-        ))
-        .send()
-        .await
-        .map_err(|error| format!("Could not fetch Codex reset credits: {error}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("Codex reset credits API returned HTTP {status}"));
-    }
-    let payload: Value = response
-        .json()
-        .await
-        .map_err(|error| format!("Could not parse Codex reset credits response: {error}"))?;
-    payload
-        .get("available_count")
-        .or_else(|| payload.get("availableCount"))
-        .or_else(|| {
-            payload.get("data").and_then(|data| {
-                data.get("available_count")
-                    .or_else(|| data.get("availableCount"))
-            })
-        })
-        .and_then(Value::as_i64)
-        .or_else(|| {
-            payload
-                .get("credits")
-                .or_else(|| payload.get("data").and_then(|data| data.get("credits")))
-                .and_then(Value::as_array)
-                .map(|credits| {
-                    credits
-                        .iter()
-                        .filter(|credit| {
-                            let status = credit["status"].as_str().unwrap_or("available");
-                            !matches!(
-                                status.to_ascii_lowercase().as_str(),
-                                "redeemed" | "used" | "consumed" | "expired"
-                            )
-                        })
-                        .count() as i64
-                })
-        })
-        .ok_or_else(|| "Codex reset credits response has no available count".to_string())
-}
-
-#[tauri::command]
-pub async fn codex_consume_reset_credit(email: String) -> Result<(), String> {
-    let available = fetch_codex_reset_credits(&codex_home(), &email).await?;
-    if available < 1 {
-        return Err("No Codex reset credits are available for this account".to_string());
-    }
-    let (access_token, account_id) = codex_account_auth(&codex_home(), &email)?;
-    let target_path = "/backend-api/wham/rate-limit-reset-credits/consume";
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|error| format!("Could not create Codex reset client: {error}"))?;
-    let response = client
-        .post(ENDPOINTS.chatgpt.reset_credits_consume.as_str())
-        .headers(codex_reset_headers(
-            &access_token,
-            account_id.as_deref(),
-            target_path,
-        ))
-        .json(&serde_json::json!({ "redeem_request_id": uuid::Uuid::new_v4().to_string() }))
-        .send()
-        .await
-        .map_err(|error| format!("Could not redeem Codex reset credit: {error}"))?;
-    let status = response.status();
-    if status.is_success() {
-        Ok(())
-    } else {
-        Err(format!("Codex reset API returned HTTP {status}"))
-    }
-}
-
-fn parse_codex_registry(text: &str) -> Result<(Vec<Account>, Option<AutoSwitch>), String> {
-    let json: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    let active = json["active_account_key"].as_str().unwrap_or_default();
-    let accounts = json["accounts"]
-        .as_array()
-        .map(|list| {
-            list.iter()
-                .filter_map(|item| {
-                    let key = item["account_key"].as_str()?;
-                    let usage = &item["last_usage"];
-                    let windows: Vec<UsageWindow> = ["primary", "secondary"]
-                        .iter()
-                        .filter_map(|name| {
-                            let window = &usage[*name];
-                            Some(UsageWindow {
-                                label: window_label(window["window_minutes"].as_i64()?),
-                                pct: window["used_percent"].as_f64()?,
-                                resets_at: window["resets_at"].as_i64(),
-                            })
-                        })
-                        .collect();
-                    let text = |name: &str| {
-                        item[name]
-                            .as_str()
-                            .filter(|value| !value.is_empty())
-                            .map(str::to_owned)
-                    };
-                    Some(Account {
-                        expired: false,
-                        id: text("email").unwrap_or_else(|| key.to_owned()),
-                        email: text("email").unwrap_or_else(|| key.to_owned()),
-                        alias: text("alias"),
-                        plan: text("plan"),
-                        active: key == active,
-                        status: windows
-                            .is_empty()
-                            .then(|| "no usage figures yet".to_string()),
-                        usage: windows,
-                        observed_at: item["last_usage_at"].as_i64(),
-                        reset_credits_available: None,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let auto = &json["auto_switch"];
-    let auto_switch = auto["enabled"].as_bool().map(|enabled| AutoSwitch {
-        enabled,
-        five_hour: auto["threshold_5h_percent"].as_u64().unwrap_or(10),
-        weekly: auto["threshold_weekly_percent"].as_u64().unwrap_or(5),
-    });
-    Ok((accounts, auto_switch))
-}
-
 /// `YYYY-MM-DDTHH:MM:SSZ` to epoch seconds (the offset is taken to be UTC, which is what `cswap` writes).
 fn parse_iso(text: &str) -> Option<i64> {
     let number = |from: usize, len: usize| text.get(from..from + len)?.parse::<i64>().ok();
@@ -1204,100 +1027,14 @@ fn parse_iso(text: &str) -> Option<i64> {
 }
 
 /// `cswap list --json`.
-fn parse_cswap(text: &str) -> Result<Vec<Account>, String> {
-    let json: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    if let Some(error) = json.get("error") {
-        return Err(error["message"]
-            .as_str()
-            .map_or_else(|| error.to_string(), str::to_owned));
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64);
-    Ok(json["accounts"]
-        .as_array()
-        .map(|list| {
-            list.iter()
-                .filter_map(|item| {
-                    let number = item["number"].as_i64()?;
-                    let windows: Vec<UsageWindow> = [("fiveHour", "5h"), ("sevenDay", "7d")]
-                        .iter()
-                        .filter_map(|(key, label)| {
-                            let window = &item["usage"][*key];
-                            Some(UsageWindow {
-                                label: (*label).to_string(),
-                                pct: window["pct"].as_f64()?,
-                                resets_at: window["resetsAt"].as_str().and_then(parse_iso),
-                            })
-                        })
-                        .collect();
-                    let status = item["usageStatus"]
-                        .as_str()
-                        .filter(|status| *status != "ok")
-                        .map(str::to_owned);
-                    Some(Account {
-                        expired: status.as_deref() == Some("expired"),
-                        id: number.to_string(),
-                        email: item["email"].as_str().unwrap_or("(unknown)").to_owned(),
-                        alias: item["alias"]
-                            .as_str()
-                            .filter(|alias| !alias.is_empty())
-                            .map(str::to_owned),
-                        plan: item["plan"].as_str().map(str::to_owned),
-                        active: item["active"].as_bool().unwrap_or(false),
-                        observed_at: (!windows.is_empty()).then_some(now),
-                        usage: windows,
-                        status,
-                        reset_credits_available: None,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default())
-}
-
-/// Premium-request quota of the account `gh` is signed in as, from `copilot_internal/user`: the call VS Code's Copilot
-/// Chat makes for its own quota meter. Read only; `None` when the call fails.
-async fn copilot_usage(gh: &Path) -> Option<(Vec<UsageWindow>, i64)> {
-    let out = capture(
-        gh,
-        &["api", "copilot_internal/user"],
-        Duration::from_secs(15),
-    )
-    .await
-    .ok()?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs() as i64;
-    out.ok
-        .then(|| parse_copilot_usage(&out.stdout, now))
-        .flatten()
-}
-
-/// `copilot_internal/user` JSON to the premium-request window. An unlimited plan has no window.
-fn parse_copilot_usage(text: &str, now: i64) -> Option<(Vec<UsageWindow>, i64)> {
-    let json: Value = serde_json::from_str(text).ok()?;
-    let premium = &json["quota_snapshots"]["premium_interactions"];
-    if premium["unlimited"].as_bool().unwrap_or(false) {
-        return Some((Vec::new(), now));
-    }
-    let left = premium["percent_remaining"].as_f64()?;
-    let window = UsageWindow {
-        // The quota resets monthly; `30d` is how the other providers label a month.
-        label: "30d".into(),
-        pct: (100.0 - left).clamp(0.0, 100.0),
-        resets_at: json["quota_reset_date"]
-            .as_str()
-            .and_then(|date| parse_iso(&format!("{date}T00:00:00Z"))),
-    };
-    Some((vec![window], now))
-}
-
 /// The accounts one provider has been signed in with. `refresh` asks the switcher tool for fresh usage figures
 /// (a network call by that tool); without it the saved figures are read from disk.
 #[tauri::command]
-pub async fn accounts_list(provider: String, refresh: bool) -> Result<Accounts, String> {
+pub async fn accounts_list(
+    provider: String,
+    refresh: bool,
+    account_id: Option<String>,
+) -> Result<Accounts, String> {
     match provider.as_str() {
         "codex" => {
             let manager = which("codex-auth");
@@ -1305,7 +1042,7 @@ pub async fn accounts_list(provider: String, refresh: bool) -> Result<Accounts, 
                 .lock()
                 .map(|known| known.is_none())
                 .unwrap_or(true);
-            if refresh || status_not_checked {
+            if account_id.is_none() && (refresh || status_not_checked) {
                 if let Some(auth) = &manager {
                     // `list` refreshes usage and is the only source for 401 status, which is absent from the registry.
                     // On Windows `command()` routes `.cmd` shims through cmd.exe. Do not show stale registry rows as
@@ -1341,7 +1078,12 @@ pub async fn accounts_list(provider: String, refresh: bool) -> Result<Accounts, 
                         account.status = Some("signed out (401)".to_string());
                     }
                     let mut usage_queries = tokio::task::JoinSet::new();
-                    for account in accounts.iter().filter(|account| !account.expired) {
+                    for account in accounts.iter().filter(|account| {
+                        !account.expired
+                            && account_id
+                                .as_deref()
+                                .is_none_or(|requested| requested == account.id)
+                    }) {
                         let email = account.email.clone();
                         let home = codex_home();
                         usage_queries.spawn(async move {
@@ -1369,6 +1111,10 @@ pub async fn accounts_list(provider: String, refresh: bool) -> Result<Accounts, 
                                     }
                                 }
                                 Err(error) => {
+                                    if error.contains("HTTP 401") || error.contains("HTTP 404") {
+                                        account.expired = true;
+                                        account.usage.clear();
+                                    }
                                     account.status =
                                         Some(format!("Live usage unavailable: {error}"));
                                 }
@@ -1423,77 +1169,7 @@ pub async fn accounts_list(provider: String, refresh: bool) -> Result<Accounts, 
                 }),
             }
         }
-        "copilot" => {
-            let Some(gh) = which("gh") else {
-                return Ok(Accounts {
-                    manager: false,
-                    accounts: Vec::new(),
-                    auto_switch: None,
-                    error: None,
-                });
-            };
-            let out = capture(
-                &gh,
-                &["auth", "status", "--hostname", "github.com"],
-                Duration::from_secs(10),
-            )
-            .await?;
-            let text = format!("{}\n{}", out.stdout, out.stderr);
-            let mut accounts = Vec::new();
-            let mut current: Option<(String, bool)> = None;
-            for line in text.lines() {
-                if let Some((_, rest)) = line.split_once("Logged in to github.com account ") {
-                    if let Some((id, active)) = current.take() {
-                        accounts.push((id, active));
-                    }
-                    let id = rest
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or_default()
-                        .trim_matches(['(', ')'])
-                        .to_owned();
-                    current = Some((id, false));
-                } else if line.contains("Active account: true") {
-                    if let Some((_, active)) = current.as_mut() {
-                        *active = true;
-                    }
-                }
-            }
-            if let Some(row) = current {
-                accounts.push(row);
-            }
-            if accounts.len() == 1 && !accounts[0].1 {
-                accounts[0].1 = true;
-            }
-            let mut rows: Vec<Account> = accounts
-                .into_iter()
-                .map(|(id, active)| Account {
-                    id: id.clone(),
-                    email: id,
-                    alias: None,
-                    plan: Some("GitHub Copilot".into()),
-                    active,
-                    usage: Vec::new(),
-                    observed_at: None,
-                    status: None,
-                    expired: false,
-                    reset_credits_available: None,
-                })
-                .collect();
-            // The usage call answers for the account `gh` is signed in as, which is the active row.
-            if let Some(row) = rows.iter_mut().find(|row| row.active) {
-                if let Some((usage, observed)) = copilot_usage(&gh).await {
-                    row.usage = usage;
-                    row.observed_at = Some(observed);
-                }
-            }
-            Ok(Accounts {
-                manager: true,
-                accounts: rows,
-                auto_switch: None,
-                error: (!out.ok && text.is_empty()).then(|| "GitHub CLI is not signed in".into()),
-            })
-        }
+        "copilot" => github::accounts(account_id).await,
         other => Err(format!("`{other}` has no account list")),
     }
 }
@@ -1523,13 +1199,12 @@ pub(crate) fn failure(out: &Captured) -> String {
 #[tauri::command]
 pub async fn account_switch(provider: String, id: String) -> Result<(), String> {
     let id = safe_arg(&id)?;
+    if provider == "copilot" {
+        return github::switch(id).await;
+    }
     let (tool, args): (&str, Vec<&str>) = match provider.as_str() {
         "codex" => ("codex-auth", vec!["switch", id]),
         "claude" => ("cswap", vec!["switch", id, "--json"]),
-        "copilot" => (
-            "gh",
-            vec!["auth", "switch", "--hostname", "github.com", "--user", id],
-        ),
         other => return Err(format!("`{other}` has no accounts to switch")),
     };
     let program = which(tool).ok_or_else(|| format!("`{tool}` is not installed"))?;
@@ -1650,22 +1325,45 @@ pub async fn account_adopt() -> Result<(), String> {
     }
 }
 
-/// Removes a saved Codex account from `codex-auth`'s list.
+/// Removes one saved account from the switcher tool: `codex-auth` for Codex, `cswap` for Claude. The account in use
+/// cannot be removed, so the CLI is never left signed in as an account that AgentDeck no longer knows.
 #[tauri::command]
 pub async fn account_remove(provider: String, id: String) -> Result<(), String> {
-    if provider != "codex" {
-        return Err("only Codex accounts can be removed here".to_string());
-    }
     let id = safe_arg(&id)?;
-    let auth = which("codex-auth").ok_or("`codex-auth` is not installed")?;
-    // Several removals can be asked at once; codex-auth edits one registry file, so they run in turn.
-    static REMOVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _turn = REMOVE_LOCK.lock().await;
-    let out = capture(&auth, &["remove", id], Duration::from_secs(30)).await?;
-    if out.ok {
-        Ok(())
-    } else {
-        Err(failure(&out))
+    match provider.as_str() {
+        "codex" => {
+            let auth = which("codex-auth").ok_or("`codex-auth` is not installed")?;
+            // Several removals can be asked at once; codex-auth edits one registry file, so they run in turn.
+            static REMOVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _turn = REMOVE_LOCK.lock().await;
+            let out = capture(&auth, &["remove", id], Duration::from_secs(30)).await?;
+            if out.ok {
+                Ok(())
+            } else {
+                Err(failure(&out))
+            }
+        }
+        "claude" => {
+            let cswap = which("cswap").ok_or("`cswap` is not installed")?;
+            let listed = capture(&cswap, &["list", "--json"], Duration::from_secs(30)).await?;
+            let accounts = parse_cswap(&listed.stdout)?;
+            match accounts.iter().find(|account| account.id == id) {
+                None => return Err("that Claude account is not in the list".to_string()),
+                Some(account) if account.active => return Err(
+                    "This Claude account is in use: switch to another account before removing it"
+                        .to_string(),
+                ),
+                Some(_) => {}
+            }
+            let out = capture(&cswap, &["remove", id], Duration::from_secs(30)).await?;
+            if out.ok {
+                Ok(())
+            } else {
+                Err(failure(&out))
+            }
+        }
+        "copilot" => github::remove(id).await,
+        other => Err(format!("`{other}` accounts cannot be removed here")),
     }
 }
 
@@ -1698,864 +1396,7 @@ pub async fn codex_auto_switch(enabled: bool, five_hour: u8, weekly: u8) -> Resu
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Antigravity usage
-
-#[derive(Serialize, Debug, PartialEq)]
-pub struct QuotaGroup {
-    id: String,
-    label: String,
-    windows: Vec<UsageWindow>,
-}
-
-#[derive(Serialize, Debug, PartialEq)]
-pub struct AgyQuota {
-    /// Epoch seconds of the figures.
-    observed_at: Option<i64>,
-    groups: Vec<QuotaGroup>,
-}
-
-/// agy hands its quota to the status-line command, and a tool that already owns that hook (AI Usage Meter) saves
-/// it to `usage-cache.json`: `{"fetchedAt": ms, "quota": {"gemini-5h": {"remaining_fraction", "reset_time"}, ...}}`.
-/// The keys are `<model group>-<window>`. Read-only: AgentDeck never edits agy's status-line setting.
-fn parse_agy_quota(text: &str) -> Option<AgyQuota> {
-    let json: Value = serde_json::from_str(text).ok()?;
-    let quota = json["quota"].as_object()?;
-    let mut groups: Vec<QuotaGroup> = Vec::new();
-    for (key, entry) in quota {
-        let (group, window) = key.rsplit_once('-')?;
-        let Some(remaining) = entry["remaining_fraction"].as_f64() else {
-            continue;
-        };
-        let window = UsageWindow {
-            label: if window == "weekly" {
-                "7d".to_string()
-            } else {
-                window.to_string()
-            },
-            pct: ((1.0 - remaining) * 100.0).clamp(0.0, 100.0),
-            resets_at: entry["reset_time"].as_str().and_then(parse_iso),
-        };
-        match groups.iter_mut().find(|item| item.id == group) {
-            Some(item) => item.windows.push(window),
-            None => groups.push(QuotaGroup {
-                id: group.to_string(),
-                label: match group {
-                    "gemini" => "Gemini models".to_string(),
-                    "3p" => "Claude and GPT-OSS models".to_string(),
-                    other => other.to_string(),
-                },
-                windows: vec![window],
-            }),
-        }
-    }
-    groups.sort_by_key(|item| item.id != "gemini");
-    for group in &mut groups {
-        group.windows.sort_by_key(|window| window.label != "5h");
-    }
-    Some(AgyQuota {
-        observed_at: json["fetchedAt"].as_i64().map(|ms| ms / 1000),
-        groups,
-    })
-}
-
-/// The last quota figures agy saved to a file (its status line does it, when it runs). `None` when nothing is there.
-fn saved_agy_quota() -> Option<AgyQuota> {
-    let path = crate::home_folder()
-        .ok()?
-        .join(".gemini")
-        .join("antigravity-cli")
-        .join("ai-quota-tray")
-        .join("usage-cache.json");
-    parse_agy_quota(&std::fs::read_to_string(path).ok()?)
-}
-
-/// The last locally saved quota, returned before the live request so Settings can show it immediately.
-#[tauri::command]
-pub fn antigravity_quota_cached() -> Option<AgyQuota> {
-    saved_agy_quota()
-}
-
-fn agy_accounts_path() -> Result<PathBuf, String> {
-    crate::home_folder().map(|home| {
-        home.join(crate::channel::home_folder_name())
-            .join("antigravity-accounts.json")
-    })
-}
-
-#[cfg(windows)]
-fn agy_secret_target(email: &str) -> String {
-    let suffix: String = email
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    format!("AgentDeck Antigravity {suffix}")
-}
-
-#[derive(Serialize, serde::Deserialize, Clone)]
-pub struct AgyAccount {
-    id: String,
-    email: String,
-    active: bool,
-    #[serde(default)]
-    expired: bool,
-    #[serde(default)]
-    status: Option<String>,
-}
-
-/// Reports only problems that can be checked from the saved credential without making a network request.
-fn agy_credential_status(email: &str) -> (bool, Option<String>) {
-    #[cfg(windows)]
-    {
-        let Some(secret) = stored_secret(&agy_secret_target(email)) else {
-            return (true, Some("Saved credentials are missing".to_string()));
-        };
-        let Ok(value) = serde_json::from_str::<Value>(&secret) else {
-            return (true, Some("Saved login is invalid".to_string()));
-        };
-        let token = &value["token"];
-        // The access token lives about an hour; the refresh token is what keeps the sign-in. agy renews the access
-        // token itself the next time it runs, so only a missing refresh token means signing in again.
-        if token["refresh_token"].as_str().is_none_or(str::is_empty) {
-            if token["access_token"].as_str().is_none_or(str::is_empty) {
-                return (true, Some("Access token is missing".to_string()));
-            }
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_secs() as i64);
-            if token["expiry"]
-                .as_str()
-                .and_then(parse_iso)
-                .is_some_and(|expiry| expiry <= now + 30)
-            {
-                return (true, Some("Access token expired".to_string()));
-            }
-        }
-    }
-    #[cfg(not(windows))]
-    let _ = email;
-
-    (false, None)
-}
-
-/// Whether two Antigravity sign-ins are the same login. agy renews the access token every hour, so the whole value
-/// changes; the refresh token does not.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn same_agy_login(a: &Value, b: &Value) -> bool {
-    let refresh = |value: &Value| {
-        value["token"]["refresh_token"]
-            .as_str()
-            .filter(|token| !token.is_empty())
-            .map(str::to_owned)
-    };
-    match (refresh(a), refresh(b)) {
-        (Some(left), Some(right)) => left == right,
-        _ => a == b,
-    }
-}
-
-fn read_agy_accounts() -> Vec<AgyAccount> {
-    agy_accounts_path()
-        .ok()
-        .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|text| serde_json::from_str::<Vec<AgyAccount>>(&text).ok())
-        .unwrap_or_default()
-}
-
-fn write_agy_accounts(accounts: &[AgyAccount]) -> Result<(), String> {
-    let path = agy_accounts_path()?;
-    let parent = path
-        .parent()
-        .ok_or("could not find the AgentDeck data folder")?;
-    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let text = serde_json::to_string_pretty(accounts).map_err(|error| error.to_string())?;
-    std::fs::write(path, text).map_err(|error| error.to_string())
-}
-
-/// The sign-in of Antigravity (`{"token": {"access_token", "refresh_token", "expiry"}}`), read and never written: the
-/// system store first, then the file agy falls back to when it has no system store.
-fn agy_sign_in() -> Option<Value> {
-    #[cfg(windows)]
-    if let Some(value) = stored_secret("gemini:antigravity")
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-    {
-        return Some(value);
-    }
-    let file = crate::home_folder()
-        .ok()?
-        .join(".gemini")
-        .join("jetski-standalone-oauth-token");
-    serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()
-}
-
-/// Saved Antigravity accounts. The JSON index stores emails only; each OAuth token is held by Windows Credential Manager.
-#[tauri::command]
-pub async fn antigravity_accounts_list() -> Vec<AgyAccount> {
-    #[cfg(windows)]
-    adopt_unsaved_agy_sign_in().await;
-    let active = agy_saved_active_email().or_else(|| antigravity_login().email);
-    read_agy_accounts()
-        .into_iter()
-        .map(|mut account| {
-            account.active = active.as_deref() == Some(account.email.as_str());
-            (account.expired, account.status) = agy_credential_status(&account.email);
-            account
-        })
-        .collect()
-}
-
-/// agy is signed in with a login no saved account holds (it was signed in outside AgentDeck, or agy got a new refresh
-/// token): the account is asked of agy itself (`agy models` writes the email to its log) and saved. Tried at most once
-/// every ten minutes, so a list refresh never runs the CLI over and over.
-#[cfg(windows)]
-async fn adopt_unsaved_agy_sign_in() {
-    static LAST_TRY: AtomicU64 = AtomicU64::new(0);
-    let Some(current) = agy_sign_in() else { return };
-    if current["token"]["access_token"]
-        .as_str()
-        .is_none_or(str::is_empty)
-    {
-        return;
-    }
-    if agy_saved_active_email().is_some() {
-        return;
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
-    let last = LAST_TRY.load(Ordering::Relaxed);
-    if last != 0 && now.saturating_sub(last) < 600 {
-        return;
-    }
-    LAST_TRY.store(now, Ordering::Relaxed);
-    let Ok(email) = refresh_antigravity_cli_email(std::time::SystemTime::now()).await else {
-        return;
-    };
-    let _ = save_agy_account(&current, email);
-}
-
-fn agy_saved_active_email() -> Option<String> {
-    #[cfg(not(windows))]
-    return None;
-
-    #[cfg(windows)]
-    {
-        let current = agy_sign_in()?;
-        let email = read_agy_accounts().into_iter().find_map(|account| {
-            let saved = stored_secret(&agy_secret_target(&account.email))?;
-            let saved: Value = serde_json::from_str(&saved).ok()?;
-            same_agy_login(&saved, &current).then_some(account.email)
-        })?;
-        // agy renewed the token since it was saved: keep the saved copy current, so switching back to this account
-        // later gives agy a fresh token, not one from hours ago.
-        let target = agy_secret_target(&email);
-        let stale = stored_secret(&target)
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .is_some_and(|saved| saved != current);
-        if stale {
-            if let Ok(text) = serde_json::to_string(&current) {
-                let _ = write_secret(&target, &text);
-            }
-        }
-        Some(email)
-    }
-}
-
-/// Saves the Antigravity account currently signed in on this machine. Call after signing in with `agy`.
-#[tauri::command]
-pub async fn antigravity_account_adopt() -> Result<(), String> {
-    #[cfg(not(windows))]
-    return Err(
-        "Antigravity account switching currently requires Windows Credential Manager".to_string(),
-    );
-
-    #[cfg(windows)]
-    {
-        let sign_in = agy_sign_in().ok_or("no Antigravity sign-in was found")?;
-        let email = antigravity_login()
-            .email
-            .ok_or("could not read the signed-in Antigravity email from its CLI log")?;
-        save_agy_account(&sign_in, email)
-    }
-}
-
-/// Puts agy's previous sign-in back unless the new one was completed. "Sign in another account" clears agy's shared
-/// sign-in first; a cancel (the task is dropped), a timeout or a closed console must not leave agy signed out.
-#[cfg(windows)]
-struct RestoreSignIn {
-    previous: Option<Value>,
-    armed: bool,
-}
-
-#[cfg(windows)]
-impl Drop for RestoreSignIn {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        if let Some(previous) = &self.previous {
-            if let Ok(text) = serde_json::to_string(previous) {
-                let _ = write_secret("gemini:antigravity", &text);
-            }
-        }
-    }
-}
-
-/// Saves the current credential before clearing the shared sign-in, then waits for the desktop app to finish OAuth.
-async fn antigravity_sign_in_another_account() -> Result<(), String> {
-    #[cfg(not(windows))]
-    return Err(
-        "Antigravity account sign-in currently requires Windows Credential Manager".to_string(),
-    );
-
-    #[cfg(windows)]
-    {
-        let previous = agy_sign_in();
-        if let Some(sign_in) = previous.as_ref() {
-            let email = if let Some(email) = agy_saved_active_email() {
-                email
-            } else {
-                refresh_antigravity_cli_email(std::time::SystemTime::now()).await?
-            };
-            save_agy_account(sign_in, email)?;
-        }
-
-        let agy = which("agy").ok_or("Antigravity CLI is not installed")?;
-        let token_file = crate::home_folder()?
-            .join(".gemini")
-            .join("jetski-standalone-oauth-token");
-        if token_file.exists() {
-            std::fs::remove_file(&token_file).map_err(|error| {
-                format!("could not clear the old Antigravity sign-in file: {error}")
-            })?;
-        }
-        let mut restore = RestoreSignIn {
-            previous: previous.clone(),
-            armed: true,
-        };
-        delete_secret("gemini:antigravity")?;
-
-        // `agy` owns the CLI sign-in flow. A fresh console gives its TUI a real terminal and lets
-        // Google Sign-In open the browser; launching Antigravity.exe here skips the CLI auth log.
-        let login_started_at = std::time::SystemTime::now();
-        let mut cli = Command::new(&agy);
-        cli.stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
-        #[cfg(windows)]
-        cli.creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE
-        let child = cli
-            .spawn()
-            .map_err(|error| format!("could not start Antigravity CLI: {error}"))?;
-        let mut child = CancellableChild {
-            child,
-            kill_on_drop: true,
-        };
-
-        let timeout = tokio::time::Instant::now() + Duration::from_secs(300);
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            if let Some(current) = agy_sign_in() {
-                let has_access_token = current["token"]["access_token"]
-                    .as_str()
-                    .is_some_and(|token| !token.is_empty());
-                if has_access_token && previous.as_ref() != Some(&current) {
-                    let email = if let Some(email) = antigravity_email_since(login_started_at) {
-                        email
-                    } else {
-                        refresh_antigravity_cli_email(login_started_at).await?
-                    };
-                    save_agy_account(&current, email)?;
-                    // The new sign-in stays: nothing to put back.
-                    restore.armed = false;
-                    // Leave the authenticated CLI available in its terminal, but stop treating it
-                    // as part of the cancellable sign-in task.
-                    child.kill_on_drop = false;
-                    return Ok(());
-                }
-            }
-            if let Some(status) = child
-                .child
-                .try_wait()
-                .map_err(|error| format!("could not check Antigravity CLI: {error}"))?
-            {
-                return Err(format!(
-                    "Antigravity CLI exited before sign-in completed ({status})"
-                ));
-            }
-            if tokio::time::Instant::now() >= timeout {
-                return Err("timed out waiting for Antigravity CLI sign-in".to_string());
-            }
-        }
-    }
-}
-
-/// Saves an Antigravity credential under its account-specific Windows Credential Manager target.
-#[cfg(windows)]
-fn save_agy_account(sign_in: &Value, email: String) -> Result<(), String> {
-    if sign_in["token"]["access_token"]
-        .as_str()
-        .is_none_or(str::is_empty)
-    {
-        return Err("the current Antigravity login has no access token".to_string());
-    }
-    let serialized = serde_json::to_string(sign_in).map_err(|error| error.to_string())?;
-    write_secret(&agy_secret_target(&email), &serialized)?;
-    let mut accounts = read_agy_accounts();
-    if let Some(account) = accounts.iter_mut().find(|account| account.email == email) {
-        account.active = true;
-    } else {
-        accounts.push(AgyAccount {
-            id: email.clone(),
-            email,
-            active: true,
-            expired: false,
-            status: None,
-        });
-    }
-    write_agy_accounts(&accounts)
-}
-
-/// Makes a previously saved Antigravity account the active login used by agy and quota refresh.
-#[tauri::command]
-pub async fn antigravity_account_switch(id: String) -> Result<(), String> {
-    #[cfg(not(windows))]
-    return Err(
-        "Antigravity account switching currently requires Windows Credential Manager".to_string(),
-    );
-
-    #[cfg(windows)]
-    {
-        let id = safe_arg(&id)?;
-        let account = read_agy_accounts()
-            .into_iter()
-            .find(|account| account.id == id)
-            .ok_or("Antigravity account was not found")?;
-        let secret = stored_secret(&agy_secret_target(&account.email))
-            .ok_or("saved Antigravity credentials are missing")?;
-        let sign_in: Value = serde_json::from_str(&secret)
-            .map_err(|_| "saved Antigravity credentials are invalid")?;
-        // Checked against Antigravity's servers only when there is no refresh token to fall back on: an access token
-        // that ran out is renewed by agy on its next run, so it is no reason to refuse the switch.
-        let renewable = sign_in["token"]["refresh_token"]
-            .as_str()
-            .is_some_and(|token| !token.is_empty());
-        if !renewable {
-            fetch_agy_summary(&sign_in).await?;
-        }
-        // The account being left keeps its newest token.
-        let _ = agy_saved_active_email();
-        write_secret("gemini:antigravity", &secret)?;
-        let mut accounts = read_agy_accounts();
-        for saved in &mut accounts {
-            saved.active = saved.id == id;
-        }
-        write_agy_accounts(&accounts)
-    }
-}
-
-/// The quota as Antigravity's own servers say it now: the buckets (`<model group>-<window>`, e.g. `gemini-5h`) with the
-/// fraction left and when each resets. Uses the access token agy already holds; it is not renewed here, so one that ran
-/// out is reported, and agy renews it the next time it runs.
-async fn fetch_agy_summary(sign_in: &Value) -> Result<(i64, Value), String> {
-    let token = &sign_in["token"];
-    let access = token["access_token"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-        .ok_or("the Antigravity sign-in has no access token")?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() as i64);
-    if token["expiry"]
-        .as_str()
-        .and_then(parse_iso)
-        .is_some_and(|expiry| expiry <= now + 30)
-    {
-        return Err("the Antigravity sign-in has expired: run agy once to renew it".to_string());
-    }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|error| error.to_string())?;
-    let response = client
-        .post(ENDPOINTS.antigravity.quota.as_str())
-        .bearer_auth(access)
-        .header(
-            reqwest::header::USER_AGENT,
-            "antigravity/2.25.0 (aidev_client; os_type=windows; arch=amd64; cl=1003475615)",
-        )
-        .json(&serde_json::json!({}))
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "Antigravity's servers answered {}",
-            response.status()
-        ));
-    }
-    let summary: Value = response.json().await.map_err(|error| error.to_string())?;
-    Ok((now, summary))
-}
-
-async fn fetch_agy_quota_for_sign_in(sign_in: &Value) -> Result<AgyQuota, String> {
-    let (now, summary) = fetch_agy_summary(sign_in).await?;
-    let mut quota = serde_json::Map::new();
-    for group in summary["groups"].as_array().into_iter().flatten() {
-        for bucket in group["buckets"].as_array().into_iter().flatten() {
-            let (Some(id), Some(fraction)) = (
-                bucket["bucketId"].as_str(),
-                bucket["remainingFraction"].as_f64(),
-            ) else {
-                continue;
-            };
-            if !id.contains('-') {
-                continue;
-            }
-            quota.insert(id.to_string(), serde_json::json!({ "remaining_fraction": fraction, "reset_time": bucket["resetTime"] }));
-        }
-    }
-    let figures = serde_json::json!({ "fetchedAt": now * 1000, "quota": quota });
-    parse_agy_quota(&figures.to_string())
-        .filter(|found| !found.groups.is_empty())
-        .ok_or_else(|| "Antigravity's servers sent no quota buckets".to_string())
-}
-
-async fn fetch_agy_quota() -> Result<AgyQuota, String> {
-    let sign_in = agy_sign_in().ok_or("no Antigravity sign-in was found on this machine")?;
-    fetch_agy_quota_for_sign_in(&sign_in).await
-}
-
-/// The quota of Antigravity: live from its servers; when that is not possible (no sign-in, an expired one, no network),
-/// the figures agy last saved to a file, which carry their own time.
-#[tauri::command]
-pub async fn antigravity_quota() -> Option<AgyQuota> {
-    match fetch_agy_quota().await {
-        Ok(live) => Some(live),
-        Err(error) => {
-            tracing_note(&error);
-            saved_agy_quota()
-        }
-    }
-}
-
-/// One saved Antigravity account and its own quota. `error` says why there is none (no saved sign-in, or one whose access
-/// token ran out: agy renews it on its next run).
-#[derive(Serialize, Debug)]
-pub struct AgyAccountQuota {
-    id: String,
-    email: String,
-    active: bool,
-    quota: Option<AgyQuota>,
-    error: Option<String>,
-}
-
-/// The quota of every saved Antigravity account, each read with its own sign-in. Accounts are read at the same time.
-#[tauri::command]
-pub async fn antigravity_quotas() -> Vec<AgyAccountQuota> {
-    let accounts = antigravity_accounts_list().await;
-    let reads = accounts.into_iter().map(|account| async move {
-        #[cfg(windows)]
-        let sign_in = stored_secret(&agy_secret_target(&account.email))
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-        #[cfg(not(windows))]
-        let sign_in: Option<Value> = None;
-        let (quota, error) = match sign_in {
-            None => (None, Some("Saved credentials are missing".to_string())),
-            Some(sign_in) => match fetch_agy_quota_for_sign_in(&sign_in).await {
-                Ok(quota) => (Some(quota), None),
-                Err(error) => (None, Some(error)),
-            },
-        };
-        AgyAccountQuota {
-            id: account.id,
-            email: account.email,
-            active: account.active,
-            quota,
-            error,
-        }
-    });
-    futures_util::future::join_all(reads).await
-}
-
-fn tracing_note(error: &str) {
-    eprintln!("antigravity quota: {error}");
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-// Antigravity permission modes
-
-/// agy prints this and carries on in its default mode when the account may not use `--mode <name>`.
-fn mode_unavailable(output: &str) -> bool {
-    output.contains("is not available for this account")
-}
-
-#[derive(Serialize, Debug, Default, PartialEq)]
-pub struct AgyModes {
-    /// `--mode` values the account cannot use (`auto`, `accept-edits`, `plan`). Empty: all work, or it could not be told.
-    unavailable: Vec<String>,
-}
-
-/// Which of agy's `--mode` values this account can use. agy only says so when it starts a turn, so each mode is tried
-/// once with a one-word prompt that is cut after 3 seconds; the answer is kept per agy version in
-/// `~/.agentdeck/agy-modes.json`, so it is asked again only after an update (or with `force`).
-#[tauri::command]
-pub async fn agy_modes(force: bool) -> AgyModes {
-    let Some(agy) = which("agy") else {
-        return AgyModes::default();
-    };
-    let version = version_of(&agy).await.unwrap_or_default();
-    let cache = crate::home_folder().ok().map(|home| {
-        home.join(crate::channel::home_folder_name())
-            .join("agy-modes.json")
-    });
-    if !force {
-        let saved = cache
-            .as_ref()
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
-        if let Some(saved) =
-            saved.filter(|saved| saved["version"].as_str() == Some(version.as_str()))
-        {
-            let unavailable = saved["unavailable"]
-                .as_array()
-                .map(|list| {
-                    list.iter()
-                        .filter_map(|item| item.as_str().map(str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default();
-            return AgyModes { unavailable };
-        }
-    }
-    let probe = |mode: &'static str| {
-        let agy = agy.clone();
-        async move {
-            let args = [
-                "-p",
-                ".",
-                "--mode",
-                mode,
-                "--print-timeout",
-                "3s",
-                "--output-format",
-                "text",
-            ];
-            match capture(&agy, &args, Duration::from_secs(30)).await {
-                Ok(out) if mode_unavailable(&format!("{}{}", out.stdout, out.stderr)) => {
-                    Some(mode.to_owned())
-                }
-                _ => None,
-            }
-        }
-    };
-    let (auto, edits, plan) = tokio::join!(probe("auto"), probe("accept-edits"), probe("plan"));
-    let unavailable: Vec<String> = [auto, edits, plan].into_iter().flatten().collect();
-    if let Some(path) = cache {
-        if let Some(folder) = path.parent() {
-            let _ = std::fs::create_dir_all(folder);
-        }
-        let _ = std::fs::write(
-            path,
-            serde_json::json!({ "version": version, "unavailable": unavailable }).to_string(),
-        );
-    }
-    AgyModes { unavailable }
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // Custom and local providers
-
-/// Asks a provider's endpoint for its models: the "Test connection" button. The key, if any, is read from the
-/// environment variable the user named and never leaves this function except as a request header.
-#[tauri::command]
-pub async fn provider_probe(
-    kind: String,
-    base_url: String,
-    api_key: Option<String>,
-    key_env: Option<String>,
-) -> crate::providers::custom::Probe {
-    crate::providers::custom::probe(
-        &kind,
-        &base_url,
-        api_key.as_deref(),
-        key_env.as_deref(),
-        Duration::from_secs(6),
-    )
-    .await
-}
-
-/// What a provider says about the spending left on a key.
-#[derive(Serialize)]
-pub struct ProviderQuota {
-    /// Credit used and the key's limit, in USD (`limit` is null for a key without one).
-    used: f64,
-    limit: Option<f64>,
-    remaining: Option<f64>,
-    /// A key with no credit bought: only the `:free` models work, with daily request caps.
-    free_tier: bool,
-}
-
-/// The prepaid credit of the Claude Console (platform.claude.com): what the API keys of its organization can still
-/// spend, read the way the Console's own billing page reads it.
-#[derive(Serialize)]
-pub struct ConsoleCredit {
-    /// USD left.
-    balance: f64,
-    /// USD granted or bought in the grants that still hold credit, when the Console lists it.
-    granted: Option<f64>,
-    /// When the first grant that still holds credit expires (RFC 3339).
-    expires_at: Option<String>,
-}
-
-/// An amount the Console gives in minor units with an exponent (`{"amount_minor": 5950, "exponent": 2}` is 59.50).
-fn minor_amount(value: &Value, exponent: i64) -> Option<f64> {
-    let minor = value.as_f64()?;
-    (0..=6)
-        .contains(&exponent)
-        .then(|| minor / 10f64.powi(exponent as i32))
-}
-
-/// Reads the Console's prepaid credit with its sign-in cookie (`sessionKey`). There is no API for it: the Console
-/// has no balance endpoint for API keys, so this asks the two endpoints its billing page calls. They are not
-/// documented and can change; an error then says so and the footer falls back to what the app counted.
-#[tauri::command]
-pub async fn claude_console_credit(session_key: String) -> Result<ConsoleCredit, String> {
-    let key = session_key.trim();
-    let key = key.strip_prefix("sessionKey=").unwrap_or(key);
-    if key.is_empty() {
-        return Err("no Console session key".into());
-    }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36")
-        .build()
-        .map_err(|error| error.to_string())?;
-    let get = |url: String| {
-        client
-            .get(url)
-            .header("Cookie", format!("sessionKey={key}"))
-            .header("Accept", "application/json")
-            .send()
-    };
-    let read = |response: reqwest::Response| async move {
-        match response.status().as_u16() {
-            200..=299 => response
-                .json::<Value>()
-                .await
-                .map_err(|error| format!("not the Console's answer: {error}")),
-            401 | 403 => Err("the Console session ended: copy a new sessionKey".to_string()),
-            code => Err(format!("the Console answered {code}")),
-        }
-    };
-    let boot = read(
-        get(ENDPOINTS.anthropic.console_bootstrap.clone())
-            .await
-            .map_err(|error| error.to_string())?,
-    )
-    .await?;
-    // The organization of the API keys: the membership whose organization has the `api` capability.
-    let org = boot["account"]["memberships"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|member| &member["organization"])
-        .find(|org| {
-            org["capabilities"]
-                .as_array()
-                .is_some_and(|caps| caps.iter().any(|cap| cap == "api"))
-        })
-        .and_then(|org| org["uuid"].as_str())
-        .ok_or("this sign-in has no API organization")?
-        .to_string();
-    let body = read(
-        get(ENDPOINTS
-            .anthropic
-            .console_prepaid_credits
-            .replace("{org}", &org))
-        .await
-        .map_err(|error| error.to_string())?,
-    )
-    .await?;
-    let credits = &body["balance"]["credits"];
-    let exponent = credits["exponent"].as_i64().unwrap_or(2);
-    let balance =
-        minor_amount(&credits["amount_minor"], exponent).ok_or("the Console sent no balance")?;
-    // The grants that still hold credit: their total (when given) is the bar's full width, the first to end its date.
-    let grants: Vec<&Value> = ["promo_tranches", "tranches"]
-        .iter()
-        .filter_map(|name| body[*name].as_array())
-        .flatten()
-        .filter(|grant| {
-            grant["remaining_amount_minor_units"]
-                .as_f64()
-                .unwrap_or(0.0)
-                > 0.0
-        })
-        .collect();
-    let granted: f64 = grants
-        .iter()
-        .filter_map(|grant| {
-            [
-                "amount_minor_units",
-                "initial_amount_minor_units",
-                "original_amount_minor_units",
-            ]
-            .iter()
-            .find_map(|field| minor_amount(&grant[*field], exponent))
-        })
-        .sum();
-    let expires_at = grants
-        .iter()
-        .filter_map(|grant| grant["expires_at"].as_str())
-        .min()
-        .map(str::to_string);
-    Ok(ConsoleCredit {
-        balance,
-        granted: (granted >= balance && granted > 0.0).then_some(granted),
-        expires_at,
-    })
-}
-
-/// The spending left on a key, for the providers that tell it (OpenRouter: `GET /key`). `None` for the rest: they
-/// report their limits only in response headers, or not at all.
-#[tauri::command]
-pub async fn provider_quota(
-    base_url: String,
-    api_key: Option<String>,
-    key_env: Option<String>,
-) -> Option<ProviderQuota> {
-    let host = base_url.split('/').nth(2).unwrap_or_default();
-    if host != "openrouter.ai" {
-        return None;
-    }
-    let key = api_key.filter(|key| !key.is_empty()).or_else(|| {
-        key_env
-            .filter(|name| !name.is_empty())
-            .and_then(|name| std::env::var(name).ok())
-    })?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-        .ok()?;
-    let response = client
-        .get(ENDPOINTS.openrouter.key.as_str())
-        .bearer_auth(key)
-        .send()
-        .await
-        .ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    let json: Value = response.json().await.ok()?;
-    let data = &json["data"];
-    Some(ProviderQuota {
-        used: data["usage"].as_f64().unwrap_or(0.0),
-        limit: data["limit"].as_f64(),
-        remaining: data["limit_remaining"].as_f64(),
-        free_tier: data["is_free_tier"].as_bool().unwrap_or(false),
-    })
-}
 
 #[derive(Serialize)]
 pub struct LocalServer {
@@ -2620,7 +1461,7 @@ mod tests {
         assert!(account_tool_allows(&tool("codex-auth"), &[]).is_err());
         assert!(account_tool_allows(&tool("cswap"), &["list", "--json"]).is_ok());
         assert!(account_tool_allows(&tool("cswap"), &["upgrade"]).is_err());
-        assert!(account_tool_allows(&tool("cswap"), &["remove"]).is_err());
+        assert!(account_tool_allows(&tool("cswap"), &["remove"]).is_ok());
         // Other programs are not this guard's business.
         assert!(account_tool_allows(&tool("claude"), &["auth", "login"]).is_ok());
     }
@@ -2668,7 +1509,9 @@ mod tests {
             vec![UsageWindow {
                 label: "30d".into(),
                 pct: 93.0,
-                resets_at: Some(1_788_172_584)
+                resets_at: Some(1_788_172_584),
+                remaining: None,
+                limit: None,
             }]
         );
         assert_eq!(

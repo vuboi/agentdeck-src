@@ -272,9 +272,11 @@ export function formatTaskResult(head: TaskHeader, body: string): string {
 }
 
 /** The header of `formatTaskResult`, read back; null for any other text. */
-export function parseTaskResult(output: string): { taskId: string; childId: string; verdict: Verdict | 'running' } | null {
-  const found = /^\[task (\S+) · chat (\S+) · .*? · (running|done|failed|stopped|timed out)(?: · [^\]]*)?\]/.exec(output.trimStart());
-  return found ? { taskId: found[1], childId: found[2], verdict: found[3] as Verdict | 'running' } : null;
+export function parseTaskResult(output: string): { taskId: string; childId: string; verdict: Verdict | 'running'; took?: string } | null {
+  const found = /^\[task (\S+) · chat (\S+) · .*? · (running|done|failed|stopped|timed out)(?: · ([^\]]+))?\]/.exec(output.trimStart());
+  return found
+    ? { taskId: found[1], childId: found[2], verdict: found[3] as Verdict | 'running', took: found[4] }
+    : null;
 }
 
 /** Carries a previous worker's context and failure reason into a fresh conversation. */
@@ -375,6 +377,7 @@ export type TaskCard = {
   report: string;
   startedAt?: number;
   endedAt?: number;
+  duration?: string;
 };
 
 /**
@@ -382,7 +385,10 @@ export type TaskCard = {
  * chat read back from a file the call's own line and result say what they can: the arguments, the header of the result
  * (task id, the worker's chat, how it ended) and the report.
  */
-export function cardOf(call: { command: string; output: string; status: 'running' | 'ok' | 'fail' }, record?: TaskRecord): TaskCard {
+export function cardOf(
+  call: { command: string; output: string; status: 'running' | 'ok' | 'fail'; task?: { startedAt?: number; endedAt?: number } },
+  record?: TaskRecord,
+): TaskCard {
   const args = argsOfCall(call.command.replace(/^\S+\s*/, ''));
   const header = parseTaskResult(call.output);
   const wait = record?.wait ?? args.wait ?? true;
@@ -394,7 +400,19 @@ export function cardOf(call: { command: string; output: string; status: 'running
   const state: CardState =
     verdict === 'done' ? 'done' : verdict === 'failed' || verdict === 'timed out' ? 'failed' : verdict === 'stopped' ? 'stopped' : verdict === 'running' ? 'stopped' : call.status === 'running' ? (wait ? 'running' : 'background') : call.status === 'fail' ? 'failed' : 'done';
   const body = header ? call.output.slice(call.output.indexOf(']') + 1).trim() : call.output.trim();
-  return { taskId: header?.taskId, childId: header?.childId, state, agent: args.agent, model: args.model, task: args.task, wait, report: body };
+  return {
+    taskId: header?.taskId,
+    childId: header?.childId,
+    state,
+    agent: args.agent,
+    model: args.model,
+    task: args.task,
+    wait,
+    report: body,
+    startedAt: call.task?.startedAt,
+    endedAt: call.task?.endedAt,
+    duration: header?.took,
+  };
 }
 
 // ---------- what the agents are told ----------

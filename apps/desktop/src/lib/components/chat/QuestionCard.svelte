@@ -118,7 +118,7 @@
           </button>
         {/each}
         <!-- "Other..." turns into the field itself, in the same place and as tall as the options: the two cross-fade in one
-             grid cell, so nothing around them moves. Submit unfolds under it (grid rows 0fr to 1fr, no gap left behind). -->
+             grid cell, so nothing around them moves. -->
         <div class="grid">
           {#if other}
             <div class="ask-field col-start-1 row-start-1 min-h-10 sm:min-h-9 [&_input]:min-h-10 sm:[&_input]:min-h-9 max-sm:[&_input]:text-base max-sm:[&_.z-input-container]:h-10" in:fly={{ y: 6, duration: motion(200), easing: cubicOut }} {@attach focusField}>
@@ -128,17 +128,13 @@
             <button type="button" class="col-start-1 row-start-1 flex min-h-10 w-full cursor-pointer items-center rounded-md border border-dashed sm:min-h-9 border-border px-2.5 py-1.5 text-left text-sm text-muted-foreground outline-none transition-colors hover:border-primary/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" out:fade={{ duration: motion(110) }} onclick={() => (other = true)}>Other…</button>
           {/if}
         </div>
-        <div class="-mt-2 grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none {other ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}" inert={!other}>
-          <div class="min-h-0 overflow-hidden">
-            <div class="flex justify-end pt-2 transition-opacity duration-200 motion-reduce:transition-none {other ? 'opacity-100 delay-75' : 'opacity-0'}">
-              <ZButton zWave={false} zType="default" zSize="sm" onclick={sendOther} disabled={!answers[0].text.trim()}>Submit</ZButton>
-            </div>
+        {#if !done && (oncancel || other)}
+          <div class="flex justify-end gap-1.5 border-t border-border pt-2">
+            {#if oncancel}<ZButton zWave={false} zType="secondary" zSize="sm" class="h-7 px-3 text-sm" onclick={oncancel}>Cancel</ZButton>{/if}
+            {#if other}<ZButton zWave={false} zType="default" zSize="sm" class="h-7 px-3 text-sm" onclick={sendOther} disabled={!answers[0].text.trim()}>Submit</ZButton>{/if}
           </div>
-        </div>
+        {/if}
       </div>
-    {/if}
-    {#if oncancel && !done}
-      <button type="button" class="mt-1 ml-auto block cursor-pointer rounded-md px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground outline-none transition-colors hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring" onclick={oncancel}>Cancel</button>
     {/if}
   </section>
 {:else}
@@ -204,7 +200,7 @@
         {/each}
       </span>
       <span class="flex-1"></span>
-      {#if oncancel}<ZButton zWave={false} zType="ghost" zSize="sm" onclick={oncancel}>Cancel</ZButton>{/if}
+      {#if oncancel}<ZButton zWave={false} zType="secondary" zSize="sm" class="h-7 px-3 text-sm" onclick={oncancel}>Cancel</ZButton>{/if}
       <ZButton zWave={false} zType="ghost" zSize="sm" onclick={skip}>Skip</ZButton>
       {#if at > 0}<ZButton zWave={false} zType="ghost" zSize="sm" onclick={() => at--}>Back</ZButton>{/if}
       {#if last}

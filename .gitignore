@@ -3,6 +3,7 @@
 /target/
 /apps/desktop/build/
 /apps/desktop/.svelte-kit/
+/apps/desktop/.svelte-kit-dev-*/
 /packages/*/dist/
 *.db
 .env

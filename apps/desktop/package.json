@@ -36,6 +36,7 @@
     "docx-preview": "^0.4.1",
     "dompurify": "3.4.17",
     "marked": "17.0.6",
+    "morphicons": "^2.0.2",
     "prettier": "3.9.10",
     "shiki": "4.5.0",
     "xlsx": "0.18.5"
@@ -47,6 +48,7 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^26.6.6",
     "html-to-image": "^1.11.13",
     "ng2-pdfjs-viewer": "^26.5.0",
     "svelte": "^5.40.0",

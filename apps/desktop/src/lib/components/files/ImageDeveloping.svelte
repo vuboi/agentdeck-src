@@ -91,9 +91,9 @@
 <div class="tile overflow-hidden rounded-lg border border-border bg-background shadow-sm" style:--i={index}>
   <div class="relative aspect-square overflow-hidden bg-muted/30">
     <canvas class="absolute inset-0 size-full" {@attach dots}></canvas>
-    <span class="absolute bottom-1.5 left-1/2 -translate-x-1/2 rounded-full bg-background/70 px-2 py-0.5 text-[10px] font-medium text-muted-foreground backdrop-blur-sm">{ms === null ? 'Loading' : 'Generating'}<span class="ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
+    <span class="absolute bottom-1.5 left-1/2 -translate-x-1/2 rounded-full bg-background/70 px-2 py-0.5 text-xs font-medium text-muted-foreground backdrop-blur-sm">{ms === null ? 'Loading' : 'Generating'}<span class="ellipsis" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
   </div>
-  <div class="flex items-center gap-2 px-2 py-1.5 text-[10px] text-muted-foreground">
+  <div class="flex items-center gap-2 px-2 py-1.5 text-xs font-medium text-muted-foreground">
     <span class="min-w-0 flex-1 truncate">{label ? `${label} · #${variant}` : 'Saved candidate'}</span>
     {#if clock}<span class="shrink-0 tabular-nums">{clock}</span>{/if}
   </div>

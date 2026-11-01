@@ -36,17 +36,28 @@ pub fn asset_for(os: &str, arch: &str) -> Option<&'static str> {
 }
 
 fn root(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|error| error.to_string())?.join("officecli"))
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("officecli"))
 }
 
 fn binary_in(root: &Path) -> PathBuf {
-    root.join(if cfg!(windows) { "officecli.exe" } else { "officecli" })
+    root.join(if cfg!(windows) {
+        "officecli.exe"
+    } else {
+        "officecli"
+    })
 }
 
 /// Runs the binary with `--version` and returns what it prints, or None when it does not start.
 fn version_of(binary: &Path) -> Option<String> {
     let mut command = std::process::Command::new(binary);
-    command.arg("--version").stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    command
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -75,8 +86,16 @@ pub async fn officecli_status(app: AppHandle) -> Result<Status, String> {
     let supported = asset_for(std::env::consts::OS, std::env::consts::ARCH).is_some();
     let binary = binary_in(&root);
     tauri::async_runtime::spawn_blocking(move || {
-        let version = if binary.is_file() { version_of(&binary) } else { None };
-        Status { supported, installed: version.is_some(), version }
+        let version = if binary.is_file() {
+            version_of(&binary)
+        } else {
+            None
+        };
+        Status {
+            supported,
+            installed: version.is_some(),
+            version,
+        }
     })
     .await
     .map_err(|error| error.to_string())
@@ -94,15 +113,24 @@ async fn download(url: &str, dest: &Path) -> Result<(), String> {
         .timeout(Duration::from_secs(600))
         .build()
         .map_err(|error| error.to_string())?;
-    let response = client.get(url).send().await.map_err(|error| error.to_string())?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
         return Err(format!("download failed ({}): {url}", response.status()));
     }
-    if response.content_length().is_some_and(|length| length > MAX_BYTES) {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_BYTES)
+    {
         return Err("the OfficeCLI download is larger than expected".into());
     }
     let part = dest.with_extension("part");
-    let mut file = tokio::fs::File::create(&part).await.map_err(|error| error.to_string())?;
+    let mut file = tokio::fs::File::create(&part)
+        .await
+        .map_err(|error| error.to_string())?;
     let mut stream = response.bytes_stream();
     let mut total = 0u64;
     while let Some(chunk) = stream.next().await {
@@ -112,7 +140,9 @@ async fn download(url: &str, dest: &Path) -> Result<(), String> {
             let _ = tokio::fs::remove_file(&part).await;
             return Err("the OfficeCLI download is larger than expected".into());
         }
-        file.write_all(&chunk).await.map_err(|error| error.to_string())?;
+        file.write_all(&chunk)
+            .await
+            .map_err(|error| error.to_string())?;
     }
     file.flush().await.map_err(|error| error.to_string())?;
     drop(file);
@@ -164,7 +194,8 @@ async fn install(app: &AppHandle) -> Result<Setup, String> {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).map_err(|error| error.to_string())?;
+                std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+                    .map_err(|error| error.to_string())?;
             }
             let probe = binary.clone();
             tauri::async_runtime::spawn_blocking(move || version_of(&probe))
@@ -192,7 +223,11 @@ async fn install(app: &AppHandle) -> Result<Setup, String> {
         Ok(messages) => messages.join(", "),
         Err(error) => format!("skill not installed: {error}"),
     };
-    Ok(Setup { version, agents: results, skill })
+    Ok(Setup {
+        version,
+        agents: results,
+        skill,
+    })
 }
 
 /// Removes the binary and its MCP entries. The skill stays in the Store (remove it there).
@@ -213,8 +248,14 @@ mod tests {
 
     #[test]
     fn every_supported_system_has_its_release_file() {
-        assert_eq!(asset_for("windows", "x86_64"), Some("officecli-win-x64.exe"));
-        assert_eq!(asset_for("windows", "aarch64"), Some("officecli-win-arm64.exe"));
+        assert_eq!(
+            asset_for("windows", "x86_64"),
+            Some("officecli-win-x64.exe")
+        );
+        assert_eq!(
+            asset_for("windows", "aarch64"),
+            Some("officecli-win-arm64.exe")
+        );
         assert_eq!(asset_for("macos", "aarch64"), Some("officecli-mac-arm64"));
         assert_eq!(asset_for("macos", "x86_64"), Some("officecli-mac-x64"));
         assert_eq!(asset_for("linux", "x86_64"), Some("officecli-linux-x64"));

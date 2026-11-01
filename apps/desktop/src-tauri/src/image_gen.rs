@@ -553,7 +553,9 @@ async fn suggest_with_custom(
         .map_err(|error| format!("the provider's answer is not JSON: {error}"))?;
     if !status.is_success() {
         let detail = body["error"]["message"].as_str().unwrap_or("no detail");
-        return Err(trim_error(&format!("the provider answered {status}: {detail}")));
+        return Err(trim_error(&format!(
+            "the provider answered {status}: {detail}"
+        )));
     }
     let text = body["choices"][0]["message"]["content"]
         .as_str()
@@ -768,12 +770,15 @@ pub(crate) fn imagen_script() -> Result<PathBuf, String> {
 }
 
 fn output_root(cwd: Option<&str>) -> Result<PathBuf, String> {
+    // Có cwd (project): ảnh vào <cwd>/.agentdeck/generated-images. Không có cwd: base đã là thư mục
+    // home của app (~/.agentdeck) nên không join thêm home_folder_name, tránh lồng đôi .agentdeck/.agentdeck.
     let base = cwd
         .map(PathBuf::from)
         .filter(|path| path.is_dir())
+        .map(|project| project.join(crate::channel::home_folder_name()))
         .or_else(|| home_folder().map(|home| home.join(crate::channel::home_folder_name())))
         .ok_or("cannot find a project or home folder")?;
-    let root = base.join(crate::channel::home_folder_name()).join("generated-images");
+    let root = base.join("generated-images");
     std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
     Ok(root)
 }

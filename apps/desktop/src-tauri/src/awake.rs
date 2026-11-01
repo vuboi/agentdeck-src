@@ -22,7 +22,9 @@ static HOLD: Mutex<Option<Hold>> = Mutex::new(None);
 
 #[cfg(windows)]
 fn acquire() -> Result<Hold, String> {
-    use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
+    use windows::Win32::System::Power::{
+        SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED,
+    };
     let (stop, wait) = std::sync::mpsc::channel::<()>();
     let (ready, ok) = std::sync::mpsc::channel::<bool>();
     std::thread::spawn(move || {
@@ -30,7 +32,7 @@ fn acquire() -> Result<Hold, String> {
         let before = unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
         let _ = ready.send(before.0 != 0);
         let _ = wait.recv(); // until released (or the sender is dropped with the app)
-        // SAFETY: as above.
+                             // SAFETY: as above.
         unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
     });
     match ok.recv() {
@@ -53,9 +55,20 @@ fn acquire() -> Result<Hold, String> {
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn acquire() -> Result<Hold, String> {
-    let wait = format!("while kill -0 {} 2>/dev/null; do sleep 5; done", std::process::id());
+    let wait = format!(
+        "while kill -0 {} 2>/dev/null; do sleep 5; done",
+        std::process::id()
+    );
     std::process::Command::new("systemd-inhibit")
-        .args(["--what=idle:sleep", "--who=AgentDeck", "--why=An agent is working", "--mode=block", "sh", "-c", &wait])
+        .args([
+            "--what=idle:sleep",
+            "--who=AgentDeck",
+            "--why=An agent is working",
+            "--mode=block",
+            "sh",
+            "-c",
+            &wait,
+        ])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

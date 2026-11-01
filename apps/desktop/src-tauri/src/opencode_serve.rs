@@ -9,7 +9,9 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use ag_adapters::agent::interrupt::StopToken;
-use ag_adapters::agent::opencode::{answer_permission, is_subagent, subagent_event, Answer, PermissionAnswer};
+use ag_adapters::agent::opencode::{
+    answer_permission, is_subagent, subagent_event, Answer, PermissionAnswer,
+};
 use ag_adapters::agent::permission::Mode;
 use ag_adapters::agent::stall::{Watchdog, DEFAULT_STALL_LIMIT};
 use ag_adapters::agent::{AgentEvent, PermissionRequest, TaskStatus, TurnRequest};
@@ -60,13 +62,19 @@ struct Failure {
 
 impl Failure {
     fn connection(error: impl ToString) -> Self {
-        Self { message: error.to_string(), connection: true }
+        Self {
+            message: error.to_string(),
+            connection: true,
+        }
     }
 }
 
 impl From<String> for Failure {
     fn from(message: String) -> Self {
-        Self { message, connection: false }
+        Self {
+            message,
+            connection: false,
+        }
     }
 }
 
@@ -103,7 +111,8 @@ impl Drop for Held {
 
 /// Starts `opencode serve` on a free local port, with a password only this app knows, and waits until it answers.
 async fn start() -> Result<Server, String> {
-    let binary = which("opencode").ok_or("OpenCode is not installed: install it in Settings > Connectors")?;
+    let binary = which("opencode")
+        .ok_or("OpenCode is not installed: install it in Settings > Connectors")?;
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .and_then(|listener| listener.local_addr())
         .map_err(|error| error.to_string())?
@@ -111,7 +120,13 @@ async fn start() -> Result<Server, String> {
     let password = uuid::Uuid::new_v4().to_string();
     let port_text = port.to_string();
     let child = command(&binary)
-        .args(["serve", "--hostname", "127.0.0.1", "--port", port_text.as_str()])
+        .args([
+            "serve",
+            "--hostname",
+            "127.0.0.1",
+            "--port",
+            port_text.as_str(),
+        ])
         .env("OPENCODE_SERVER_PASSWORD", &password)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -221,7 +236,8 @@ pub(crate) async fn run_turn(
     req: TurnRequest,
     mut stop: StopToken,
 ) {
-    let mut out = |event: AgentEvent| crate::copilot::emit(&app, &chat, &turn, message_id.as_deref(), event);
+    let mut out =
+        |event: AgentEvent| crate::copilot::emit(&app, &chat, &turn, message_id.as_deref(), event);
     let (lease, _held) = match acquire().await {
         Ok(held) => held,
         Err(message) => return out(AgentEvent::Error { message }),
@@ -278,7 +294,10 @@ async fn turn_on(
     stop: &mut StopToken,
     out: &mut impl FnMut(AgentEvent),
 ) -> Result<(), Failure> {
-    let mut turn = Turn::new(Mode::parse(req.permission_mode.as_deref()), req.allowed_tools.clone());
+    let mut turn = Turn::new(
+        Mode::parse(req.permission_mode.as_deref()),
+        req.allowed_tools.clone(),
+    );
     let result = follow(lease, &req, &mut *stop, &mut turn, &mut *out).await;
     let stopped = stop.is_stopped();
     if !turn.denied.is_empty() {
@@ -291,13 +310,23 @@ async fn turn_on(
         Ok(End::Failed(message)) => (Some(message), Ok(())),
         Err(failure) => (Some(failure.message.clone()), Err(failure)),
     };
-    out(closing(message.as_deref(), stopped, turn.session.clone(), &turn.answer));
+    out(closing(
+        message.as_deref(),
+        stopped,
+        turn.session.clone(),
+        &turn.answer,
+    ));
     outcome
 }
 
 /// The event that closes a turn. A stopped turn ends as `Done` with the text it has, as a Claude or Codex turn does when its
 /// stop is answered (`interrupt::stopped`): an interrupted run is not a failure.
-fn closing(message: Option<&str>, stopped: bool, session: Option<String>, answer: &Answer) -> AgentEvent {
+fn closing(
+    message: Option<&str>,
+    stopped: bool,
+    session: Option<String>,
+    answer: &Answer,
+) -> AgentEvent {
     match message {
         Some(message) if !stopped => AgentEvent::Error {
             message: message.to_owned(),
@@ -331,11 +360,16 @@ async fn follow(
                     .map_err(Failure::connection)?,
             )
             .await?;
-            created["data"]["id"].as_str().ok_or("OpenCode did not return a session")?.to_owned()
+            created["data"]["id"]
+                .as_str()
+                .ok_or("OpenCode did not return a session")?
+                .to_owned()
         }
     };
     turn.session = Some(session_id.clone());
-    out(AgentEvent::Session { session_id: session_id.clone() });
+    out(AgentEvent::Session {
+        session_id: session_id.clone(),
+    });
     if let Some((provider, id)) = req.model.as_deref().and_then(|model| model.split_once('/')) {
         ok_json(
             lease
@@ -372,7 +406,8 @@ async fn follow(
     // A turn that waits on a permission prompt nobody answers, or on a server that went silent, ends instead of hanging.
     let mut watchdog = Watchdog::new(DEFAULT_STALL_LIMIT);
     loop {
-        let deadline = aborting.unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(24 * 3600));
+        let deadline = aborting
+            .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(24 * 3600));
         tokio::select! {
             _ = tokio::time::sleep_until(watchdog.deadline()), if aborting.is_none() => {
                 let _ = lease
@@ -445,7 +480,12 @@ async fn follow(
 
 /// Answers a permission the server asks for in this turn: approved once when the mode or the approved tools allow it,
 /// otherwise refused. A refusal is kept for the turn's end, where it is reported and the user can allow it.
-async fn answer_request(lease: &Lease, session: &str, request: &Value, turn: &mut Turn) -> Result<(), Failure> {
+async fn answer_request(
+    lease: &Lease,
+    session: &str,
+    request: &Value,
+    turn: &mut Turn,
+) -> Result<(), Failure> {
     let id = request["id"].as_str().unwrap_or_default();
     let answer = answer_permission(request, turn.mode, &turn.allowed);
     let decision = match answer {
@@ -454,7 +494,10 @@ async fn answer_request(lease: &Lease, session: &str, request: &Value, turn: &mu
     };
     ok_json(
         lease
-            .request(Method::POST, &format!("/api/session/{session}/permission/{id}/reply"))
+            .request(
+                Method::POST,
+                &format!("/api/session/{session}/permission/{id}/reply"),
+            )
             .json(&json!({ "decision": decision }))
             .send()
             .await
@@ -474,7 +517,12 @@ enum Step {
 }
 
 /// Turns one server event of this session into the chat's events.
-fn translate(event: &Value, session: &str, turn: &mut Turn, out: &mut impl FnMut(AgentEvent)) -> Step {
+fn translate(
+    event: &Value,
+    session: &str,
+    turn: &mut Turn,
+    out: &mut impl FnMut(AgentEvent),
+) -> Step {
     let data = &event["data"];
     if data["sessionID"].as_str() != Some(session) {
         return Step::Continue;
@@ -484,10 +532,13 @@ fn translate(event: &Value, session: &str, turn: &mut Turn, out: &mut impl FnMut
         "session.text.delta" => {
             let text = data["delta"].as_str().unwrap_or_default();
             turn.answer.push_text(text);
-            out(AgentEvent::Delta { text: text.to_owned() });
+            out(AgentEvent::Delta {
+                text: text.to_owned(),
+            });
         }
         "session.tool.input.started" => {
-            turn.calls.entry(id).or_default().name = data["name"].as_str().unwrap_or("tool").to_owned();
+            turn.calls.entry(id).or_default().name =
+                data["name"].as_str().unwrap_or("tool").to_owned();
         }
         "session.tool.called" => {
             let call = turn.calls.entry(id.clone()).or_default();
@@ -507,7 +558,12 @@ fn translate(event: &Value, session: &str, turn: &mut Turn, out: &mut impl FnMut
             });
             // A sub-agent's card starts with its call and ends with its result, as Claude's does.
             if subagent {
-                out(subagent_event(&data["input"], &id, TaskStatus::Started, None));
+                out(subagent_event(
+                    &data["input"],
+                    &id,
+                    TaskStatus::Started,
+                    None,
+                ));
             }
         }
         "session.tool.success" => {
@@ -525,7 +581,10 @@ fn translate(event: &Value, session: &str, turn: &mut Turn, out: &mut impl FnMut
         }
         "session.tool.failed" => {
             let call = turn.calls.remove(&id).unwrap_or_default();
-            let message = data["error"]["message"].as_str().unwrap_or_default().to_owned();
+            let message = data["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
             out(AgentEvent::ToolResult {
                 id: id.clone(),
                 output: message.clone(),
@@ -534,12 +593,18 @@ fn translate(event: &Value, session: &str, turn: &mut Turn, out: &mut impl FnMut
                 change: None,
             });
             if is_subagent(&call.name) {
-                out(subagent_event(&call.input, &id, TaskStatus::Failed, Some(message).filter(|text| !text.is_empty())));
+                out(subagent_event(
+                    &call.input,
+                    &id,
+                    TaskStatus::Failed,
+                    Some(message).filter(|text| !text.is_empty()),
+                ));
             }
         }
         "session.step.ended" => {
             let tokens = &data["tokens"];
-            turn.answer.end_step(data["cost"].as_f64().unwrap_or_default());
+            turn.answer
+                .end_step(data["cost"].as_f64().unwrap_or_default());
             out(AgentEvent::Usage {
                 input_tokens: tokens["input"].as_u64().unwrap_or_default(),
                 output_tokens: tokens["output"].as_u64().unwrap_or_default(),
@@ -558,7 +623,10 @@ fn translate(event: &Value, session: &str, turn: &mut Turn, out: &mut impl FnMut
             return Step::Finished;
         }
         "session.execution.failed" => {
-            let message = data["error"]["message"].as_str().unwrap_or("OpenCode failed").to_owned();
+            let message = data["error"]["message"]
+                .as_str()
+                .unwrap_or("OpenCode failed")
+                .to_owned();
             return Step::Failed(message);
         }
         _ => {}
@@ -570,14 +638,22 @@ fn translate(event: &Value, session: &str, turn: &mut Turn, out: &mut impl FnMut
 fn tool_text(content: &Value) -> String {
     content
         .as_array()
-        .map(|parts| parts.iter().filter_map(|part| part["text"].as_str()).collect::<Vec<_>>().join(""))
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
+        })
         .unwrap_or_default()
 }
 
 /// Converts OpenCode's native form event to the common question fence understood by the chat UI.
 /// The next AgentDeck turn resumes the same OpenCode session with the selected answers.
 fn form_prompt(form: &Value) -> String {
-    let fields = form["fields"].as_array().or_else(|| form["data"]["fields"].as_array());
+    let fields = form["fields"]
+        .as_array()
+        .or_else(|| form["data"]["fields"].as_array());
     let Some(fields) = fields else {
         return String::new();
     };
@@ -585,7 +661,9 @@ fn form_prompt(form: &Value) -> String {
         .iter()
         .filter(|field| field["hidden"].as_bool() != Some(true))
         .filter_map(|field| {
-            let question = field["title"].as_str().or_else(|| field["description"].as_str())?;
+            let question = field["title"]
+                .as_str()
+                .or_else(|| field["description"].as_str())?;
             let options = field["options"]
                 .as_array()
                 .map(|options| {
@@ -660,14 +738,29 @@ mod tests {
         let mut steps = Vec::new();
         for line in lines {
             let value: Value = serde_json::from_str(line).unwrap();
-            steps.push(matches!(translate(&value, session, &mut turn, &mut out), Step::Finished));
+            steps.push(matches!(
+                translate(&value, session, &mut turn, &mut out),
+                Step::Finished
+            ));
         }
         assert_eq!(turn.answer.text(), "pong");
         assert_eq!(steps.last(), Some(&true));
         assert!(matches!(&events[0], AgentEvent::Delta { text } if text == "pong"));
-        assert!(matches!(&events[1], AgentEvent::ToolCall { name, background: false, .. } if name == "shell"));
-        assert!(matches!(&events[2], AgentEvent::ToolResult { output, is_error: false, .. } if output == "hi\n"));
-        assert!(matches!(&events[3], AgentEvent::Usage { input_tokens: 10, output_tokens: 3, cache_read_tokens: 7, .. }));
+        assert!(
+            matches!(&events[1], AgentEvent::ToolCall { name, background: false, .. } if name == "shell")
+        );
+        assert!(
+            matches!(&events[2], AgentEvent::ToolResult { output, is_error: false, .. } if output == "hi\n")
+        );
+        assert!(matches!(
+            &events[3],
+            AgentEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 3,
+                cache_read_tokens: 7,
+                ..
+            }
+        ));
         assert_eq!(events.len(), 4, "the other session's event is ignored");
     }
 
@@ -695,9 +788,17 @@ mod tests {
             summary: None,
             tools: None,
         };
-        assert!(matches!(&events[0], AgentEvent::ToolCall { name, background: true, .. } if name == "subagent"));
+        assert!(
+            matches!(&events[0], AgentEvent::ToolCall { name, background: true, .. } if name == "subagent")
+        );
         assert_eq!(events[1], task(TaskStatus::Started));
-        assert!(matches!(&events[2], AgentEvent::ToolResult { is_error: false, .. }));
+        assert!(matches!(
+            &events[2],
+            AgentEvent::ToolResult {
+                is_error: false,
+                ..
+            }
+        ));
         assert_eq!(events[3], task(TaskStatus::Done));
         assert_eq!(events.len(), 4);
         assert!(turn.calls.is_empty(), "a finished call is forgotten");
@@ -734,10 +835,15 @@ mod tests {
             cost_usd: Some(0.5),
         };
         assert_eq!(closing(None, false, Some("ses_1".into()), &answer), done);
-        assert_eq!(closing(Some("boom"), true, Some("ses_1".into()), &answer), done);
+        assert_eq!(
+            closing(Some("boom"), true, Some("ses_1".into()), &answer),
+            done
+        );
         assert_eq!(
             closing(Some("boom"), false, Some("ses_1".into()), &answer),
-            AgentEvent::Error { message: "boom".into() }
+            AgentEvent::Error {
+                message: "boom".into()
+            }
         );
     }
 
@@ -752,8 +858,14 @@ mod tests {
             ))
             .unwrap()
         };
-        assert!(matches!(translate(&interrupted("user"), "ses_1", &mut turn, &mut out), Step::Finished));
-        assert!(matches!(translate(&interrupted("shutdown"), "ses_1", &mut turn, &mut out), Step::Failed(_)));
+        assert!(matches!(
+            translate(&interrupted("user"), "ses_1", &mut turn, &mut out),
+            Step::Finished
+        ));
+        assert!(matches!(
+            translate(&interrupted("shutdown"), "ses_1", &mut turn, &mut out),
+            Step::Failed(_)
+        ));
     }
 
     #[test]

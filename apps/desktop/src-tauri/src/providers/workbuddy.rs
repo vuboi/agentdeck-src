@@ -36,10 +36,18 @@ pub(crate) async fn authorize(
     if key.is_empty() {
         return Err("WorkBuddy is not signed in".into());
     }
-    Ok(request
+    let request = request
         .bearer_auth(key)
         .header("X-Product", "SaaS")
         .header("X-Domain", "www.workbuddy.ai")
+        .header(
+            "X-User-Id",
+            crate::connectors::workbuddy::user_id().unwrap_or_default(),
+        )
+        .header(
+            "X-Enterprise-Id",
+            crate::connectors::workbuddy::enterprise_id().unwrap_or_default(),
+        )
         .header("X-IDE-Type", "WorkBuddy")
         .header("X-IDE-Name", "WorkBuddy")
         .header("X-IDE-Version", "5.5.6")
@@ -47,7 +55,8 @@ pub(crate) async fn authorize(
         .header("X-Agent-Intent", "craft")
         .header("X-Agent-Purpose", "conversation")
         .header("X-Agent-Type", "main")
-        .header("User-Agent", "WorkBuddy/5.5.6"))
+        .header("User-Agent", "WorkBuddy/5.5.6");
+    Ok(request)
 }
 
 fn sanitize_strings(value: &mut Value) {

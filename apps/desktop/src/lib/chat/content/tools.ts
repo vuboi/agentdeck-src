@@ -12,6 +12,7 @@ export const TOOLS: Tool[] = [
   { value: 'Store', label: 'Store', icon: 'lucidePuzzle' as ZIconName },
   { value: 'Workflow', label: 'Workflow', icon: 'lucideWorkflow' as ZIconName },
   { value: 'Usage', label: 'Usage', icon: 'lucideActivity' as ZIconName },
+  { value: 'Activity', label: 'Activity log', icon: 'lucideHistory' as ZIconName },
 ];
 
 /** Tools that have a window but no tab in the panel. MCP moved into the Store; it stays here so a layout or window saved

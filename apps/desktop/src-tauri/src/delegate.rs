@@ -200,7 +200,9 @@ static PENDING: LazyLock<Mutex<HashMap<String, oneshot::Sender<Reply>>>> =
 /// The calls waiting for the webview. A panic while it was held must not stop later calls from being answered: the map is
 /// still sound, so its guard is taken back.
 fn pending() -> std::sync::MutexGuard<'static, HashMap<String, oneshot::Sender<Reply>>> {
-    PENDING.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    PENDING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The cap on running workers. Taken back after a panic too: the gate fails open, never stuck.
@@ -429,7 +431,8 @@ mod tests {
 
     #[test]
     fn continue_replaces_agent() {
-        let parsed = parse_delegate(&json!({ "continue": " t-ab12cd ", "task": "fix it" })).expect("valid");
+        let parsed =
+            parse_delegate(&json!({ "continue": " t-ab12cd ", "task": "fix it" })).expect("valid");
         assert_eq!(parsed.continue_id.as_deref(), Some("t-ab12cd"));
         assert!(parsed.agent.is_empty());
         assert!(parse_delegate(&json!({ "continue": "   ", "task": "x" })).is_err());

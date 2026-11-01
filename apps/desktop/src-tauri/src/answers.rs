@@ -31,14 +31,19 @@ pub fn free_port(from: u16) -> u16 {
 pub fn with_port(command: &str, from: u16, to: u16) -> String {
     let pattern = format!(r"(--port[= ]|-p[= ]?){from}\b");
     match Regex::new(&pattern) {
-        Ok(found) => found.replace_all(command, format!("${{1}}{to}")).into_owned(),
+        Ok(found) => found
+            .replace_all(command, format!("${{1}}{to}"))
+            .into_owned(),
         Err(_) => command.to_string(),
     }
 }
 
 /// What a script printed that makes it look like it is waiting: the last non-empty lines, trimmed.
 fn lines_of(text: &str) -> Vec<&str> {
-    text.lines().map(str::trim).filter(|line| !line.is_empty()).collect()
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect()
 }
 
 /// The numbered options of a menu in `lines`: `1) project a`, `2. project b`, `[3] c`, `> 4 - d`.
@@ -69,13 +74,19 @@ fn choose(options: &[(String, String)], want: &str) -> String {
         .iter()
         .map(|(number, label)| {
             let label = label.to_lowercase();
-            let score = wanted.iter().filter(|word| label.contains(word.as_str())).count();
+            let score = wanted
+                .iter()
+                .filter(|word| label.contains(word.as_str()))
+                .count();
             (score, number)
         })
         .max_by_key(|(score, _)| *score);
     match best {
         Some((score, number)) if score > 0 => number.clone(),
-        _ => options.first().map(|(number, _)| number.clone()).unwrap_or_default(),
+        _ => options
+            .first()
+            .map(|(number, _)| number.clone())
+            .unwrap_or_default(),
     }
 }
 
@@ -83,13 +94,18 @@ fn choose(options: &[(String, String)], want: &str) -> String {
 /// caller wants the server on. An empty answer is just Enter: the script's own default.
 pub fn decide(text: &str, queue: &mut VecDeque<String>, expected: Option<u16>) -> String {
     let lines = lines_of(text);
-    let Some(last) = lines.last() else { return String::new() };
+    let Some(last) = lines.last() else {
+        return String::new();
+    };
     let question = last.to_lowercase();
     let options = menu(&lines);
 
     // A port question gets a port nobody uses.
     if question.contains("port") && options.len() < 2 {
-        if let Some(given) = queue.front().filter(|given| given.trim().parse::<u16>().is_ok()) {
+        if let Some(given) = queue
+            .front()
+            .filter(|given| given.trim().parse::<u16>().is_ok())
+        {
             let given = given.trim().to_string();
             queue.pop_front();
             return given;
@@ -111,12 +127,20 @@ pub fn decide(text: &str, queue: &mut VecDeque<String>, expected: Option<u16>) -
 
     let yes_no = ["(y/n)", "[y/n]", "(yes/no)", "[yes/no]", "(y/n/"];
     if yes_no.iter().any(|mark| question.contains(mark)) {
-        let default_yes = last.contains("[Y/n]") || last.contains("(Y/n)") || last.contains("[Yes/no]");
-        let default_no = last.contains("[y/N]") || last.contains("(y/N)") || last.contains("[yes/No]");
-        let goes_on = ["continue", "proceed", "start", "run", "open", "use ", "install", "launch"]
-            .iter()
-            .any(|word| question.contains(word));
-        return if default_yes || default_no && !goes_on { String::new() } else { "y".to_string() };
+        let default_yes =
+            last.contains("[Y/n]") || last.contains("(Y/n)") || last.contains("[Yes/no]");
+        let default_no =
+            last.contains("[y/N]") || last.contains("(y/N)") || last.contains("[yes/No]");
+        let goes_on = [
+            "continue", "proceed", "start", "run", "open", "use ", "install", "launch",
+        ]
+        .iter()
+        .any(|word| question.contains(word));
+        return if default_yes || default_no && !goes_on {
+            String::new()
+        } else {
+            "y".to_string()
+        };
     }
 
     String::new()
@@ -127,7 +151,8 @@ mod tests {
     use super::*;
 
     fn asked(text: &str, answers: &[&str]) -> String {
-        let mut queue: VecDeque<String> = answers.iter().map(|answer| (*answer).to_owned()).collect();
+        let mut queue: VecDeque<String> =
+            answers.iter().map(|answer| (*answer).to_owned()).collect();
         decide(text, &mut queue, Some(54_321))
     }
 
@@ -166,10 +191,19 @@ mod tests {
 
     #[test]
     fn the_port_in_a_command_is_rewritten() {
-        assert_eq!(with_port("vite --port 4200", 4200, 4201), "vite --port 4201");
-        assert_eq!(with_port("vite --port=4200 --host", 4200, 4201), "vite --port=4201 --host");
+        assert_eq!(
+            with_port("vite --port 4200", 4200, 4201),
+            "vite --port 4201"
+        );
+        assert_eq!(
+            with_port("vite --port=4200 --host", 4200, 4201),
+            "vite --port=4201 --host"
+        );
         assert_eq!(with_port("serve -p 4200", 4200, 4201), "serve -p 4201");
-        assert_eq!(with_port("vite --port 42000", 4200, 4201), "vite --port 42000");
+        assert_eq!(
+            with_port("vite --port 42000", 4200, 4201),
+            "vite --port 42000"
+        );
         assert_eq!(with_port("pnpm start", 4200, 4201), "pnpm start");
     }
 }

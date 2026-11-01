@@ -46,9 +46,13 @@ fn icon_of(folder: &Path, manifest: &serde_json::Value) -> Option<String> {
             .max_by_key(|(size, _)| *size)
             .map(|(_, path)| path.to_owned())
     };
-    let action = ["action", "browser_action", "page_action"].iter().map(|key| &manifest[key]["default_icon"]).find(|icon| !icon.is_null());
-    let path = largest(&manifest["icons"])
-        .or_else(|| action.and_then(|icon| icon.as_str().map(str::to_owned).or_else(|| largest(icon))))?;
+    let action = ["action", "browser_action", "page_action"]
+        .iter()
+        .map(|key| &manifest[key]["default_icon"])
+        .find(|icon| !icon.is_null());
+    let path = largest(&manifest["icons"]).or_else(|| {
+        action.and_then(|icon| icon.as_str().map(str::to_owned).or_else(|| largest(icon)))
+    })?;
     let file = folder.join(path.trim_start_matches('/'));
     // Inside its own folder only, and small: it is drawn at 16 px.
     if !file.starts_with(folder) || std::fs::metadata(&file).ok()?.len() > 512 * 1024 {
@@ -63,19 +67,33 @@ fn icon_of(folder: &Path, manifest: &serde_json::Value) -> Option<String> {
         _ => return None,
     };
     let bytes = std::fs::read(&file).ok()?;
-    Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 pub fn root(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|error| error.to_string())?.join("browser-extensions"))
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("browser-extensions"))
 }
 
 fn read_json<T: serde::de::DeserializeOwned + Default>(path: &Path) -> T {
-    std::fs::read_to_string(path).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    std::fs::write(path, serde_json::to_string_pretty(value).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+    std::fs::write(
+        path,
+        serde_json::to_string_pretty(value).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// Id to folder name, written when an extension is added.
@@ -95,13 +113,18 @@ fn disabled(root: &Path) -> BTreeSet<String> {
 
 /// The manifest of one extension folder: its name, toolbar page and icon.
 fn manifest_of(folder: &Path) -> Option<Manifest> {
-    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(folder.join("manifest.json")).ok()?).ok()?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(folder.join("manifest.json")).ok()?).ok()?;
     let name = manifest["name"].as_str()?.to_owned();
     let popup = ["action", "browser_action", "page_action"]
         .iter()
         .find_map(|key| manifest[key]["default_popup"].as_str())
         .map(|page| page.trim_start_matches('/').to_owned());
-    Some(Manifest { name, popup, icon: icon_of(folder, &manifest) })
+    Some(Manifest {
+        name,
+        popup,
+        icon: icon_of(folder, &manifest),
+    })
 }
 
 /// The extension folders on disk (each with a manifest), by folder name.
@@ -111,7 +134,12 @@ fn folders(root: &Path) -> Vec<(String, Manifest)> {
         .flatten()
         .flatten()
         .filter(|entry| entry.path().is_dir())
-        .filter_map(|entry| Some((entry.file_name().to_string_lossy().into_owned(), manifest_of(&entry.path())?)))
+        .filter_map(|entry| {
+            Some((
+                entry.file_name().to_string_lossy().into_owned(),
+                manifest_of(&entry.path())?,
+            ))
+        })
         .collect();
     found.sort_by_key(|(_, manifest)| manifest.name.to_lowercase());
     found
@@ -128,7 +156,9 @@ fn listed(root: &Path, live: Option<Vec<(String, String, bool)>>) -> Vec<Browser
         let folder = known.get(id);
         on_disk
             .iter()
-            .find(|(dir, manifest)| folder.is_some_and(|folder| folder == dir) || manifest.name == name)
+            .find(|(dir, manifest)| {
+                folder.is_some_and(|folder| folder == dir) || manifest.name == name
+            })
             .map(|(_, manifest)| manifest.clone())
             .unwrap_or_default()
     };
@@ -138,7 +168,9 @@ fn listed(root: &Path, live: Option<Vec<(String, String, bool)>>) -> Vec<Browser
             .map(|(id, name, enabled)| {
                 let manifest = folder_of(&id, &name);
                 BrowserExtension {
-                    popup: manifest.popup.map(|page| format!("chrome-extension://{id}/{page}")),
+                    popup: manifest
+                        .popup
+                        .map(|page| format!("chrome-extension://{id}/{page}")),
                     icon: manifest.icon,
                     id,
                     name,
@@ -149,8 +181,18 @@ fn listed(root: &Path, live: Option<Vec<(String, String, bool)>>) -> Vec<Browser
         None => on_disk
             .into_iter()
             .map(|(dir, manifest)| {
-                let id = known.iter().find(|(_, folder)| **folder == dir).map(|(id, _)| id.clone()).unwrap_or_default();
-                BrowserExtension { enabled: !off.contains(&id), popup: None, icon: manifest.icon, id, name: manifest.name }
+                let id = known
+                    .iter()
+                    .find(|(_, folder)| **folder == dir)
+                    .map(|(id, _)| id.clone())
+                    .unwrap_or_default();
+                BrowserExtension {
+                    enabled: !off.contains(&id),
+                    popup: None,
+                    icon: manifest.icon,
+                    id,
+                    name: manifest.name,
+                }
             })
             .collect(),
     }
@@ -158,15 +200,22 @@ fn listed(root: &Path, live: Option<Vec<(String, String, bool)>>) -> Vec<Browser
 
 #[cfg(windows)]
 mod profile {
-    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2BrowserExtension, ICoreWebView2Profile7, ICoreWebView2_13};
-    use webview2_com::{BrowserExtensionEnableCompletedHandler, BrowserExtensionRemoveCompletedHandler, ProfileGetBrowserExtensionsCompletedHandler};
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2BrowserExtension, ICoreWebView2Profile7, ICoreWebView2_13,
+    };
+    use webview2_com::{
+        BrowserExtensionEnableCompletedHandler, BrowserExtensionRemoveCompletedHandler,
+        ProfileGetBrowserExtensionsCompletedHandler,
+    };
     use windows::core::{Interface, BOOL, PWSTR};
 
     use std::cell::RefCell;
     use std::rc::Rc;
 
     /// The Preview profile of a tab's webview.
-    pub unsafe fn of(platform: &tauri::webview::PlatformWebview) -> Result<ICoreWebView2Profile7, String> {
+    pub unsafe fn of(
+        platform: &tauri::webview::PlatformWebview,
+    ) -> Result<ICoreWebView2Profile7, String> {
         unsafe {
             platform
                 .controller()
@@ -178,19 +227,25 @@ mod profile {
         }
     }
 
-    pub unsafe fn extensions(profile: &ICoreWebView2Profile7) -> Result<Vec<ICoreWebView2BrowserExtension>, String> {
+    pub unsafe fn extensions(
+        profile: &ICoreWebView2Profile7,
+    ) -> Result<Vec<ICoreWebView2BrowserExtension>, String> {
         let found = Rc::new(RefCell::new(Vec::new()));
         let sink = Rc::clone(&found);
         let profile = profile.clone();
         ProfileGetBrowserExtensionsCompletedHandler::wait_for_async_operation(
-            Box::new(move |handler| unsafe { profile.GetBrowserExtensions(&handler) }.map_err(webview2_com::Error::WindowsError)),
+            Box::new(move |handler| {
+                unsafe { profile.GetBrowserExtensions(&handler) }
+                    .map_err(webview2_com::Error::WindowsError)
+            }),
             Box::new(move |error, list| {
                 error?;
                 if let Some(list) = list {
                     let mut count = 0u32;
                     unsafe { list.Count(&mut count) }?;
                     for index in 0..count {
-                        sink.borrow_mut().push(unsafe { list.GetValueAtIndex(index) }?);
+                        sink.borrow_mut()
+                            .push(unsafe { list.GetValueAtIndex(index) }?);
                     }
                 }
                 Ok(())
@@ -201,20 +256,35 @@ mod profile {
     }
 
     /// Id, name and whether it is on.
-    pub unsafe fn describe(extension: &ICoreWebView2BrowserExtension) -> Result<(String, String, bool), String> {
+    pub unsafe fn describe(
+        extension: &ICoreWebView2BrowserExtension,
+    ) -> Result<(String, String, bool), String> {
         let (mut id, mut name, mut enabled) = (PWSTR::null(), PWSTR::null(), BOOL::default());
         unsafe {
             extension.Id(&mut id).map_err(|error| error.to_string())?;
-            extension.Name(&mut name).map_err(|error| error.to_string())?;
-            extension.IsEnabled(&mut enabled).map_err(|error| error.to_string())?;
+            extension
+                .Name(&mut name)
+                .map_err(|error| error.to_string())?;
+            extension
+                .IsEnabled(&mut enabled)
+                .map_err(|error| error.to_string())?;
         }
-        Ok((webview2_com::take_pwstr(id), webview2_com::take_pwstr(name), enabled.as_bool()))
+        Ok((
+            webview2_com::take_pwstr(id),
+            webview2_com::take_pwstr(name),
+            enabled.as_bool(),
+        ))
     }
 
-    pub unsafe fn enable(extension: &ICoreWebView2BrowserExtension, on: bool) -> Result<(), String> {
+    pub unsafe fn enable(
+        extension: &ICoreWebView2BrowserExtension,
+        on: bool,
+    ) -> Result<(), String> {
         let extension = extension.clone();
         BrowserExtensionEnableCompletedHandler::wait_for_async_operation(
-            Box::new(move |handler| unsafe { extension.Enable(on, &handler) }.map_err(webview2_com::Error::WindowsError)),
+            Box::new(move |handler| {
+                unsafe { extension.Enable(on, &handler) }.map_err(webview2_com::Error::WindowsError)
+            }),
             Box::new(|error| error),
         )
         .map_err(|error| error.to_string())
@@ -223,7 +293,9 @@ mod profile {
     pub unsafe fn remove(extension: &ICoreWebView2BrowserExtension) -> Result<(), String> {
         let extension = extension.clone();
         BrowserExtensionRemoveCompletedHandler::wait_for_async_operation(
-            Box::new(move |handler| unsafe { extension.Remove(&handler) }.map_err(webview2_com::Error::WindowsError)),
+            Box::new(move |handler| {
+                unsafe { extension.Remove(&handler) }.map_err(webview2_com::Error::WindowsError)
+            }),
             Box::new(|error| error),
         )
         .map_err(|error| error.to_string())
@@ -243,7 +315,11 @@ pub unsafe fn profile_of(
 async fn on_profile<T: Send + 'static>(
     app: &AppHandle,
     tab: &str,
-    work: impl FnOnce(&webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Profile7) -> Result<T, String> + Send + 'static,
+    work: impl FnOnce(
+            &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Profile7,
+        ) -> Result<T, String>
+        + Send
+        + 'static,
 ) -> Result<Option<T>, String> {
     let Ok(view) = crate::browser::webview(app, tab) else {
         return Ok(None);
@@ -259,7 +335,10 @@ async fn on_profile<T: Send + 'static>(
 
 /// The extensions for the toolbar menu. Puts the user's "off" back on extensions the start-up load turned on.
 #[tauri::command]
-pub async fn browser_extensions(app: AppHandle, tab: String) -> Result<Vec<BrowserExtension>, String> {
+pub async fn browser_extensions(
+    app: AppHandle,
+    tab: String,
+) -> Result<Vec<BrowserExtension>, String> {
     let root = root(&app)?;
     #[cfg(windows)]
     {
@@ -302,18 +381,23 @@ async fn change(app: &AppHandle, tab: &str, id: String, what: Change) -> Result<
         let done = on_profile(app, tab, move |profile| unsafe {
             let extension = profile::extensions(profile)?
                 .into_iter()
-                .find(|extension| profile::describe(extension).is_ok_and(|(found, _, _)| found == target))
+                .find(|extension| {
+                    profile::describe(extension).is_ok_and(|(found, _, _)| found == target)
+                })
                 .ok_or("That extension is not in the browser any more.")?;
             match what {
                 Change::Enable(on) => profile::enable(&extension, on),
                 // Turned off and on again: the extension's pages and background script start over from its files.
-                Change::Reload => profile::enable(&extension, false).and_then(|()| profile::enable(&extension, true)),
+                Change::Reload => profile::enable(&extension, false)
+                    .and_then(|()| profile::enable(&extension, true)),
                 Change::Remove => profile::remove(&extension),
             }
         })
         .await?;
         if done.is_none() {
-            return Err("Open a page in the browser first: the extension is changed in its profile.".into());
+            return Err(
+                "Open a page in the browser first: the extension is changed in its profile.".into(),
+            );
         }
     }
     #[cfg(not(windows))]
@@ -345,17 +429,30 @@ async fn change(app: &AppHandle, tab: &str, id: String, what: Change) -> Result<
 }
 
 #[tauri::command]
-pub async fn browser_extension_enable(app: AppHandle, tab: String, id: String, enabled: bool) -> Result<(), String> {
+pub async fn browser_extension_enable(
+    app: AppHandle,
+    tab: String,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
     change(&app, &tab, id, Change::Enable(enabled)).await
 }
 
 #[tauri::command]
-pub async fn browser_extension_reload(app: AppHandle, tab: String, id: String) -> Result<(), String> {
+pub async fn browser_extension_reload(
+    app: AppHandle,
+    tab: String,
+    id: String,
+) -> Result<(), String> {
     change(&app, &tab, id, Change::Reload).await
 }
 
 #[tauri::command]
-pub async fn browser_extension_remove(app: AppHandle, tab: String, id: String) -> Result<(), String> {
+pub async fn browser_extension_remove(
+    app: AppHandle,
+    tab: String,
+    id: String,
+) -> Result<(), String> {
     change(&app, &tab, id, Change::Remove).await
 }
 
@@ -372,21 +469,48 @@ mod tests {
     fn the_list_joins_the_profile_with_the_folders() {
         let root = std::env::temp_dir().join(format!("agentdeck-ext-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        folder(&root, "extension-a", r#"{"manifest_version":3,"name":"Alpha","action":{"default_popup":"/popup.html"},"icons":{"16":"i16.png","128":"i128.png"}}"#);
+        folder(
+            &root,
+            "extension-a",
+            r#"{"manifest_version":3,"name":"Alpha","action":{"default_popup":"/popup.html"},"icons":{"16":"i16.png","128":"i128.png"}}"#,
+        );
         std::fs::write(root.join("extension-a").join("i128.png"), [1u8, 2, 3]).unwrap();
-        folder(&root, "extension-b", r#"{"manifest_version":3,"name":"Beta"}"#);
+        folder(
+            &root,
+            "extension-b",
+            r#"{"manifest_version":3,"name":"Beta"}"#,
+        );
         remember_id(&root, "aaa", "extension-a").unwrap();
 
-        let live = listed(&root, Some(vec![("aaa".into(), "Alpha".into(), true), ("bbb".into(), "Beta".into(), false)]));
-        assert_eq!(live[0].popup.as_deref(), Some("chrome-extension://aaa/popup.html"));
-        assert_eq!(live[0].icon.as_deref(), Some("data:image/png;base64,AQID"), "the largest icon");
+        let live = listed(
+            &root,
+            Some(vec![
+                ("aaa".into(), "Alpha".into(), true),
+                ("bbb".into(), "Beta".into(), false),
+            ]),
+        );
+        assert_eq!(
+            live[0].popup.as_deref(),
+            Some("chrome-extension://aaa/popup.html")
+        );
+        assert_eq!(
+            live[0].icon.as_deref(),
+            Some("data:image/png;base64,AQID"),
+            "the largest icon"
+        );
         assert_eq!(live[1].popup, None);
         assert_eq!(live[1].icon, None);
         assert!(!live[1].enabled);
 
         write_json(&root.join("disabled.json"), &["aaa"]).unwrap();
         let on_disk = listed(&root, None);
-        assert_eq!(on_disk.iter().map(|item| (item.name.as_str(), item.enabled)).collect::<Vec<_>>(), [("Alpha", false), ("Beta", true)]);
+        assert_eq!(
+            on_disk
+                .iter()
+                .map(|item| (item.name.as_str(), item.enabled))
+                .collect::<Vec<_>>(),
+            [("Alpha", false), ("Beta", true)]
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

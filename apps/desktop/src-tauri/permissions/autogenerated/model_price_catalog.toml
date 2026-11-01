@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-model-price-catalog"
+description = "Enables the model_price_catalog command without any pre-configured scope."
+commands.allow = ["model_price_catalog"]
+
+[[permission]]
+identifier = "deny-model-price-catalog"
+description = "Denies the model_price_catalog command without any pre-configured scope."
+commands.deny = ["model_price_catalog"]

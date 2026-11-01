@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::{secret_load, secret_save, Login};
+use super::{secret_delete, secret_load, secret_save, Login};
 
 const LEGACY_SECRET: &str = "agentdeck:workbuddy";
 const ACCESS_SECRET: &str = "agentdeck:workbuddy:access";
@@ -12,8 +12,13 @@ const REFRESH_SECRET: &str = "agentdeck:workbuddy:refresh";
 const EXPIRY_SECRET: &str = "agentdeck:workbuddy:expiry";
 const ACCESS_COUNT_SECRET: &str = "agentdeck:workbuddy:access:count";
 const REFRESH_COUNT_SECRET: &str = "agentdeck:workbuddy:refresh:count";
+const USER_ID_SECRET: &str = "agentdeck:workbuddy:user-id";
+const ENTERPRISE_ID_SECRET: &str = "agentdeck:workbuddy:enterprise-id";
 const BASE: &str = "https://www.workbuddy.ai";
-const SECRET_CHUNK_UTF16: usize = 1800;
+// Windows Credential Manager stores a UTF-16-encoded password in a blob of at
+// most CRED_MAX_CREDENTIAL_BLOB_SIZE (2560) bytes, i.e. 1280 UTF-16 units per
+// credential; chunk well below that so every piece fits one credential.
+const SECRET_CHUNK_UTF16: usize = 1000;
 
 fn load_value(prefix: &str, count_target: &str) -> Option<String> {
     let count = secret_load(count_target.to_string()).and_then(|value| value.parse::<usize>().ok());
@@ -47,6 +52,15 @@ fn save_value(prefix: &str, count_target: &str, value: &str) -> Result<(), Strin
         secret_save(format!("{prefix}:{index}"), chunk.clone())?;
     }
     secret_save(count_target.to_string(), chunks.len().to_string())
+}
+
+fn delete_value(prefix: &str, count_target: &str) -> Result<(), String> {
+    if let Some(count) = secret_load(count_target.to_string()).and_then(|value| value.parse::<usize>().ok()) {
+        for index in 0..count {
+            secret_delete(format!("{prefix}:{index}"))?;
+        }
+    }
+    secret_delete(count_target.to_string())
 }
 
 pub(super) fn login_status() -> Login {
@@ -95,10 +109,51 @@ pub(crate) async fn access_token() -> Result<String, String> {
     }
 }
 
+pub(crate) fn user_id() -> Option<String> {
+    secret_load(USER_ID_SECRET.to_string())
+}
+
+pub(crate) fn enterprise_id() -> Option<String> {
+    secret_load(ENTERPRISE_ID_SECRET.to_string())
+}
+
+pub(super) fn logout() -> Result<(), String> {
+    delete_value(ACCESS_SECRET, ACCESS_COUNT_SECRET)?;
+    delete_value(REFRESH_SECRET, REFRESH_COUNT_SECRET)?;
+    for target in [LEGACY_SECRET, EXPIRY_SECRET, USER_ID_SECRET, ENTERPRISE_ID_SECRET] {
+        secret_delete(target.to_string())?;
+    }
+    Ok(())
+}
+
 fn save_tokens(access: &str, refresh: &str, expires_at: u64) -> Result<(), String> {
     save_value(ACCESS_SECRET, ACCESS_COUNT_SECRET, access)?;
     save_value(REFRESH_SECRET, REFRESH_COUNT_SECRET, refresh)?;
     secret_save(EXPIRY_SECRET.to_string(), expires_at.to_string())
+}
+
+fn save_account_metadata(account: &Value) -> Result<(), String> {
+    let user_id = ["uid", "userId", "user_id"]
+        .iter()
+        .find_map(|key| match &account[*key] {
+            Value::String(value) if !value.is_empty() => Some(value.clone()),
+            Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
+        .ok_or("WorkBuddy account response returned no user ID")?;
+    secret_save(USER_ID_SECRET.to_string(), user_id.to_string())?;
+    if let Some(enterprise_id) =
+        ["enterpriseId", "enterprise_id"]
+            .iter()
+            .find_map(|key| match &account[*key] {
+                Value::String(value) if !value.is_empty() => Some(value.clone()),
+                Value::Number(value) => Some(value.to_string()),
+                _ => None,
+            })
+    {
+        secret_save(ENTERPRISE_ID_SECRET.to_string(), enterprise_id)?;
+    }
+    Ok(())
 }
 
 async fn refresh_token(refresh_token: &str) -> Result<String, String> {
@@ -113,6 +168,9 @@ async fn refresh_token(refresh_token: &str) -> Result<String, String> {
         .header("X-Refresh-Token", refresh_token)
         .header("X-Product", "SaaS")
         .header("X-Domain", "www.workbuddy.ai")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("User-Agent", "WorkBuddy/5.5.6")
+        .header("X-User-Id", user_id().unwrap_or_default())
         .body("{}")
         .send()
         .await
@@ -199,7 +257,37 @@ pub(super) async fn sign_in() -> Result<(), String> {
                 payload["data"]["refreshToken"].as_str().unwrap_or_default(),
                 expires_at,
             )?;
-            return Ok(());
+
+            // The access token alone is enough for the login badge, but the model catalogue and chat gateway also
+            // bind the request to the WorkBuddy user ID returned by this follow-up account call.
+            for _ in 0..60 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let account = client
+                    .get(format!("{BASE}/v2/plugin/login/account?state={state_id}"))
+                    .header("Accept", "application/json")
+                    .header("Authorization", format!("Bearer {access}"))
+                    .header("X-Product", "SaaS")
+                    .header("X-Domain", "www.workbuddy.ai")
+                    .header("X-Requested-With", "XMLHttpRequest")
+                    .send()
+                    .await
+                    .map_err(|error| format!("WorkBuddy account lookup failed: {error}"))?;
+                let account_payload: Value = account
+                    .json()
+                    .await
+                    .map_err(|error| format!("WorkBuddy sent invalid account data: {error}"))?;
+                if account_payload["code"].as_i64() == Some(0) {
+                    save_account_metadata(&account_payload["data"])?;
+                    return Ok(());
+                }
+                if account_payload["code"].as_i64() != Some(12151) {
+                    return Err(format!(
+                        "WorkBuddy account lookup failed: {}",
+                        account_payload["msg"].as_str().unwrap_or("unknown error")
+                    ));
+                }
+            }
+            return Err("WorkBuddy account lookup timed out".to_string());
         }
         if payload["code"].as_i64() != Some(11217) {
             return Err(format!(
@@ -211,11 +299,20 @@ pub(super) async fn sign_in() -> Result<(), String> {
     Err("WorkBuddy sign-in timed out after 10 minutes".to_string())
 }
 
+fn is_model_id(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value.len() < 120
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
+        })
+}
+
 fn collect_models(value: &Value, models: &mut Vec<String>) {
     match value {
         Value::Object(object) => {
             for key in ["id", "model", "modelId", "model_id"] {
-                if let Some(model) = object[key].as_str().filter(|model| model.contains('-')) {
+                if let Some(model) = object[key].as_str().filter(|model| is_model_id(model)) {
                     if !models.iter().any(|known| known == model) {
                         models.push(model.to_string());
                     }
@@ -227,7 +324,13 @@ fn collect_models(value: &Value, models: &mut Vec<String>) {
         }
         Value::Array(items) => {
             for item in items {
-                collect_models(item, models);
+                if let Value::String(model) = item {
+                    if is_model_id(model) && !models.iter().any(|known| known == model) {
+                        models.push(model.clone());
+                    }
+                } else {
+                    collect_models(item, models);
+                }
             }
         }
         _ => {}
@@ -245,21 +348,52 @@ pub(crate) async fn models() -> Result<Vec<String>, String> {
         .bearer_auth(token)
         .header("Accept", "application/json")
         .header("X-Product", "SaaS")
+        .header("X-Domain", "www.workbuddy.ai")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("X-User-Id", user_id().unwrap_or_default())
+        .header("X-Enterprise-Id", enterprise_id().unwrap_or_default())
+        .header("User-Agent", "WorkBuddy/5.5.6")
+        .header("X-IDE-Type", "WorkBuddy")
+        .header("X-IDE-Name", "WorkBuddy")
+        .header("X-IDE-Version", "5.5.6")
+        .header("X-Agent-Intent", "craft")
+        .header("X-Agent-Purpose", "conversation")
+        .header("X-Agent-Type", "main")
         .send()
         .await
         .map_err(|error| format!("WorkBuddy model catalog failed: {error}"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "WorkBuddy model catalog returned {}",
-            response.status()
-        ));
+        return Ok(static_models());
     }
-    let payload: Value = response.json().await.map_err(|error| error.to_string())?;
+    let payload: Value = match response.json().await {
+        Ok(payload) => payload,
+        Err(_) => return Ok(static_models()),
+    };
     let mut models = Vec::new();
     collect_models(&payload, &mut models);
-    models.retain(|model| !model.contains('/') && model.len() < 120);
+    models.retain(|model| !model.contains('/') && is_model_id(model));
     if models.is_empty() {
-        return Err("WorkBuddy returned no chat models".to_string());
+        return Ok(static_models());
     }
     Ok(models)
+}
+
+fn static_models() -> Vec<String> {
+    [
+        "gpt-6-astra",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",
+        "deepseek-v4.1-flash",
+        "hy4-preview",
+        "kimi-k3",
+        "gemini-3.5-flash",
+        "glm-5.3",
+        "glm-5.2",
+        "hy3",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
 }

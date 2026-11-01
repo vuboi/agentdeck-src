@@ -52,7 +52,9 @@ pub fn tool_defs() -> Vec<Value> {
 
 pub async fn call(name: &str, args: &Value, chat: &str) -> Result<String, String> {
     match name {
-        "server_logs" => Ok(server_logs(args["lines"].as_u64().unwrap_or(80).clamp(5, 400) as usize)),
+        "server_logs" => Ok(server_logs(
+            args["lines"].as_u64().unwrap_or(80).clamp(5, 400) as usize,
+        )),
         _ => {
             let root = PathBuf::from(crate::index::root_of(chat, args)?);
             if !root.is_dir() {
@@ -85,7 +87,9 @@ fn clip(text: &str, max: usize) -> String {
 fn manifests(root: &Path) -> Vec<(PathBuf, Value)> {
     let mut found = Vec::new();
     let mut look = |folder: &Path| {
-        if let Some(json) = read(&folder.join("package.json")).and_then(|text| serde_json::from_str::<Value>(&text).ok()) {
+        if let Some(json) = read(&folder.join("package.json"))
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        {
             found.push((folder.to_path_buf(), json));
         }
     };
@@ -103,10 +107,31 @@ fn manifests(root: &Path) -> Vec<(PathBuf, Value)> {
 }
 
 const UI_PACKAGES: &[&str] = &[
-    "svelte", "@sveltejs/kit", "react", "next", "vue", "nuxt", "@angular/core", "solid-js", "astro", "tailwindcss",
-    "@tailwindcss/vite", "bootstrap", "@mui/material", "antd", "@chakra-ui/react", "@radix-ui/react-dialog",
-    "shadcn-ui", "bits-ui", "@shival99/z-ui-svelte", "@shival99/z-ui", "lucide-svelte", "lucide-react",
-    "@tauri-apps/api", "electron", "vite",
+    "svelte",
+    "@sveltejs/kit",
+    "react",
+    "next",
+    "vue",
+    "nuxt",
+    "@angular/core",
+    "solid-js",
+    "astro",
+    "tailwindcss",
+    "@tailwindcss/vite",
+    "bootstrap",
+    "@mui/material",
+    "antd",
+    "@chakra-ui/react",
+    "@radix-ui/react-dialog",
+    "shadcn-ui",
+    "bits-ui",
+    "@shival99/z-ui-svelte",
+    "@shival99/z-ui",
+    "lucide-svelte",
+    "lucide-react",
+    "@tauri-apps/api",
+    "electron",
+    "vite",
 ];
 
 fn project_context(root: &Path) -> String {
@@ -116,13 +141,22 @@ fn project_context(root: &Path) -> String {
     let packages = manifests(root);
     let manager = package_manager(root);
     if !packages.is_empty() {
-        out.push(format!("\n## Packages (run scripts with `{manager} run <script>` in their folder)"));
+        out.push(format!(
+            "\n## Packages (run scripts with `{manager} run <script>` in their folder)"
+        ));
     }
     for (folder, json) in &packages {
-        let rel = folder.strip_prefix(root).map_or_else(|_| folder.display().to_string(), |path| {
-            let text = path.display().to_string();
-            if text.is_empty() { ".".to_string() } else { text }
-        });
+        let rel = folder.strip_prefix(root).map_or_else(
+            |_| folder.display().to_string(),
+            |path| {
+                let text = path.display().to_string();
+                if text.is_empty() {
+                    ".".to_string()
+                } else {
+                    text
+                }
+            },
+        );
         let mut deps: Vec<&str> = ["dependencies", "devDependencies"]
             .iter()
             .filter_map(|key| json[*key].as_object())
@@ -133,12 +167,23 @@ fn project_context(root: &Path) -> String {
         deps.dedup();
         let scripts: Vec<String> = json["scripts"]
             .as_object()
-            .map(|map| map.iter().take(25).map(|(name, command)| format!("  - {name}: {}", command.as_str().unwrap_or_default())).collect())
+            .map(|map| {
+                map.iter()
+                    .take(25)
+                    .map(|(name, command)| {
+                        format!("  - {name}: {}", command.as_str().unwrap_or_default())
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         out.push(format!(
             "- {rel} ({}){}",
             json["name"].as_str().unwrap_or("unnamed"),
-            if deps.is_empty() { String::new() } else { format!(" uses {}", deps.join(", ")) }
+            if deps.is_empty() {
+                String::new()
+            } else {
+                format!(" uses {}", deps.join(", "))
+            }
         ));
         out.extend(scripts);
     }
@@ -147,7 +192,14 @@ fn project_context(root: &Path) -> String {
     }
 
     // Rules the project wrote for whoever works on it.
-    let rules = ["AGENTS.md", "CLAUDE.md", ".cursorrules", "DESIGN.md", "docs/DESIGN.md", "CONTRIBUTING.md"];
+    let rules = [
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".cursorrules",
+        "DESIGN.md",
+        "docs/DESIGN.md",
+        "CONTRIBUTING.md",
+    ];
     for name in rules {
         if let Some(text) = read(&root.join(name)) {
             out.push(format!("\n## {name}\n{}", clip(text.trim(), 4000)));
@@ -161,7 +213,12 @@ fn project_context(root: &Path) -> String {
             "\n## Design tokens ({} found; use these with var(--name) or the matching utility classes, do not hard-code colours or sizes)",
             tokens.len()
         ));
-        out.extend(tokens.into_iter().take(160).map(|(name, value, file)| format!("- --{name}: {value}  ({file})")));
+        out.extend(
+            tokens
+                .into_iter()
+                .take(160)
+                .map(|(name, value, file)| format!("- --{name}: {value}  ({file})")),
+        );
     }
     out.push("\nBefore saying UI work is done: open it in the Preview, run ui_audit, and run run_checks.".to_string());
     out.join("\n")
@@ -177,17 +234,30 @@ fn design_tokens(root: &Path) -> Vec<(String, String, String)> {
     let walker = ignore::WalkBuilder::new(root).max_depth(Some(6)).build();
     for entry in walker.flatten().take(4000) {
         let path = entry.path();
-        let css = path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| matches!(ext, "css" | "scss" | "pcss" | "postcss"));
+        let css = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| matches!(ext, "css" | "scss" | "pcss" | "postcss"));
         let text_path = path.to_string_lossy();
-        if !css || text_path.contains("node_modules") || text_path.contains("dist") || text_path.contains("target") {
+        if !css
+            || text_path.contains("node_modules")
+            || text_path.contains("dist")
+            || text_path.contains("target")
+        {
             continue;
         }
         let Some(text) = read(path) else { continue };
-        let rel = path.strip_prefix(root).map_or_else(|_| text_path.to_string(), |rel| rel.display().to_string());
+        let rel = path
+            .strip_prefix(root)
+            .map_or_else(|_| text_path.to_string(), |rel| rel.display().to_string());
         for found in pattern.captures_iter(&text) {
             let name = found[1].to_string();
             if seen.insert(name.clone()) {
-                tokens.push((name, found[2].trim().chars().take(80).collect(), rel.clone()));
+                tokens.push((
+                    name,
+                    found[2].trim().chars().take(80).collect(),
+                    rel.clone(),
+                ));
             }
         }
         if tokens.len() > 400 {
@@ -232,15 +302,37 @@ fn script_names(kind: &str) -> &'static [&'static str] {
 
 /// The commands a check of `kind` runs: (folder, program, args, label). Only what the project declares.
 fn plan(root: &Path, kind: &str) -> Vec<(PathBuf, String, Vec<String>, String)> {
-    let kinds: Vec<&str> = if kind == "all" { vec!["lint", "typecheck"] } else { vec![kind] };
+    let kinds: Vec<&str> = if kind == "all" {
+        vec!["lint", "typecheck"]
+    } else {
+        vec![kind]
+    };
     let manager = package_manager(root);
     let mut steps = Vec::new();
     for kind in &kinds {
         for (folder, json) in manifests(root).into_iter().take(6) {
-            if let Some(script) = script_names(kind).iter().find(|name| json["scripts"][**name].is_string()) {
-                let rel = folder.strip_prefix(root).map(|path| path.display().to_string()).unwrap_or_default();
-                let label = format!("{manager} run {script}{}", if rel.is_empty() { String::new() } else { format!(" (in {rel})") });
-                steps.push((folder, manager.to_string(), vec!["run".to_string(), (*script).to_string()], label));
+            if let Some(script) = script_names(kind)
+                .iter()
+                .find(|name| json["scripts"][**name].is_string())
+            {
+                let rel = folder
+                    .strip_prefix(root)
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default();
+                let label = format!(
+                    "{manager} run {script}{}",
+                    if rel.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (in {rel})")
+                    }
+                );
+                steps.push((
+                    folder,
+                    manager.to_string(),
+                    vec!["run".to_string(), (*script).to_string()],
+                    label,
+                ));
             }
         }
         if root.join("Cargo.toml").is_file() {
@@ -253,7 +345,12 @@ fn plan(root: &Path, kind: &str) -> Vec<(PathBuf, String, Vec<String>, String)> 
             };
             if let Some(args) = cargo {
                 let label = format!("cargo {}", args.join(" "));
-                steps.push((root.to_path_buf(), "cargo".to_string(), args.into_iter().map(str::to_string).collect(), label));
+                steps.push((
+                    root.to_path_buf(),
+                    "cargo".to_string(),
+                    args.into_iter().map(str::to_string).collect(),
+                    label,
+                ));
             }
         }
     }
@@ -262,14 +359,22 @@ fn plan(root: &Path, kind: &str) -> Vec<(PathBuf, String, Vec<String>, String)> 
 
 /// Lines that name a place in a file (`path:line[:col]`, `path(line,col)`, `--> path:line:col`), deduplicated.
 fn diagnostics(output: &str) -> Vec<String> {
-    let Ok(place) = Regex::new(r"(?i)(?:-->\s*)?([A-Za-z]:[\\/][^\s:()]+|[\w./\\-]+)\.(ts|tsx|js|jsx|mjs|cjs|svelte|vue|astro|rs|py|go|css|scss|html)(?::(\d+)(?::(\d+))?|\((\d+),(\d+)\))") else {
+    let Ok(place) = Regex::new(
+        r"(?i)(?:-->\s*)?([A-Za-z]:[\\/][^\s:()]+|[\w./\\-]+)\.(ts|tsx|js|jsx|mjs|cjs|svelte|vue|astro|rs|py|go|css|scss|html)(?::(\d+)(?::(\d+))?|\((\d+),(\d+)\))",
+    ) else {
         return Vec::new();
     };
     let mut seen = std::collections::HashSet::new();
     let mut found = Vec::new();
     for line in output.lines() {
         let clean = strip_ansi(line);
-        if !place.is_match(&clean) || !(clean.to_lowercase().contains("error") || clean.to_lowercase().contains("warn") || clean.contains("-->") || clean.contains('✖') || clean.contains('×')) {
+        if !place.is_match(&clean)
+            || !(clean.to_lowercase().contains("error")
+                || clean.to_lowercase().contains("warn")
+                || clean.contains("-->")
+                || clean.contains('✖')
+                || clean.contains('×'))
+        {
             continue;
         }
         let text = clean.trim().chars().take(300).collect::<String>();
@@ -284,7 +389,10 @@ fn diagnostics(output: &str) -> Vec<String> {
 }
 
 fn strip_ansi(text: &str) -> String {
-    Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]").map_or_else(|_| text.to_string(), |ansi| ansi.replace_all(text, "").into_owned())
+    Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]").map_or_else(
+        |_| text.to_string(),
+        |ansi| ansi.replace_all(text, "").into_owned(),
+    )
 }
 
 async fn run_checks(root: &Path, kind: &str) -> Result<String, String> {
@@ -298,12 +406,21 @@ async fn run_checks(root: &Path, kind: &str) -> Result<String, String> {
     let mut report = Vec::new();
     let mut failed = 0;
     for (folder, program, args, label) in steps {
-        let mut command = tokio::process::Command::new(if cfg!(windows) { "cmd" } else { program.as_str() });
+        let mut command = tokio::process::Command::new(if cfg!(windows) {
+            "cmd"
+        } else {
+            program.as_str()
+        });
         if cfg!(windows) {
             // Package managers are `.cmd` shims on Windows: they run through cmd.exe.
             command.arg("/C").arg(&program);
         }
-        command.args(&args).current_dir(&folder).kill_on_drop(true).env("FORCE_COLOR", "0").env("CI", "1");
+        command
+            .args(&args)
+            .current_dir(&folder)
+            .kill_on_drop(true)
+            .env("FORCE_COLOR", "0")
+            .env("CI", "1");
         #[cfg(windows)]
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         let started = std::time::Instant::now();
@@ -320,24 +437,44 @@ async fn run_checks(root: &Path, kind: &str) -> Result<String, String> {
                 continue;
             }
         };
-        let text = format!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         let ok = output.status.success();
         if !ok {
             failed += 1;
         }
         let problems = diagnostics(&text);
-        let tail: Vec<String> = strip_ansi(&text).lines().filter(|line| !line.trim().is_empty()).map(str::to_string).collect();
+        let tail: Vec<String> = strip_ansi(&text)
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_string)
+            .collect();
         let tail = tail[tail.len().saturating_sub(if ok { 8 } else { 40 })..].join("\n");
         report.push(format!(
             "## {label}: {} in {:.0}s{}\n{}{}",
             if ok { "passed" } else { "FAILED" },
             started.elapsed().as_secs_f64(),
-            if problems.is_empty() { String::new() } else { format!(", {} problem lines", problems.len()) },
-            if problems.is_empty() { String::new() } else { format!("{}\n\nEnd of the output:\n", problems.join("\n")) },
+            if problems.is_empty() {
+                String::new()
+            } else {
+                format!(", {} problem lines", problems.len())
+            },
+            if problems.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n\nEnd of the output:\n", problems.join("\n"))
+            },
             tail
         ));
     }
-    let head = if failed == 0 { "All checks passed.".to_string() } else { format!("{failed} check(s) failed: fix the problems below, then run_checks again.") };
+    let head = if failed == 0 {
+        "All checks passed.".to_string()
+    } else {
+        format!("{failed} check(s) failed: fix the problems below, then run_checks again.")
+    };
     Ok(format!("{head}\n\n{}", report.join("\n\n")))
 }
 
@@ -361,7 +498,11 @@ fn server_logs(lines: usize) -> String {
                 server.cwd,
                 if server.running { "running" } else { "EXITED" },
                 format_args!(", {}s old", server.age),
-                if tail.trim().is_empty() { "(no output yet)" } else { tail.as_str() }
+                if tail.trim().is_empty() {
+                    "(no output yet)"
+                } else {
+                    tail.as_str()
+                }
             )
         })
         .collect::<Vec<_>>()

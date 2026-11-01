@@ -16,7 +16,6 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-
 use super::stage;
 
 const REGISTRY: &str = "https://registry.modelcontextprotocol.io/v0/servers";
@@ -62,7 +61,11 @@ pub enum PluginSource {
     /// A folder on this computer.
     Local { path: String },
     /// A folder of a git repository at a fixed commit.
-    Git { url: String, sha: String, path: String },
+    Git {
+        url: String,
+        sha: String,
+        path: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -75,11 +78,14 @@ pub struct Cache {
 }
 
 pub fn cache_file(home: &Path) -> PathBuf {
-    home.join(crate::channel::home_folder_name()).join("cache").join("catalog.json")
+    home.join(crate::channel::home_folder_name())
+        .join("cache")
+        .join("catalog.json")
 }
 
 pub fn sources_file(home: &Path) -> PathBuf {
-    home.join(crate::channel::home_folder_name()).join("store-sources.json")
+    home.join(crate::channel::home_folder_name())
+        .join("store-sources.json")
 }
 
 /// The skill sources a new install starts with, so Discover lists skills before the user adds any. Once the list is
@@ -89,7 +95,10 @@ pub const DEFAULT_SOURCES: [&str; 1] = ["https://github.com/anthropics/skills"];
 pub fn read_sources(home: &Path) -> Vec<String> {
     match std::fs::read_to_string(sources_file(home)) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-        Err(_) => DEFAULT_SOURCES.iter().map(|url| (*url).to_owned()).collect(),
+        Err(_) => DEFAULT_SOURCES
+            .iter()
+            .map(|url| (*url).to_owned())
+            .collect(),
     }
 }
 
@@ -98,8 +107,11 @@ pub fn write_sources(home: &Path, urls: &[String]) -> Result<(), String> {
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    std::fs::write(&file, serde_json::to_string_pretty(urls).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())
+    std::fs::write(
+        &file,
+        serde_json::to_string_pretty(urls).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
 }
 
 /// A source the user can add: an https git address, nothing else.
@@ -122,19 +134,26 @@ static MEMORY: Mutex<Option<Arc<Cache>>> = Mutex::new(None);
 
 /// The catalog, read from its file the first time. Empty (`fetched_at` 0) until a refresh has run.
 pub fn cached(home: &Path) -> Arc<Cache> {
-    let mut slot = MEMORY.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut slot = MEMORY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     slot.get_or_insert_with(|| {
         let mut cache = read_cache(home).unwrap_or_default();
         for item in builtins() {
-            if !cache.items.iter().any(|old| old.key == item.key) { cache.items.push(item); }
+            if !cache.items.iter().any(|old| old.key == item.key) {
+                cache.items.push(item);
+            }
         }
         Arc::new(cache)
-    }).clone()
+    })
+    .clone()
 }
 
 fn remember(cache: Cache) -> Arc<Cache> {
     let cache = Arc::new(cache);
-    *MEMORY.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::clone(&cache));
+    *MEMORY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Arc::clone(&cache));
     cache
 }
 
@@ -166,14 +185,24 @@ fn any(value: &str) -> bool {
 
 /// `limit` items of the catalog that match `filter`, starting at `offset`.
 pub fn page(cache: &Cache, filter: &Filter, offset: usize, limit: usize) -> Page {
-    let words: Vec<String> = filter.query.to_lowercase().split_whitespace().map(str::to_owned).collect();
+    let words: Vec<String> = filter
+        .query
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
     let matching = cache.items.iter().filter(|item| {
         (any(&filter.kind) || item.kind == filter.kind)
-            && (filter.source.is_empty() || matches!(&item.install, Install::Skill { url, .. } if url == &filter.source))
+            && (filter.source.is_empty()
+                || matches!(&item.install, Install::Skill { url, .. } if url == &filter.source))
             && (any(&filter.agent) || item.agents.contains(&filter.agent))
-            && super::categories::matches(&format!("{} {}", item.name, item.summary), &filter.category)
+            && super::categories::matches(
+                &format!("{} {}", item.name, item.summary),
+                &filter.category,
+            )
             && (words.is_empty() || {
-                let text = format!("{} {} {}", item.name, item.summary, item.publisher).to_lowercase();
+                let text =
+                    format!("{} {} {}", item.name, item.summary, item.publisher).to_lowercase();
                 words.iter().all(|word| text.contains(word.as_str()))
             })
     });
@@ -190,8 +219,11 @@ fn write_cache(home: &Path, cache: &Cache) -> Result<(), String> {
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    std::fs::write(&file, serde_json::to_string(cache).map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())
+    std::fs::write(
+        &file,
+        serde_json::to_string(cache).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn now() -> u64 {
@@ -233,14 +265,19 @@ pub async fn refresh(home: &Path) -> Result<Arc<Cache>, String> {
             Err(error) => errors.push(format!("{url}: {error}")),
         }
     }
-    let cache = Cache { fetched_at: now(), items, errors };
+    let cache = Cache {
+        fetched_at: now(),
+        items,
+        errors,
+    };
     write_cache(home, &cache)?;
     Ok(remember(cache))
 }
 
 /// The plugins one CLI offers, read from its `plugin list --available --json` output.
 async fn plugin_items(home: &Path, agent: &str) -> Vec<CatalogItem> {
-    let Ok(text) = super::plugins::run(agent, &["plugin", "list", "--available", "--json"]).await else {
+    let Ok(text) = super::plugins::run(agent, &["plugin", "list", "--available", "--json"]).await
+    else {
         return Vec::new();
     };
     let Ok(value) = serde_json::from_str::<Value>(&text) else {
@@ -265,14 +302,23 @@ async fn plugin_items(home: &Path, agent: &str) -> Vec<CatalogItem> {
 fn plugin_item(agent: &str, row: &Value, marketplaces: &Path) -> Option<CatalogItem> {
     let plugin_id = row["pluginId"].as_str()?.to_owned();
     let name = row["name"].as_str()?.to_owned();
-    let marketplace = row["marketplaceName"].as_str().unwrap_or_default().to_owned();
+    let marketplace = row["marketplaceName"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     let source = &row["source"];
     let source = match source {
         Value::String(relative) => PluginSource::Local {
-            path: marketplaces.join(&marketplace).join(relative.trim_start_matches("./")).to_string_lossy().into_owned(),
+            path: marketplaces
+                .join(&marketplace)
+                .join(relative.trim_start_matches("./"))
+                .to_string_lossy()
+                .into_owned(),
         },
         Value::Object(_) => match source["source"].as_str()? {
-            "local" => PluginSource::Local { path: source["path"].as_str()?.to_owned() },
+            "local" => PluginSource::Local {
+                path: source["path"].as_str()?.to_owned(),
+            },
             "git-subdir" | "url" => PluginSource::Git {
                 url: source["url"].as_str()?.to_owned(),
                 sha: source["sha"].as_str().unwrap_or_default().to_owned(),
@@ -295,7 +341,11 @@ fn plugin_item(agent: &str, row: &Value, marketplaces: &Path) -> Option<CatalogI
         version: row["version"].as_str().unwrap_or_default().to_owned(),
         publisher: marketplace,
         agents: vec![agent.to_owned()],
-        install: Install::Plugin { agent: agent.to_owned(), plugin_id, source },
+        install: Install::Plugin {
+            agent: agent.to_owned(),
+            plugin_id,
+            source,
+        },
     })
 }
 
@@ -341,13 +391,20 @@ fn registry_item(server: &Value) -> Option<CatalogItem> {
     let registry_name = server["name"].as_str()?;
     let name: String = registry_name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
         .take(64)
         .collect();
     let agents = vec!["claude".to_owned(), "codex".to_owned()];
-    let remote = server["remotes"]
-        .as_array()
-        .and_then(|list| list.iter().find(|remote| remote["type"] == "streamable-http"));
+    let remote = server["remotes"].as_array().and_then(|list| {
+        list.iter()
+            .find(|remote| remote["type"] == "streamable-http")
+    });
     let package = server["packages"].as_array().and_then(|list| {
         list.iter()
             .find(|package| matches!(package["registryType"].as_str(), Some("npm") | Some("pypi")))
@@ -358,7 +415,10 @@ fn registry_item(server: &Value) -> Option<CatalogItem> {
         let identifier = package["identifier"].as_str()?;
         let version = package["version"].as_str()?;
         let (command, args) = if package["registryType"] == "npm" {
-            ("npx", vec!["-y".to_owned(), format!("{identifier}@{version}")])
+            (
+                "npx",
+                vec!["-y".to_owned(), format!("{identifier}@{version}")],
+            )
         } else {
             ("uvx", vec![format!("{identifier}=={version}")])
         };
@@ -370,9 +430,16 @@ fn registry_item(server: &Value) -> Option<CatalogItem> {
         key: format!("mcp:{registry_name}"),
         kind: "mcp".to_owned(),
         name: server["title"].as_str().unwrap_or(registry_name).to_owned(),
-        summary: server["description"].as_str().unwrap_or_default().to_owned(),
+        summary: server["description"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
         version: server["version"].as_str().unwrap_or_default().to_owned(),
-        publisher: registry_name.split('/').next().unwrap_or_default().to_owned(),
+        publisher: registry_name
+            .split('/')
+            .next()
+            .unwrap_or_default()
+            .to_owned(),
         agents,
         install: Install::Mcp { spec },
     })
@@ -381,12 +448,22 @@ fn registry_item(server: &Value) -> Option<CatalogItem> {
 /// The skills of one repository the user added. The clone is scanned for nothing here; it only lists the folders.
 async fn skill_items(home: &Path, url: &str) -> Result<Vec<CatalogItem>, String> {
     let job = stage::new_job_id();
-    let root = stage::stage(home, &job, stage::Source::Git { url: url.to_owned() }).await?;
+    let root = stage::stage(
+        home,
+        &job,
+        stage::Source::Git {
+            url: url.to_owned(),
+        },
+    )
+    .await?;
     let found = stage::find_skills(&root);
     let items: Vec<CatalogItem> = found
         .into_iter()
         .map(|(name, path)| {
-            let subpath = path.strip_prefix(&root).map(|rel| rel.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+            let subpath = path
+                .strip_prefix(&root)
+                .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
             CatalogItem {
                 key: format!("skill:{url}:{subpath}"),
                 kind: "skill".to_owned(),
@@ -394,9 +471,15 @@ async fn skill_items(home: &Path, url: &str) -> Result<Vec<CatalogItem>, String>
                 summary: crate::slash_commands::skill_description(&path),
                 version: String::new(),
                 publisher: url.trim_start_matches("https://").to_owned(),
-                agents: super::library::SKILL_AGENTS.iter().map(|agent| (*agent).to_owned()).collect(),
+                agents: super::library::SKILL_AGENTS
+                    .iter()
+                    .map(|agent| (*agent).to_owned())
+                    .collect(),
                 name,
-                install: Install::Skill { url: url.to_owned(), subpath },
+                install: Install::Skill {
+                    url: url.to_owned(),
+                    subpath,
+                },
             }
         })
         .collect();
@@ -408,7 +491,11 @@ async fn skill_items(home: &Path, url: &str) -> Result<Vec<CatalogItem>, String>
 }
 
 /// The folder to scan for a plugin, with the commit it is pinned to. A git source is cloned at that commit.
-pub async fn plugin_folder(home: &Path, job: &str, source: &PluginSource) -> Result<PathBuf, String> {
+pub async fn plugin_folder(
+    home: &Path,
+    job: &str,
+    source: &PluginSource,
+) -> Result<PathBuf, String> {
     match source {
         PluginSource::Local { path } => {
             let folder = PathBuf::from(path);
@@ -428,7 +515,6 @@ pub async fn plugin_folder(home: &Path, job: &str, source: &PluginSource) -> Res
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,7 +528,9 @@ mod tests {
         let item = plugin_item("claude", &row, Path::new("/m")).expect("listed");
         assert_eq!(item.kind, "plugin");
         assert_eq!(item.publisher, "official");
-        assert!(matches!(item.install, Install::Plugin { ref plugin_id, .. } if plugin_id == "tool@official"));
+        assert!(
+            matches!(item.install, Install::Plugin { ref plugin_id, .. } if plugin_id == "tool@official")
+        );
     }
 
     #[test]
@@ -473,7 +561,10 @@ mod tests {
     fn a_new_install_has_the_default_sources_and_a_saved_empty_list_stays_empty() {
         let home = std::env::temp_dir().join(format!("agentdeck-sources-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        assert_eq!(read_sources(&home), DEFAULT_SOURCES.map(str::to_owned).to_vec());
+        assert_eq!(
+            read_sources(&home),
+            DEFAULT_SOURCES.map(str::to_owned).to_vec()
+        );
         write_sources(&home, &[]).unwrap();
         assert!(read_sources(&home).is_empty());
         let _ = std::fs::remove_dir_all(&home);
@@ -499,7 +590,10 @@ mod page_tests {
             version: String::new(),
             publisher: "pub".to_owned(),
             agents: vec![agent.to_owned()],
-            install: Install::Skill { url: String::new(), subpath: String::new() },
+            install: Install::Skill {
+                url: String::new(),
+                subpath: String::new(),
+            },
         }
     }
 
@@ -507,7 +601,16 @@ mod page_tests {
         Cache {
             fetched_at: 5,
             errors: Vec::new(),
-            items: (0..10).map(|n| item(&format!("tool-{n}"), if n % 2 == 0 { "plugin" } else { "mcp" }, "claude")).chain([item("other", "skill", "codex")]).collect(),
+            items: (0..10)
+                .map(|n| {
+                    item(
+                        &format!("tool-{n}"),
+                        if n % 2 == 0 { "plugin" } else { "mcp" },
+                        "claude",
+                    )
+                })
+                .chain([item("other", "skill", "codex")])
+                .collect(),
         }
     }
 
@@ -517,20 +620,35 @@ mod page_tests {
         let all = Filter::default();
         let first = page(&cache, &all, 0, 4);
         let second = page(&cache, &all, 4, 4);
-        assert_eq!((first.total, first.items.len(), second.items.len()), (11, 4, 4));
+        assert_eq!(
+            (first.total, first.items.len(), second.items.len()),
+            (11, 4, 4)
+        );
         assert_eq!(first.items[0].name, "tool-0");
         assert_eq!(second.items[0].name, "tool-4");
-        assert!(page(&cache, &all, 8, 4).items.len() == 3, "the last page is short");
+        assert!(
+            page(&cache, &all, 8, 4).items.len() == 3,
+            "the last page is short"
+        );
     }
 
     #[test]
     fn the_filter_narrows_by_text_kind_and_agent() {
         let cache = cache();
-        let by_text = Filter { query: "TOOL-3".to_owned(), ..Filter::default() };
+        let by_text = Filter {
+            query: "TOOL-3".to_owned(),
+            ..Filter::default()
+        };
         assert_eq!(page(&cache, &by_text, 0, 50).total, 1);
-        let by_kind = Filter { kind: "mcp".to_owned(), ..Filter::default() };
+        let by_kind = Filter {
+            kind: "mcp".to_owned(),
+            ..Filter::default()
+        };
         assert_eq!(page(&cache, &by_kind, 0, 50).total, 5);
-        let by_agent = Filter { agent: "codex".to_owned(), ..Filter::default() };
+        let by_agent = Filter {
+            agent: "codex".to_owned(),
+            ..Filter::default()
+        };
         assert_eq!(page(&cache, &by_agent, 0, 50).items[0].name, "other");
     }
 
@@ -540,22 +658,34 @@ mod page_tests {
         let url = "https://github.com/example/skills";
         for name in ["first", "second"] {
             let mut skill = item(name, "skill", "codex");
-            skill.install = Install::Skill { url: url.to_owned(), subpath: format!(".agents/skills/{name}") };
+            skill.install = Install::Skill {
+                url: url.to_owned(),
+                subpath: format!(".agents/skills/{name}"),
+            };
             cache.items.push(skill);
         }
-        let filter = Filter { source: url.to_owned(), ..Filter::default() };
+        let filter = Filter {
+            source: url.to_owned(),
+            ..Filter::default()
+        };
         let first = page(&cache, &filter, 0, 1);
         assert_eq!(first.total, 2);
         assert_eq!(first.items[0].name, "first");
         assert_eq!(page(&cache, &filter, 1, 1).items[0].name, "second");
-        let other = Filter { source: format!("{url}-other"), ..Filter::default() };
+        let other = Filter {
+            source: format!("{url}-other"),
+            ..Filter::default()
+        };
         assert_eq!(page(&cache, &other, 0, 40).total, 0);
     }
 }
 
 /// Curated entries remain available before the first online catalog refresh.
 fn builtins() -> Vec<CatalogItem> {
-    let agents: Vec<String> = ["claude", "codex", "copilot"].iter().map(|a| (*a).to_owned()).collect();
+    let agents: Vec<String> = ["claude", "codex", "copilot"]
+        .iter()
+        .map(|a| (*a).to_owned())
+        .collect();
     vec![
         CatalogItem { key: "builtin:security-audit".into(), kind: "skill".into(), name: "security-audit".into(), summary: "Cloudflare multi-phase security audit. Install when needed.".into(), version: String::new(), publisher: "Cloudflare".into(), agents: agents.clone(), install: Install::Skill { url: "https://github.com/cloudflare/security-audit-skill".into(), subpath: "skills/security-audit".into() } },
         CatalogItem { key: "builtin:chrome-devtools".into(), kind: "mcp".into(), name: "Chrome DevTools".into(), summary: "Control your running Chrome (144+). Enable remote debugging at chrome://inspect/#remote-debugging and allow Chrome's connection prompt. Not enabled until installed.".into(), version: "latest".into(), publisher: "ChromeDevTools".into(), agents: agents.clone(), install: Install::Mcp { spec: json!({"name":"chrome-devtools", "transport":"stdio", "target":"pnpm", "args":["dlx","chrome-devtools-mcp@latest","--autoConnect","--no-usage-statistics"], "agents":agents}) } },

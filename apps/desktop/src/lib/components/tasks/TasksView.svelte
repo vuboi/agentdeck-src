@@ -532,7 +532,9 @@
              rows drawn over one another. Rows scrolled in or out of view do not fade either: their duration is 0. -->
         {#each visible as entry (entry.id)}
           {@const live = entry.kind !== 'day' && entry.day === RUNNING}
-          <div {@attach measure(entry.id)} animate:flip={{ duration: live ? 220 : 0 }} in:fade={{ duration: live ? 180 : 0 }} out:fade={{ duration: 0 }}>
+          <!-- Live command output can change the row height several times per second. Keep the motion shorter than
+               the output refresh cadence so FLIP settles instead of stacking animations on top of one another. -->
+          <div {@attach measure(entry.id)} animate:flip={{ duration: live ? 140 : 0 }} in:fade={{ duration: live ? 120 : 0 }} out:fade={{ duration: 0 }}>
             {#if entry.kind === 'day'}{@render dayHeader(entry.group, false)}
             {:else if entry.kind === 'chat'}
               <div class="flex items-center gap-2 border-b border-border px-1.5 py-1.5 text-sm">

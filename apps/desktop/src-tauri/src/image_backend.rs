@@ -175,7 +175,28 @@ impl ImageBackend for OpenAiCompatibleImages {
             Ok::<serde_json::Value, String>(json)
         })?;
         match provider_image(&answer)? {
-            ProviderImage::Url(url) => Ok(vec![url]),
+            ProviderImage::Url(url) => {
+                let bytes = tauri::async_runtime::block_on(async {
+                    let response = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(300))
+                        .build()
+                        .map_err(|error| error.to_string())?
+                        .get(&url)
+                        .send()
+                        .await
+                        .map_err(|error| format!("could not download generated image: {error}"))?;
+                    let status = response.status();
+                    if !status.is_success() {
+                        return Err(format!("generated image URL answered {status}"));
+                    }
+                    response
+                        .bytes()
+                        .await
+                        .map_err(|error| format!("could not read generated image: {error}"))
+                })?;
+                std::fs::write(job.output, bytes).map_err(|error| error.to_string())?;
+                Ok(vec![job.output.to_string_lossy().to_string()])
+            }
             ProviderImage::Base64(encoded) => {
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(encoded)

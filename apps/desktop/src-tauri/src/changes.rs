@@ -172,13 +172,7 @@ fn diff(root: &str, path: &str) -> Result<String, String> {
         &["diff", "HEAD", "--no-color", "--no-renames", "--", path],
     )?;
     let output = if normal.0 {
-        if normal.1.is_empty()
-            && !git(
-                &top,
-                &["ls-files", "--error-unmatch", "--", path],
-            )?
-            .0
-        {
+        if normal.1.is_empty() && !git(&top, &["ls-files", "--error-unmatch", "--", path])?.0 {
             let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
             git(
                 &top,

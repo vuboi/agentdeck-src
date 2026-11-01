@@ -42,7 +42,10 @@ fn scan_lines(report: &ScanReport) -> String {
                 Severity::Warn => "warn",
                 Severity::Block => "block",
             };
-            format!("- [{level}] {}:{} {} ({})", finding.file, finding.line, finding.rule, finding.text)
+            format!(
+                "- [{level}] {}:{} {} ({})",
+                finding.file, finding.line, finding.rule, finding.text
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -73,26 +76,46 @@ pub fn parse_reply(reply: &str) -> Result<ReviewVerdict, String> {
     if end < start {
         return Err(NO_JSON.to_owned());
     }
-    serde_json::from_str(&reply[start..=end]).map_err(|error| format!("the review answer is not valid JSON: {error}"))
+    serde_json::from_str(&reply[start..=end])
+        .map_err(|error| format!("the review answer is not valid JSON: {error}"))
 }
 
 /// Runs the reviewer in `folder`. `claude` gets read tools only; `codex` runs in its read-only sandbox and writes its
 /// last message to `reply_file` (one per job, so two reviews never read each other's answer).
-pub async fn run(agent: &str, model: &str, folder: &Path, prompt: &str, reply_file: &Path) -> Result<ReviewVerdict, String> {
+pub async fn run(
+    agent: &str,
+    model: &str,
+    folder: &Path,
+    prompt: &str,
+    reply_file: &Path,
+) -> Result<ReviewVerdict, String> {
     let binary = match agent {
         "claude" | "codex" => agent,
         _ => return Err(format!("{agent} cannot review")),
     };
-    let program = crate::connectors::which(binary).ok_or_else(|| format!("{binary} is not installed"))?;
+    let program =
+        crate::connectors::which(binary).ok_or_else(|| format!("{binary} is not installed"))?;
     let mut command = crate::connectors::command(&program);
     if agent == "claude" {
-        command.args(["-p", "--output-format", "text", "--allowedTools", "Read,Glob,Grep"]);
+        command.args([
+            "-p",
+            "--output-format",
+            "text",
+            "--allowedTools",
+            "Read,Glob,Grep",
+        ]);
         if !model.is_empty() {
             command.args(["--model", model]);
         }
     } else {
         command
-            .args(["exec", "--sandbox", "read-only", "--skip-git-repo-check", "--output-last-message"])
+            .args([
+                "exec",
+                "--sandbox",
+                "read-only",
+                "--skip-git-repo-check",
+                "--output-last-message",
+            ])
             .arg(reply_file);
         if !model.is_empty() {
             command.args(["--model", model]);
@@ -155,7 +178,11 @@ mod tests {
 
     #[test]
     fn review_can_raise_but_never_lower_the_scan() {
-        let safe = ReviewVerdict { verdict: Verdict::Safe, summary: String::new(), findings: vec![] };
+        let safe = ReviewVerdict {
+            verdict: Verdict::Safe,
+            summary: String::new(),
+            findings: vec![],
+        };
         assert_eq!(merge(Verdict::Block, Some(&safe)), Verdict::Block);
         assert_eq!(merge(Verdict::Safe, None), Verdict::Caution);
     }

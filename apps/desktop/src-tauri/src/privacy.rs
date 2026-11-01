@@ -53,7 +53,9 @@ pub fn private_content(text: &str) -> Option<&'static str> {
     if let Some((_, what)) = PATTERNS.iter().find(|(regex, _)| regex.is_match(text)) {
         return Some(what);
     }
-    let env_lines = ENV_LINE.as_ref().map_or(0, |regex| regex.find_iter(text).count());
+    let env_lines = ENV_LINE
+        .as_ref()
+        .map_or(0, |regex| regex.find_iter(text).count());
     (env_lines >= ENV_LINES_MAX).then_some("an environment file")
 }
 
@@ -72,12 +74,33 @@ pub fn sensitive_file(path: &str) -> bool {
         || name.starts_with("id_rsa")
         || name.starts_with("id_ed25519")
         || name.starts_with("id_ecdsa")
-        || [".npmrc", ".pypirc", ".netrc", "_netrc", ".pgpass", ".git-credentials", ".htpasswd", "known_hosts", "authorized_keys"]
-            .contains(&name.as_str())
-        || ["pem", "key", "p12", "pfx", "jks", "keystore", "kdbx", "ppk", "asc", "gpg", "ovpn"].contains(&extension.as_str())
-        || ["credential", "secret", "password", "passwd", "token", "apikey", "api_key"]
-            .iter()
-            .any(|word| name.contains(word))
+        || [
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            "_netrc",
+            ".pgpass",
+            ".git-credentials",
+            ".htpasswd",
+            "known_hosts",
+            "authorized_keys",
+        ]
+        .contains(&name.as_str())
+        || [
+            "pem", "key", "p12", "pfx", "jks", "keystore", "kdbx", "ppk", "asc", "gpg", "ovpn",
+        ]
+        .contains(&extension.as_str())
+        || [
+            "credential",
+            "secret",
+            "password",
+            "passwd",
+            "token",
+            "apikey",
+            "api_key",
+        ]
+        .iter()
+        .any(|word| name.contains(word))
 }
 
 /// Whether a web address points inside this machine or its network (loopback, private, link-local, `.internal`...).
@@ -94,19 +117,34 @@ pub fn internal_url(url: &str) -> bool {
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         return match ip {
             std::net::IpAddr::V4(v4) => {
-                v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified() || v4.is_broadcast()
+                v4.is_private()
+                    || v4.is_loopback()
+                    || v4.is_link_local()
+                    || v4.is_unspecified()
+                    || v4.is_broadcast()
             }
             std::net::IpAddr::V6(v6) => {
-                v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00 || (v6.segments()[0] & 0xffc0) == 0xfe80
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || (v6.segments()[0] & 0xfe00) == 0xfc00
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
             }
         };
     }
     host.is_empty()
         || host == "localhost"
         || !host.contains('.')
-        || [".localhost", ".internal", ".local", ".lan", ".corp", ".intranet", ".home.arpa"]
-            .iter()
-            .any(|suffix| host.ends_with(suffix))
+        || [
+            ".localhost",
+            ".internal",
+            ".local",
+            ".lan",
+            ".corp",
+            ".intranet",
+            ".home.arpa",
+        ]
+        .iter()
+        .any(|suffix| host.ends_with(suffix))
 }
 
 #[cfg(test)]
@@ -115,9 +153,18 @@ mod tests {
 
     #[test]
     fn plain_writing_passes() {
-        assert_eq!(private_content("Write a short email to the landlord about the heater."), None);
-        assert_eq!(private_content("Search the Svelte 5 docs for $state and summarise it."), None);
-        assert_eq!(private_content("The password must be at least 12 characters."), None);
+        assert_eq!(
+            private_content("Write a short email to the landlord about the heater."),
+            None
+        );
+        assert_eq!(
+            private_content("Search the Svelte 5 docs for $state and summarise it."),
+            None
+        );
+        assert_eq!(
+            private_content("The password must be at least 12 characters."),
+            None
+        );
     }
 
     #[test]
@@ -140,7 +187,18 @@ mod tests {
 
     #[test]
     fn files_that_hold_secrets() {
-        for name in [".env", ".env.local", "prod.env", "id_rsa", "server.pem", "tls.key", "aws_credentials", "passwords.txt", ".npmrc", "vault.kdbx"] {
+        for name in [
+            ".env",
+            ".env.local",
+            "prod.env",
+            "id_rsa",
+            "server.pem",
+            "tls.key",
+            "aws_credentials",
+            "passwords.txt",
+            ".npmrc",
+            "vault.kdbx",
+        ] {
             assert!(sensitive_file(&format!("C:/work/{name}")), "{name}");
         }
         for name in ["notes.md", "README.md", "draft-email.txt", "keyboard.png"] {
@@ -150,10 +208,23 @@ mod tests {
 
     #[test]
     fn internal_urls() {
-        for url in ["http://localhost:3000", "http://127.0.0.1/", "http://10.0.0.5/x", "http://169.254.169.254/latest", "http://[::1]/", "http://nas/", "https://git.corp/x", "http://user:pw@192.168.0.1"] {
+        for url in [
+            "http://localhost:3000",
+            "http://127.0.0.1/",
+            "http://10.0.0.5/x",
+            "http://169.254.169.254/latest",
+            "http://[::1]/",
+            "http://nas/",
+            "https://git.corp/x",
+            "http://user:pw@192.168.0.1",
+        ] {
             assert!(internal_url(url), "{url}");
         }
-        for url in ["https://svelte.dev/docs", "https://8.8.8.8/", "https://api.github.com/repos"] {
+        for url in [
+            "https://svelte.dev/docs",
+            "https://8.8.8.8/",
+            "https://api.github.com/repos",
+        ] {
             assert!(!internal_url(url), "{url}");
         }
     }

@@ -25,7 +25,7 @@ import { logRequest } from '../runs/activity.svelte';
 import { setPref } from '../../app/platform/prefs';
 import { type RunLane, deliveryFor } from '../runs/run-lanes';
 import { parseQuestions, type Question } from '../recovery/questions';
-import { dequeue } from '../runs/queue';
+import { dequeue, enqueueNext } from '../runs/queue';
 import { MODELS, activeSession, advanceRun, localMessages, nextId, persistLocal, runEpochs, sessionCwd, workspace, type Agent, type Attachment, type Effort, type FileAttachment, type SessionItem } from './state.svelte';
 import { AGENTDECK_HINT, KNOWS_PREVIEW, NATIVE_DELEGATION, NATIVE_DELEGATION_HINT, NO_DELEGATE_HINT, OPEN_WORDS, PERMISSION_MODE, agentLabel, approved, continuationGroups, delegateHinted, hasOutstandingSessionWork, hasTurnWork, hiddenPrompt, isRunning, lastPrompt, missedTurns, modelFor, nativeDelegationHinted, notifySessionWorkDone, orchestrateTold, priorDelegateHinted, queuePaused, queued, rememberDelegateHint, rememberLastChat, rememberNativeDelegationHint, turnOptions, turnOptionsOf, turns, effortFor } from './turns.svelte';
 import { handleAgentEvent, lastEventAt, lastEventKind, manuallyStopped, recoveryChain, recoveryModelFor } from './events.svelte';
@@ -530,6 +530,7 @@ export function startTurn(
         effort: effortFor(session),
         restricted: Boolean(provider.restricted),
         workbuddy: Boolean(provider.workbuddy),
+        authMode: provider.nativeAuth,
       }), PREPARE_LIMIT_MS, 'starting the provider');
       return;
     }
@@ -726,6 +727,68 @@ export const liveReplies: Record<string, Message> = {};
 export const runReplies = new Map<string, { sessionId: string; reply: Message; listener: boolean; ask?: Message; backgroundTools: Set<string> }>();
 export const sessionLanes = $state<Record<string, RunLane[]>>({});
 
+type QueuePump = {
+  scheduled: boolean;
+  dispatching: boolean;
+  retry?: ReturnType<typeof setTimeout>;
+};
+
+const queuePumps = new Map<string, QueuePump>();
+const QUEUE_RETRY_MS = 1000;
+
+function queuePumpOf(sessionId: string): QueuePump {
+  const current = queuePumps.get(sessionId);
+  if (current) return current;
+  const created: QueuePump = { scheduled: false, dispatching: false };
+  queuePumps.set(sessionId, created);
+  return created;
+}
+
+/** Coalesces all queue wake-ups for a chat and gives blocked queues a bounded heartbeat. */
+function requestQueuePump(sessionId: string, delay = 0) {
+  const pump = queuePumpOf(sessionId);
+  if (pump.scheduled) return;
+  pump.scheduled = true;
+  const run = () => {
+    pump.scheduled = false;
+    pump.retry = undefined;
+    sendNextQueuedNow(sessionId, pump);
+  };
+  if (delay > 0) pump.retry = setTimeout(run, delay);
+  else setTimeout(run, 0);
+}
+
+/** A terminal event can arrive after its lane was already removed; stale lanes must not block the next prompt. */
+function clearStaleLanes(sessionId: string) {
+  const lanes = sessionLanes[sessionId] ?? [];
+  if (!lanes.length) return;
+  const owned = new Set(
+    [...runReplies.entries()]
+      .filter(([, run]) => run.sessionId === sessionId)
+      .map(([turn]) => turn),
+  );
+  const next = lanes.filter((lane) => owned.has(lane.id));
+  if (next.length === lanes.length) return;
+  sessionLanes[sessionId] = next;
+  logFlow(sessionId, 'queue', `cleared ${lanes.length - next.length} stale lane(s)`);
+}
+
+function clearStalePrimaryReply(sessionId: string) {
+  if (!replies[sessionId]) return;
+  const primaryOwned = [...runReplies.values()].some(
+    (run) => run.sessionId === sessionId && !run.listener,
+  );
+  if (primaryOwned) return;
+  const reply = liveReplies[sessionId];
+  if (reply?.live) reply.live = false;
+  delete replies[sessionId];
+  delete liveReplies[sessionId];
+  delete liveAsks[sessionId];
+  const session = workspace.sessions.find((item) => item.id === sessionId);
+  if (session && (sessionLanes[sessionId]?.length ?? 0) === 0) session.status = 'idle';
+  logFlow(sessionId, 'queue', 'cleared stale primary reply without an owned run');
+}
+
 export function updateLane(sessionId: string, lane: RunLane) {
   const lanes = sessionLanes[sessionId] ?? [];
   // Every streamed delta reports its lane again: an unchanged lane is left as it is, so the whole list is not rebuilt
@@ -735,6 +798,7 @@ export function updateLane(sessionId: string, lane: RunLane) {
   const next = lanes.filter((item) => item.id !== lane.id);
   if (lane.state === 'done' || lane.state === 'failed' || lane.state === 'stopped') {
     sessionLanes[sessionId] = next;
+    requestQueuePump(sessionId);
   } else {
     sessionLanes[sessionId] = [...next, lane];
   }
@@ -945,41 +1009,47 @@ export function closePendingPermissions(sessionId: string) {
 
 /** Dispatches one queued message only after the active turn and all user decisions are complete. */
 export function sendNextQueued(sessionId: string) {
+  requestQueuePump(sessionId);
+}
+
+function sendNextQueuedNow(sessionId: string, pump: QueuePump) {
   const listenerAvailable = () => canListenToSession(sessionId) && !needsUserInput(sessionId) && Boolean(queued[sessionId]?.length) && !queued[sessionId][0].mentions?.some((mention) => mention.kind === 'ai' || mention.kind === 'workflow');
-  if (queuePaused[sessionId] || (hasTurnWork(sessionId) && !listenerAvailable())) return;
-  // Let the current event stack finish before taking an item. Ctrl/Cmd+Enter stops the current turn and
-  // starts its message synchronously; taking an older queue item before that message starts would
-  // remove it from the queue, then `send` would reject it because the priority turn is now running.
-  setTimeout(() => {
-    if (queuePaused[sessionId] || (hasTurnWork(sessionId) && !listenerAvailable())) return;
-    const listener = listenerAvailable();
-    // A context near the window is compacted before the next message; the compaction turn calls back here when done.
-    if (!listener && compressIfNeeded(sessionId)) return;
-    // Run only one queued user message per provider turn; the rest stay in line until it finishes.
-    const next = dequeue(queued, sessionId);
-    if (next) logFlow(sessionId, 'queue', `sending one waiting message (${queued[sessionId]?.length ?? 0} remain)`);
-    if (next) {
-      if (listener) {
-        sendImmediate(sessionId, next);
-        return;
-      }
+  if (pump.dispatching || queuePaused[sessionId]) return;
+  if (!queued[sessionId]?.length) {
+    if (backlog.get(sessionId)?.length) flushReports(sessionId, 0);
+    return;
+  }
+  clearStaleLanes(sessionId);
+  clearStalePrimaryReply(sessionId);
+  if (hasTurnWork(sessionId) && !listenerAvailable()) {
+    requestQueuePump(sessionId, QUEUE_RETRY_MS);
+    return;
+  }
+  const listener = listenerAvailable();
+  // A context near the window is compacted before the next message; the compaction turn calls back here when done.
+  if (!listener && compressIfNeeded(sessionId)) return;
+  // Claim exactly one item. Other completion/event callbacks coalesce behind this dispatch.
+  const next = dequeue(queued, sessionId);
+  if (!next) return;
+  pump.dispatching = true;
+  logFlow(sessionId, 'queue', `sending one waiting message (${queued[sessionId]?.length ?? 0} remain)`);
+  try {
+    if (listener) {
+      sendImmediate(sessionId, next);
+    } else {
       send(sessionId, next.text, next.images, next.elements, next.mentions, {
         files: next.files,
         runGroup: next.runGroup,
         messageId: next.messageId,
       });
-      return;
     }
-    if (backlog.get(sessionId)?.length) {
-      flushReports(sessionId, 0);
-      return;
-    }
-    if (hasOutstandingSessionWork(sessionId)) return;
-    // The queue behind a cancelled question has run out: say the task was cancelled.
-    if (cancelNotes.has(sessionId)) addCancelNote(sessionId);
-    delete continuationGroups[sessionId];
-    notifySessionWorkDone(sessionId);
-  }, 0);
+  } catch (error) {
+    enqueueNext(queued, sessionId, next);
+    logFlow(sessionId, 'queue', `dispatch failed; returned item to queue: ${String(error).slice(0, 160)}`);
+    requestQueuePump(sessionId, QUEUE_RETRY_MS);
+  } finally {
+    pump.dispatching = false;
+  }
 }
 
 /** Expiry for a finished reply's presentation state when its virtual blocks are not mounted. */

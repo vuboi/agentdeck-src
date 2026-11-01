@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-muse-code-models"
+description = "Enables the muse_code_models command without any pre-configured scope."
+commands.allow = ["muse_code_models"]
+
+[[permission]]
+identifier = "deny-muse-code-models"
+description = "Denies the muse_code_models command without any pre-configured scope."
+commands.deny = ["muse_code_models"]

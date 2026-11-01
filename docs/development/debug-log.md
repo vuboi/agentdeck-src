@@ -24,7 +24,7 @@ Rust side (`ag_adapters::agent::trace::note`, `flow_log::tap`):
 - `process`: a kept CLI took the turn (`pid`) or a new one started. `first line`: how long the CLI took to say anything. `turn read`: how reading ended (`park`, `tail`, `failed`, `the CLI went away` + the end of its stderr).
 - `tail`: a CLI left reading after its turn (background work open), when it went on by itself (`auto-N`), how it ended (`process parked` / `process dropped, its children end with it`).
 - `heartbeat` every 20 s: `running=N [chat/turn agent age=…s silent=…s events=… last=…] pool=… tails=…`. A turn whose `silent` keeps growing is the one that hung; a gap between two heartbeats means the whole process stopped.
-- `window` (src `rust`): `close requested: hiding to the tray` (X pressed, the window is hidden, the app keeps running), `shown from the tray (left click)`, `shown by a second launch`, `focused` / `blurred` of the main window. A close with no `shown` after it means the window stayed hidden.
+- `window` (src `rust`): `close requested: hiding to the tray` (X pressed, the window is hidden, the app keeps running), then `hidden to the tray` (or `hide failed: …` — the hide's result is checked with `is_visible` and retried through Win32 `ShowWindow`, so a close whose hide did not work is visible here instead of looking like a hang). `shown (tray left click | tray menu: … | second launch)` follows when the window comes back, again checked; `shown … with problems` / `show failed: …` when it does not. A burst of close requests under a second apart is logged once (the app still refuses every close). Then `focused` / `blurred` of the main window.
 - `PANIC`: message, thread and backtrace.
 
 Page side (`flow-log.ts`):

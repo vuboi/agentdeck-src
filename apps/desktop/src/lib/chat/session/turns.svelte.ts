@@ -26,7 +26,7 @@ import { closeRunningActivity } from '../runs/activity.svelte';
  * own shell dies when the command ends, which leaves the Preview on a refused connection. These tools do not.
  */
 export const AGENTDECK_HINT =
-  '[AgentDeck] You run inside AgentDeck. To start a dev server or open a page, use the agentdeck tools: browser_serve (starts the server so it keeps running after your turn, and opens it in the Preview) or browser_open for an address that already answers. Then use browser_screenshot, browser_console and browser_network to look at it. Do not start servers in your own shell and do not open the system browser or Chrome: that server would stop when your command ends, and the user is looking at the AgentDeck Preview.';
+  '[AgentDeck] You run inside AgentDeck. To start a dev server or open a page, use the agentdeck tools: browser_serve (checks for and reuses an existing matching server in the same project, so repeated calls from chats or workers do not spawn duplicates; otherwise starts the server so it keeps running after your turn, and opens it in the Preview) or browser_open for an address that already answers. Then use browser_screenshot, browser_console and browser_network to look at it. Do not start servers in your own shell and do not open the system browser or Chrome: that server would stop when your command ends, and the user is looking at the AgentDeck Preview.';
 
 /**
  * Chats (and the agent in them) already told how to delegate. Kept between runs of the app: a resumed conversation
@@ -105,6 +105,9 @@ function previewUrl(text: string, prompt: string): string | undefined {
 /** After a turn: if you asked to open or run something and a local address came out of it, show it in the AgentDeck browser. */
 export function openServedPage(sessionId: string, reply: Message) {
   if (!inTauri()) return;
+  // Background handbacks can contain a local URL from the worker's work. Do not let completion steal Preview focus
+  // from the chat; explicit browser_open/browser_serve calls already opened their intended page.
+  if (reply.autoTurn || reply.taskIds?.length) return;
   // A flow's steps and the turn that writes its final answer only report: an address they mention (an API a search
   // found, a URL in a README) is not a page the user asked to see, and opening it showed a refused connection.
   if (
@@ -317,6 +320,26 @@ export function hasTurnWork(sessionId: string): boolean {
   );
 }
 
+/** Drops a provider conversation id only when the stopped turn never received a confirmed session/rollout. */
+export function forgetUnstartedConversation(sessionId: string) {
+  const session = workspace.sessions.find((item) => item.id === sessionId);
+  if (!session) return;
+  const list = messagesOf(sessionId);
+  const replyId = replies[sessionId];
+  const wrote = (message: Message | undefined) => Boolean(message?.blocks.some((block) => block.kind !== 'loading'));
+  const earlierAnswer = list.some((item) => item.role === 'assistant' && item.id !== replyId && wrote(item));
+  const first = session.source ?? session.agents?.[0] ?? session.agent;
+  if (session.agent === first) {
+    if (session.agentStarted === true || session.path || earlierAnswer || wrote(list.find((item) => item.id === replyId))) return;
+    session.agentSession = undefined;
+    session.agentStarted = false;
+  } else {
+    const own = session.agentIds?.[session.agent];
+    if (own && !own.started && !earlierAnswer && !wrote(list.find((item) => item.id === replyId)) && session.agentIds)
+      delete session.agentIds[session.agent];
+  }
+}
+
 /** Any work of the chat is outstanding, delegated work included: used to decide the "done" notification. */
 export function hasOutstandingSessionWork(sessionId: string): boolean {
   if (hasTurnWork(sessionId)) return true;
@@ -337,8 +360,8 @@ export function notifySessionWorkDone(sessionId: string) {
   delete sessionWorkBatches[sessionId];
   const session = workspace.sessions.find((item) => item.id === sessionId);
   if (!session) return;
-  // "Notify when done" on this chat: always. Otherwise only with notifications on, and not for the chat the user is
-  // looking at (the answer is in front of them, a notification would only interrupt).
+  // "Notify when done" opts this chat in whenever AgentDeck is in the background. Otherwise only with notifications on,
+  // and not for the chat the user is looking at (the answer is in front of them, a notification would only interrupt).
   if (!notifyDone[sessionId]) {
     if (!connectors.alerts.system) return;
     if (typeof document !== 'undefined' && document.hasFocus() && workspace.activeId === sessionId) return;
@@ -398,6 +421,7 @@ export function stopChatWork(sessionId: string) {
 export function stopTurn(sessionId: string, quiet = false) {
   cancelAutoSwitch(sessionId);
   if (!quiet) userStoppedAt[sessionId] = Date.now();
+  if (!quiet) forgetUnstartedConversation(sessionId);
   if (!quiet && (queued[sessionId]?.length ?? 0) > 0)
     queuePaused[sessionId] = 'interrupted';
   if (!quiet) {

@@ -59,7 +59,7 @@
   {/if}
   {#if left !== null && claudeCreditOn()}
     <!-- The credit left, along the row's bottom edge. -->
-    <div class="absolute inset-x-0 bottom-0 h-0.5 bg-muted" role="progressbar" aria-label="Claude credit left" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(left)}>
+    <div class="absolute inset-x-0 bottom-0 h-0.5 bg-muted-foreground/25" role="progressbar" aria-label="Claude credit left" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(left)}>
       <div class="h-full transition-[width] duration-500 {left <= 10 ? 'bg-destructive' : left <= 30 ? 'bg-amber-500' : 'bg-primary'}" style:width="{left}%"></div>
     </div>
   {/if}

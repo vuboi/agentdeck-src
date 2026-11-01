@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ZIcon, ZLoading, ZPopover, ZShimmerText, ZShowMore } from '@shival99/z-ui-svelte';
   import ElementCard from '../browser/ElementCard.svelte';
-  import { pictureSrc } from '../../chat/agent';
+  import { pictureSrc, resolvedPictureSrc } from '../../chat/agent';
   import { TRIGGER_ON } from '../../app/ui/popover';
   import { LOADER, LOADER_SIZE, loaderFor } from '../../app/platform/loaders';
   import type { Block } from '../../chat/mock';
@@ -33,7 +33,20 @@
   let cardOpen = $state(false);
   let failedImageSrc = $state<string | null>(null);
   let loadedImageSrc = $state<string | null>(null);
-  const renderedImageSrc = $derived(block.kind === 'image' ? pictureSrc(block) : '');
+  // A picture kept as a file outside the asset protocol's scope (generated-images, a project folder) is read
+  // from the file itself; the synchronous asset URL is only the fallback while that read is in flight.
+  let resolvedImageSrc = $state('');
+  $effect(() => {
+    if (block.kind !== 'image') return;
+    const fallback = pictureSrc(block);
+    resolvedImageSrc = fallback;
+    let live = true;
+    void resolvedPictureSrc(block).then((src) => {
+      if (live) resolvedImageSrc = src;
+    });
+    return () => (live = false);
+  });
+  const renderedImageSrc = $derived(block.kind === 'image' ? resolvedImageSrc : '');
   const imageLoaded = $derived(block.kind === 'image' && loadedImageSrc === renderedImageSrc);
   const imageUnavailable = $derived(
     block.kind === 'image' && (!renderedImageSrc || failedImageSrc === renderedImageSrc),

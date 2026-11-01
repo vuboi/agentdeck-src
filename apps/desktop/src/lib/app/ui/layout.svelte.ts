@@ -17,7 +17,8 @@ export type FloatingTool = {
 };
 
 export const layout = $state({
-  toolsOpen: true,
+  // Start folded unless the saved preference below says the user left the tools panel open.
+  toolsOpen: false,
   /** Swap the tools/content pane to the left of the conversation without remounting either pane. */
   toolsOnLeft: false,
   themePanelOpen: false,

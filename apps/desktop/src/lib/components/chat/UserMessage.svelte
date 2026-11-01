@@ -3,7 +3,7 @@
   import { ZButton } from '@shival99/z-ui-svelte';
   import { toast } from '../../app/platform/toast';
   import { copyMessage } from '../../chat/content/attachments';
-  import { pictureSrc } from '../../chat/agent';
+  import { IMAGE_NOT_FOUND_SRC, pictureSrc, resolvedPictureSrc } from '../../chat/agent';
   import { attachmentsOf, forkSession, workspace } from '../../chat/sessions.svelte';
   import { theme } from '../../app/ui/theme.svelte';
   import { openAttachment, openImages } from '../../browser/preview.svelte';
@@ -29,6 +29,23 @@
   }
 
   const pictures = $derived(message.blocks.flatMap((block) => (block.kind === 'image' ? [block] : [])));
+  // Same read as ChatBlock: a file outside the asset scope is drawn from its bytes, not its asset URL.
+  let tileSrcs = $state<Record<string, string>>({});
+  $effect(() => {
+    for (const picture of pictures) {
+      if (!picture.path || tileSrcs[picture.path] !== undefined) continue;
+      tileSrcs[picture.path] = pictureSrc(picture);
+      void resolvedPictureSrc(picture).then((src) => (tileSrcs[picture.path!] = src));
+    }
+  });
+  const tileSrc = (picture: (typeof pictures)[number]) => (picture.path ? (tileSrcs[picture.path] ?? pictureSrc(picture)) : pictureSrc(picture));
+  function useImageFallback(event: Event) {
+    const image = event.currentTarget as HTMLImageElement;
+    if (image.dataset.fallback) return;
+    image.dataset.fallback = '1';
+    image.alt = 'Image not found';
+    image.src = IMAGE_NOT_FOUND_SRC;
+  }
   const words = $derived(message.blocks.filter((block) => block.kind !== 'image' && block.kind !== 'delegate' && block.kind !== 'file'));
   const documents = $derived(message.blocks.flatMap((block) => (block.kind === 'file' ? [block] : [])));
 </script>
@@ -43,7 +60,7 @@
         aria-label="Preview {picture.name}"
         onclick={() => openImages(pictures, index)}
       >
-        <img src={pictureSrc(picture)} alt={picture.name} class="size-full object-cover" />
+        <img src={tileSrc(picture)} alt={picture.name} class="size-full object-cover" onerror={useImageFallback} />
       </button>
     {/each}
   </div>

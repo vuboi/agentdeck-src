@@ -22,7 +22,9 @@ pub struct LockEntry {
 pub type Lock = BTreeMap<String, LockEntry>;
 
 fn lock_file(home: &Path) -> PathBuf {
-    home.join(crate::channel::home_folder_name()).join("library").join("lock.json")
+    home.join(crate::channel::home_folder_name())
+        .join("library")
+        .join("lock.json")
 }
 
 pub fn read(home: &Path) -> Lock {
@@ -39,15 +41,27 @@ fn write(home: &Path, lock: &Lock) -> Result<(), String> {
     }
     let temporary = file.with_extension(format!("{}.tmp", super::stage::new_job_id()));
     let result = (|| {
-        std::fs::write(&temporary, serde_json::to_string_pretty(lock).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        std::fs::write(
+            &temporary,
+            serde_json::to_string_pretty(lock).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
         std::fs::rename(&temporary, &file).map_err(|error| error.to_string())
     })();
-    if result.is_err() { let _ = std::fs::remove_file(&temporary); }
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
     result
 }
 
 /// Records one installed skill. `folder` is the skill's folder as it was installed (its files are hashed now).
-pub fn record(home: &Path, name: &str, source: &str, subpath: &str, folder: &Path) -> Result<(), String> {
+pub fn record(
+    home: &Path,
+    name: &str,
+    source: &str,
+    subpath: &str,
+    folder: &Path,
+) -> Result<(), String> {
     let mut lock = read(home);
     let installed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -72,10 +86,18 @@ pub fn forget(home: &Path, name: &str) -> Result<(), String> {
 }
 
 /// Change only provenance; preserve the installed content hash until a replacement succeeds.
-pub fn set_source(home: &Path, name: &str, source: String, subpath: String) -> Result<LockEntry, String> {
+pub fn set_source(
+    home: &Path,
+    name: &str,
+    source: String,
+    subpath: String,
+) -> Result<LockEntry, String> {
     let text = std::fs::read_to_string(lock_file(home)).map_err(|e| e.to_string())?;
-    let mut entries: Lock = serde_json::from_str(&text).map_err(|_| "Skill source metadata is invalid")?;
-    let entry = entries.get_mut(name).ok_or("Skill has no managed source metadata")?;
+    let mut entries: Lock =
+        serde_json::from_str(&text).map_err(|_| "Skill source metadata is invalid")?;
+    let entry = entries
+        .get_mut(name)
+        .ok_or("Skill has no managed source metadata")?;
     entry.source = source;
     entry.subpath = subpath;
     let updated = entry.clone();
@@ -99,7 +121,10 @@ pub fn content_hash(folder: &Path) -> Result<String, String> {
 }
 
 fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
-    for entry in std::fs::read_dir(dir).map_err(|error| error.to_string())?.flatten() {
+    for entry in std::fs::read_dir(dir)
+        .map_err(|error| error.to_string())?
+        .flatten()
+    {
         let path = entry.path();
         if std::fs::read_link(&path).is_ok() {
             continue;
@@ -108,7 +133,11 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<
         if name == ".git" {
             continue;
         }
-        if entry.file_type().map_err(|error| error.to_string())?.is_dir() {
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
             collect(root, &path, out)?;
         } else {
             let relative = path

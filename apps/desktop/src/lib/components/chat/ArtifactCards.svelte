@@ -224,6 +224,10 @@
     contextMenuOpen = true;
     loadApps(item.path);
   }
+  function markPictureFailed(path: string) {
+    knownPictures.set(path, 'failed');
+    pictures[path] = 'failed';
+  }
   const contextItems = $derived(contextMenu ? menuOf(contextMenu.item) : []);
   const typeLabel = (item: Artifact) => `${fileKind(item.name).label} ${item.kind === 'audio' ? 'audio' : item.kind === 'video' ? 'video' : ''}`.trim();
 </script>
@@ -257,7 +261,7 @@
           {#if pictures[item.path] && pictures[item.path] !== 'failed'}
             <div role="group" aria-label={item.name} class="group/pic relative" oncontextmenu={(event) => openContextMenu(event, item)}>
               <button type="button" class="{live ? 'artifact-in' : ''} block cursor-zoom-in overflow-hidden rounded-xl border border-border bg-muted/30 outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Open {item.name}" onclick={() => openPicture(item)}>
-                <img src={pictures[item.path]} alt={item.name} class="block h-36 w-auto max-w-64 object-cover" />
+                <img src={pictures[item.path]} alt={item.name} class="block h-36 w-auto max-w-64 object-cover" onerror={() => markPictureFailed(item.path)} />
               </button>
               <span class="absolute top-1.5 right-1.5 opacity-0 transition-opacity group-hover/pic:opacity-100 focus-within:opacity-100"><MenuButton items={menuOf(item)} onprepare={() => loadApps(item.path)} onopen={() => loadApps(item.path)} label="Actions for {item.name}" class="size-7! rounded-md! bg-background/80! backdrop-blur" /></span>
             </div>

@@ -52,6 +52,9 @@
         // Keep the original URL for display. Download only after this explicit action because chat attachments need a file.
         const kept = await keepPicture({ id: crypto.randomUUID(), name, mime: 'image/png', src: await fetchImageDataUrl(image.path) });
         attachment = kept;
+      } else if (image.src.startsWith('data:')) {
+        // File local nằm ngoài asset scope: copy vào attachments (đã có scope) để chat hiển thị được.
+        attachment = await keepPicture({ id: crypto.randomUUID(), name, mime: 'image/png', src: image.src });
       } else {
         attachment = { id: crypto.randomUUID(), name, mime: mimeOfPath(image.path), src: '', path: image.path };
       }
@@ -77,8 +80,8 @@
           <button type="button" class="block w-full cursor-zoom-in outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Preview {modelLabel(image.model)} #{image.variant}" onclick={() => openPreview(index)}>
             <img src={resultSrc(image)} alt="{modelLabel(image.model)} candidate #{image.variant}" class="aspect-square w-full object-cover" onerror={() => markImageFailed(image.src)} />
           </button>
-          <div class="flex items-center gap-1 px-1.5 py-1.5">
-            <span class="min-w-0 flex-1 truncate text-[10px] text-muted-foreground" title="{modelLabel(image.model)} · #{image.variant} — {image.path}">{modelLabel(image.model)} · #{image.variant}</span>
+          <div class="flex items-center gap-1 px-2 py-1.5">
+            <span class="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground" title="{modelLabel(image.model)} · #{image.variant} — {image.path}">{modelLabel(image.model)} · #{image.variant}</span>
             <button type="button" class="grid size-6 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Use image in chat" title="Use image in chat" onclick={() => useInChat(image)}>
               <ZIcon zType="lucideMessageSquarePlus" class="size-3.5" />
             </button>

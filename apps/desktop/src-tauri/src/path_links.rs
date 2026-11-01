@@ -35,9 +35,21 @@ pub struct Launch {
 pub fn open_launch(os: Os, path: &str) -> Launch {
     match os {
         // `start` is a cmd built-in; the empty title keeps a quoted path from being taken for it.
-        Os::Windows => Launch { program: "cmd", args: vec!["/C".into(), "start".into(), String::new(), path.into()], raw: None },
-        Os::Mac => Launch { program: "open", args: vec![path.into()], raw: None },
-        Os::Linux => Launch { program: "xdg-open", args: vec![path.into()], raw: None },
+        Os::Windows => Launch {
+            program: "cmd",
+            args: vec!["/C".into(), "start".into(), String::new(), path.into()],
+            raw: None,
+        },
+        Os::Mac => Launch {
+            program: "open",
+            args: vec![path.into()],
+            raw: None,
+        },
+        Os::Linux => Launch {
+            program: "xdg-open",
+            args: vec![path.into()],
+            raw: None,
+        },
     }
 }
 
@@ -45,11 +57,26 @@ pub fn open_launch(os: Os, path: &str) -> Launch {
 /// folder that holds it is opened.
 pub fn reveal_launch(os: Os, path: &str) -> Launch {
     match os {
-        Os::Windows => Launch { program: "explorer", args: vec![], raw: Some(format!("/select,\"{}\"", path.replace('/', "\\"))) },
-        Os::Mac => Launch { program: "open", args: vec!["-R".into(), path.into()], raw: None },
+        Os::Windows => Launch {
+            program: "explorer",
+            args: vec![],
+            raw: Some(format!("/select,\"{}\"", path.replace('/', "\\"))),
+        },
+        Os::Mac => Launch {
+            program: "open",
+            args: vec!["-R".into(), path.into()],
+            raw: None,
+        },
         Os::Linux => {
-            let folder = Path::new(path).parent().map(|parent| parent.to_string_lossy().into_owned()).filter(|parent| !parent.is_empty());
-            Launch { program: "xdg-open", args: vec![folder.unwrap_or_else(|| "/".into())], raw: None }
+            let folder = Path::new(path)
+                .parent()
+                .map(|parent| parent.to_string_lossy().into_owned())
+                .filter(|parent| !parent.is_empty());
+            Launch {
+                program: "xdg-open",
+                args: vec![folder.unwrap_or_else(|| "/".into())],
+                raw: None,
+            }
         }
     }
 }
@@ -68,7 +95,10 @@ fn start(launch: Launch) -> Result<(), String> {
     }
     #[cfg(not(windows))]
     let _ = &launch.raw;
-    command.spawn().map(|_| ()).map_err(|error| error.to_string())
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn home() -> Option<PathBuf> {
@@ -79,12 +109,17 @@ fn home() -> Option<PathBuf> {
 /// or decomposed (NFD), so both are tried. A trailing slash is never added or removed.
 fn spellings(path: &str) -> Vec<PathBuf> {
     let expanded = match path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
-        Some(rest) => home().map(|home| home.join(rest)).unwrap_or_else(|| PathBuf::from(path)),
+        Some(rest) => home()
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(path)),
         None => PathBuf::from(path),
     };
     let mut out = vec![expanded.clone()];
     let text = expanded.to_string_lossy();
-    for other in [text.nfc().collect::<String>(), text.nfd().collect::<String>()] {
+    for other in [
+        text.nfc().collect::<String>(),
+        text.nfd().collect::<String>(),
+    ] {
         if other != text {
             out.push(PathBuf::from(other));
         }
@@ -94,13 +129,18 @@ fn spellings(path: &str) -> Vec<PathBuf> {
 
 /// The file or folder a path names, as it is spelled on this machine, or None.
 pub fn find(path: &str) -> Option<PathBuf> {
-    spellings(path).into_iter().find(|candidate| candidate.exists())
+    spellings(path)
+        .into_iter()
+        .find(|candidate| candidate.exists())
 }
 
 /// A path without the `\\?\` prefix Windows adds to resolved ones (Explorer does not take it with `/select`).
 fn plain(path: &Path) -> String {
     let text = path.to_string_lossy().into_owned();
-    text.strip_prefix("\\\\?\\UNC\\").map(|rest| format!("\\\\{rest}")).or_else(|| text.strip_prefix("\\\\?\\").map(str::to_string)).unwrap_or(text)
+    text.strip_prefix("\\\\?\\UNC\\")
+        .map(|rest| format!("\\\\{rest}"))
+        .or_else(|| text.strip_prefix("\\\\?\\").map(str::to_string))
+        .unwrap_or(text)
 }
 
 #[derive(Serialize)]
@@ -118,8 +158,16 @@ pub async fn path_resolve(paths: Vec<String>) -> Vec<Resolved> {
         paths
             .into_iter()
             .map(|path| match find(&path) {
-                Some(found) => Resolved { exists: true, dir: found.is_dir(), path: plain(&found) },
-                None => Resolved { exists: false, dir: false, path },
+                Some(found) => Resolved {
+                    exists: true,
+                    dir: found.is_dir(),
+                    path: plain(&found),
+                },
+                None => Resolved {
+                    exists: false,
+                    dir: false,
+                    path,
+                },
             })
             .collect()
     })
@@ -149,12 +197,20 @@ const IMAGE_MAX_BYTES: usize = 15 * 1024 * 1024;
 /// agent on localhost is the point of the house style).
 pub fn blocked_ip(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(ip) => ip.is_private() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1]),
+        IpAddr::V4(ip) => {
+            ip.is_private()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_broadcast()
+                || ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1])
+        }
         IpAddr::V6(ip) => {
             if let Some(v4) = ip.to_ipv4_mapped() {
                 return blocked_ip(IpAddr::V4(v4));
             }
-            ip.is_unspecified() || (ip.segments()[0] & 0xfe00) == 0xfc00 || (ip.segments()[0] & 0xffc0) == 0xfe80
+            ip.is_unspecified()
+                || (ip.segments()[0] & 0xfe00) == 0xfc00
+                || (ip.segments()[0] & 0xffc0) == 0xfe80
         }
     }
 }
@@ -175,7 +231,11 @@ fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
 fn cache_file(url: &str) -> PathBuf {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(url.as_bytes());
-    let name: String = digest.iter().take(16).map(|byte| format!("{byte:02x}")).collect();
+    let name: String = digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     std::env::temp_dir().join("agentdeck-images").join(name)
 }
 
@@ -190,9 +250,16 @@ async fn check_target(url: &reqwest::Url) -> Result<(), String> {
         return Ok(());
     }
     let port = url.port_or_known_default().unwrap_or(80);
-    let addresses: Vec<IpAddr> = match host.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() {
+    let addresses: Vec<IpAddr> = match host
+        .trim_matches(|c| c == '[' || c == ']')
+        .parse::<IpAddr>()
+    {
         Ok(ip) => vec![ip],
-        Err(_) => tokio::net::lookup_host((host.as_str(), port)).await.map_err(|error| error.to_string())?.map(|address| address.ip()).collect(),
+        Err(_) => tokio::net::lookup_host((host.as_str(), port))
+            .await
+            .map_err(|error| error.to_string())?
+            .map(|address| address.ip())
+            .collect(),
     };
     if addresses.iter().any(|ip| blocked_ip(*ip)) {
         return Err("address on the local network".into());
@@ -207,12 +274,20 @@ const IMAGE_CACHE_MAX_BYTES: u64 = 200 * 1024 * 1024;
 
 /// Removes the oldest cached pictures until the folder is under `max` bytes. Best effort.
 fn prune_cache(folder: &Path, max: u64) {
-    let Ok(read) = std::fs::read_dir(folder) else { return };
+    let Ok(read) = std::fs::read_dir(folder) else {
+        return;
+    };
     let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = read
         .filter_map(|entry| entry.ok())
         .filter_map(|entry| {
             let meta = entry.metadata().ok()?;
-            meta.is_file().then(|| (meta.modified().unwrap_or(std::time::UNIX_EPOCH), meta.len(), entry.path()))
+            meta.is_file().then(|| {
+                (
+                    meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+                    meta.len(),
+                    entry.path(),
+                )
+            })
         })
         .collect();
     let mut total: u64 = files.iter().map(|(_, size, _)| size).sum();
@@ -238,19 +313,30 @@ pub async fn image_fetch(url: String) -> Result<String, String> {
     let file = cache_file(&url);
     let meta = file.with_extension("type");
     if let (Ok(bytes), Ok(kind)) = (std::fs::read(&file), std::fs::read_to_string(&meta)) {
-        return Ok(format!("data:{kind};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)));
+        return Ok(format!(
+            "data:{kind};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ));
     }
     // Sites such as Wikimedia refuse a request with no User-Agent (and answer 429 to a bare client). Redirects are followed
     // here, one by one, so each new address is checked before it is asked for.
     let client = reqwest::Client::builder()
-        .user_agent(concat!("Mozilla/5.0 AgentDeck/", env!("CARGO_PKG_VERSION"), " (image preview)"))
+        .user_agent(concat!(
+            "Mozilla/5.0 AgentDeck/",
+            env!("CARGO_PKG_VERSION"),
+            " (image preview)"
+        ))
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| error.to_string())?;
     let mut hops = 0;
     let response = loop {
-        let response = client.get(target.clone()).send().await.map_err(|error| error.to_string())?;
+        let response = client
+            .get(target.clone())
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
         if !response.status().is_redirection() {
             break response;
         }
@@ -273,9 +359,19 @@ pub async fn image_fetch(url: String) -> Result<String, String> {
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
-        .map(|value| value.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+        .map(|value| {
+            value
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        })
         .unwrap_or_default();
-    if response.content_length().is_some_and(|length| length > IMAGE_MAX_BYTES as u64) {
+    if response
+        .content_length()
+        .is_some_and(|length| length > IMAGE_MAX_BYTES as u64)
+    {
         return Err("larger than 15 MB".into());
     }
     // Read in pieces and stop at the limit: a server that sends no length cannot fill the memory.
@@ -289,14 +385,21 @@ pub async fn image_fetch(url: String) -> Result<String, String> {
         bytes.extend_from_slice(&chunk);
     }
     // A server may label a picture `application/octet-stream`: the bytes decide.
-    let kind = if kind.starts_with("image/") { kind } else { sniff_image(&bytes).ok_or("not an image")?.to_string() };
+    let kind = if kind.starts_with("image/") {
+        kind
+    } else {
+        sniff_image(&bytes).ok_or("not an image")?.to_string()
+    };
     if let Some(folder) = file.parent() {
         let _ = std::fs::create_dir_all(folder);
         let _ = std::fs::write(&file, &bytes);
         let _ = std::fs::write(&meta, &kind);
         prune_cache(folder, IMAGE_CACHE_MAX_BYTES);
     }
-    Ok(format!("data:{kind};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes)))
+    Ok(format!(
+        "data:{kind};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    ))
 }
 
 #[cfg(test)]
@@ -307,29 +410,51 @@ mod tests {
     fn windows_opens_with_start_and_selects_with_explorer() {
         let open = open_launch(Os::Windows, "C:\\Users\\me\\My Docs\\a.txt");
         assert_eq!(open.program, "cmd");
-        assert_eq!(open.args, ["/C", "start", "", "C:\\Users\\me\\My Docs\\a.txt"]);
+        assert_eq!(
+            open.args,
+            ["/C", "start", "", "C:\\Users\\me\\My Docs\\a.txt"]
+        );
         let reveal = reveal_launch(Os::Windows, "C:/Users/me/My Docs/a.txt");
         assert_eq!(reveal.program, "explorer");
-        assert_eq!(reveal.raw.as_deref(), Some("/select,\"C:\\Users\\me\\My Docs\\a.txt\""));
+        assert_eq!(
+            reveal.raw.as_deref(),
+            Some("/select,\"C:\\Users\\me\\My Docs\\a.txt\"")
+        );
     }
 
     #[test]
     fn mac_opens_with_open_and_reveals_with_dash_r() {
-        assert_eq!(open_launch(Os::Mac, "/Users/me/a b.txt"), Launch { program: "open", args: vec!["/Users/me/a b.txt".into()], raw: None });
-        assert_eq!(reveal_launch(Os::Mac, "/Users/me/a b.txt").args, ["-R", "/Users/me/a b.txt"]);
+        assert_eq!(
+            open_launch(Os::Mac, "/Users/me/a b.txt"),
+            Launch {
+                program: "open",
+                args: vec!["/Users/me/a b.txt".into()],
+                raw: None
+            }
+        );
+        assert_eq!(
+            reveal_launch(Os::Mac, "/Users/me/a b.txt").args,
+            ["-R", "/Users/me/a b.txt"]
+        );
     }
 
     #[test]
     fn linux_opens_with_xdg_open_and_reveals_the_parent_folder() {
         assert_eq!(open_launch(Os::Linux, "/home/me/a.txt").program, "xdg-open");
         let reveal = reveal_launch(Os::Linux, "/home/me/project/a.txt");
-        assert_eq!((reveal.program, reveal.args.as_slice()), ("xdg-open", ["/home/me/project".to_string()].as_slice()));
+        assert_eq!(
+            (reveal.program, reveal.args.as_slice()),
+            ("xdg-open", ["/home/me/project".to_string()].as_slice())
+        );
         assert_eq!(reveal_launch(Os::Linux, "a.txt").args, ["/"]);
     }
 
     #[test]
     fn a_picture_is_known_by_its_first_bytes() {
-        assert_eq!(sniff_image(&[0x89, b'P', b'N', b'G', 0, 0]), Some("image/png"));
+        assert_eq!(
+            sniff_image(&[0x89, b'P', b'N', b'G', 0, 0]),
+            Some("image/png")
+        );
         assert_eq!(sniff_image(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
         assert_eq!(sniff_image(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
         assert_eq!(sniff_image(b"<html>"), None);
@@ -338,21 +463,36 @@ mod tests {
     #[tokio::test]
     async fn a_target_on_the_local_network_is_refused_for_the_first_address_and_for_a_redirect() {
         let target = |text: &str| reqwest::Url::parse(text).unwrap();
-        assert!(check_target(&target("http://127.0.0.1:8765/a.png")).await.is_ok());
-        assert!(check_target(&target("http://localhost/a.png")).await.is_ok());
+        assert!(check_target(&target("http://127.0.0.1:8765/a.png"))
+            .await
+            .is_ok());
+        assert!(check_target(&target("http://localhost/a.png"))
+            .await
+            .is_ok());
         assert!(check_target(&target("http://[::1]/a.png")).await.is_ok());
-        assert!(check_target(&target("http://192.168.1.1/a.png")).await.is_err());
-        assert!(check_target(&target("http://10.0.0.5/a.png")).await.is_err());
-        assert!(check_target(&target("http://[fe80::1]/a.png")).await.is_err());
-        assert!(check_target(&target("ftp://example.com/a.png")).await.is_err());
+        assert!(check_target(&target("http://192.168.1.1/a.png"))
+            .await
+            .is_err());
+        assert!(check_target(&target("http://10.0.0.5/a.png"))
+            .await
+            .is_err());
+        assert!(check_target(&target("http://[fe80::1]/a.png"))
+            .await
+            .is_err());
+        assert!(check_target(&target("ftp://example.com/a.png"))
+            .await
+            .is_err());
         // What a redirect gives: a relative or absolute address joined to the current one is checked the same way.
-        let joined = target("https://example.com/a").join("http://169.254.169.254/latest/meta-data").unwrap();
+        let joined = target("https://example.com/a")
+            .join("http://169.254.169.254/latest/meta-data")
+            .unwrap();
         assert!(check_target(&joined).await.is_err());
     }
 
     #[test]
     fn the_cache_keeps_the_newest_pictures_under_its_limit() {
-        let folder = std::env::temp_dir().join(format!("agentdeck-cache-test-{}", std::process::id()));
+        let folder =
+            std::env::temp_dir().join(format!("agentdeck-cache-test-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         for name in ["a", "b", "c"] {
             std::fs::write(folder.join(name), vec![0u8; 100]).unwrap();
@@ -393,7 +533,17 @@ mod tests {
 
     #[test]
     fn the_local_network_is_blocked_but_loopback_and_the_web_are_not() {
-        for ip in ["10.0.0.5", "192.168.1.1", "172.16.0.9", "169.254.1.1", "0.0.0.0", "100.64.0.1", "fc00::1", "fe80::1", "::ffff:10.0.0.1"] {
+        for ip in [
+            "10.0.0.5",
+            "192.168.1.1",
+            "172.16.0.9",
+            "169.254.1.1",
+            "0.0.0.0",
+            "100.64.0.1",
+            "fc00::1",
+            "fe80::1",
+            "::ffff:10.0.0.1",
+        ] {
             assert!(blocked_ip(ip.parse().unwrap()), "{ip}");
         }
         for ip in ["127.0.0.1", "::1", "8.8.8.8", "1.1.1.1", "2606:4700::1111"] {

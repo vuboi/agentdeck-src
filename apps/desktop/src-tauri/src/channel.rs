@@ -12,7 +12,9 @@ pub fn init(identifier: &str) {
 }
 
 fn identifier() -> &'static str {
-    IDENTIFIER.get().map_or("dev.agentdeck.desktop", String::as_str)
+    IDENTIFIER
+        .get()
+        .map_or("dev.agentdeck.desktop", String::as_str)
 }
 
 /// The folder under the home folder for this build's data.
@@ -37,5 +39,8 @@ pub fn server_name() -> &'static str {
 
 /// Any build's AgentDeck browser server name: never offered as a third-party server, and not a name a user may add.
 pub fn is_bridge_name(name: &str) -> bool {
-    matches!(name, "agentdeck" | "agentdeck-dev" | "agentdeck-local" | "agentdeck-other")
+    matches!(
+        name,
+        "agentdeck" | "agentdeck-dev" | "agentdeck-local" | "agentdeck-other"
+    )
 }

@@ -38,8 +38,8 @@ $effect.root(() => {
   });
 });
 
-/** Opens (or focuses) a file in the Files tool and shows the tool. `root` is the folder the file must stay inside. */
-export function openInViewer(path: string, root: string, view?: 'file' | 'changes') {
+/** Opens (or focuses) a file in the Files tool. `root` is the folder the file must stay inside. */
+export function openInViewer(path: string, root: string, view?: 'file' | 'changes', options?: { revealPanel?: boolean }) {
   const id = viewerId(path);
   // With no file open the tree is the only thing shown: the first file opens beside it, not in its place.
   const treeWasAlone = viewer.tabs.length === 0;
@@ -51,17 +51,19 @@ export function openInViewer(path: string, root: string, view?: 'file' | 'change
   // A file opened as its changes (the diff) shows the side panel from the start, so the list it came from is there.
   // A plain file leaves the panel as it is (closed by default).
   if (view === 'changes' || treeWasAlone) viewer.side.open = true;
+  // Opening a file from chat should give the editor the whole workspace. Keep Explore selected so a later manual
+  // panel reveal shows this file; reveal the panel only for an explicit side-panel action.
   layout.activeTool = 'Explore';
-  setToolsOpen(true);
+  if (options?.revealPanel) setToolsOpen(true);
 }
 
 /**
  * Opens a file named by a path of any kind (full, or relative to the chat's project folder) in the Files tool. The folder
  * it is read from is the project when the file is inside it, else the file's own folder. Use this, not a hand-built path.
  */
-export function openProjectFile(path: string, projectRoot: string, view?: 'file' | 'changes') {
+export function openProjectFile(path: string, projectRoot: string, view?: 'file' | 'changes', options?: { revealPanel?: boolean }) {
   const full = resolveInProject(path, projectRoot);
-  openInViewer(full, fileRootOf(full, projectRoot), view);
+  openInViewer(full, fileRootOf(full, projectRoot), view, options);
 }
 
 export const isViewerTab = (id: string) => viewer.tabs.some((tab) => tab.id === id);

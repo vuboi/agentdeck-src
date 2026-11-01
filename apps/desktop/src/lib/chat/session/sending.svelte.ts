@@ -12,7 +12,7 @@ import { presetById, presetOf, type WorkflowPreset } from '../../tasks/workflows
 import { automation, COMPRESS_TOKENS } from '../../app/platform/automation.svelte';
 import { needsContext } from '../recovery/context-need';
 import { activeSession, localMessages, nextId, persistLocal, workspace, type Attachment, type Effort, type FileAttachment, type Mention, type PageElement, type SessionItem } from './state.svelte';
-import { afterSwitch, beginSessionWork, continuationGroups, hasTurnWork, hiddenPrompt, isRunning, modelFor, queuePaused, queued, stopTurn, switchingAgent, turnOptions, withElements, type Queued } from './turns.svelte';
+import { afterSwitch, beginSessionWork, continuationGroups, forgetUnstartedConversation, hasTurnWork, hiddenPrompt, isRunning, modelFor, queuePaused, queued, stopTurn, switchingAgent, turnOptions, withElements, type Queued } from './turns.svelte';
 import { SKIPPED_PERMISSION, SKIPPED_QUESTIONS, SKIPPED_REQUIRED, canListenToSession, closePendingPermissions, continueCurrentRun, liveReplies, messagesOf, needsUserInput, openQuestions, pendingInput, pendingNew, replies, sendNextQueued, startTurn } from './run.svelte';
 import { cancelAutoSwitch, recoveries, resumeAutoChoice, resumeSince, resumes } from './events.svelte';
 import { beginWorkflowIntegration, beginWorkflowRun, delegateRuns, mentionContext, statsOf, type DelegateReports } from './delegation.svelte';
@@ -185,15 +185,7 @@ export function steerQueued(sessionId: string, item: Queued) {
  *  has no conversation to resume yet (Codex writes its rollout, Claude its session file, only once a run has started): its
  *  next message starts a new one instead of resuming that id and failing. */
 function stopForSend(sessionId: string) {
-  const session = workspace.sessions.find((item) => item.id === sessionId);
-  const list = messagesOf(sessionId);
-  const replyId = replies[sessionId];
-  const wrote = (message: Message | undefined) => Boolean(message?.blocks.some((block) => block.kind !== 'loading'));
-  const earlierAnswer = list.some((item) => item.role === 'assistant' && item.id !== replyId && wrote(item));
-  if (session && !earlierAnswer && !wrote(list.find((item) => item.id === replyId))) {
-    session.agentStarted = false;
-    session.agentSession = undefined;
-  }
+  forgetUnstartedConversation(sessionId);
   stopTurn(sessionId);
   delete queuePaused[sessionId];
 }

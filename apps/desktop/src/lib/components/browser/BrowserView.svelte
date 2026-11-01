@@ -874,9 +874,16 @@
       <BrowserStartPage {deviceBox} {targets} {starting} onrun={(target) => void runProject(target)} />
     {/if}
     {#if browser.navError}
-      <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-sm" role="alert">
-        <ZIcon zType={'lucideCircleAlert' as ZIconName} zSize="28" class="size-7 text-destructive" />
-        <p class="m-0 max-w-96 break-words text-destructive">{browser.navError}</p>
+      <div class="absolute inset-0 flex items-center justify-center p-6" role="alert">
+        <div class="flex w-full max-w-sm items-center gap-3 rounded-xl border border-border/70 bg-background/85 px-4 py-3 shadow-sm backdrop-blur-sm">
+          <span class="grid size-9 shrink-0 place-items-center rounded-lg bg-muted/70 text-muted-foreground">
+            <ZIcon zType={'lucideGlobe' as ZIconName} zSize="18" class="size-4.5" />
+          </span>
+          <div class="min-w-0 text-left">
+            <p class="m-0 text-sm font-medium text-foreground">Could not open this address</p>
+            <p class="m-0 mt-0.5 break-words font-mono text-[0.6875rem] text-muted-foreground">{browser.navError}</p>
+          </div>
+        </div>
       </div>
     {/if}
     </div>

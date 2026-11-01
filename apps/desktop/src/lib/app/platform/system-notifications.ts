@@ -43,6 +43,10 @@ export async function testSystemNotification(): Promise<string | null> {
 /** Sends a notification through Tauri so it reaches Windows, macOS, or Linux. */
 export async function sendSystemNotification(title: string, body: string): Promise<void> {
   if (!inTauri()) return;
+  // Automatic alerts are only useful when AgentDeck is in the background. Keeping
+  // them out of the foreground window prevents the native toast path from taking
+  // focus away from the chat composer while the user is typing.
+  if (typeof document !== 'undefined' && document.hasFocus()) return;
   try {
     const notifications = await import('@tauri-apps/plugin-notification');
     if (await notifications.isPermissionGranted()) await notify(notifications, title, body);

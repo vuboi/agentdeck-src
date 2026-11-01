@@ -24,8 +24,8 @@ pub mod review;
 pub mod scan;
 pub mod share;
 pub mod stage;
-pub mod updates;
 pub mod sync;
+pub mod updates;
 
 use install::{checked_job, discard};
 use library::{checked_name, SKILL_AGENTS};
@@ -44,7 +44,9 @@ fn home() -> Result<PathBuf, String> {
 }
 
 /// Runs blocking file work off the async runtime.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(|error| error.to_string())?
@@ -89,22 +91,37 @@ pub async fn store_skill_remove(name: String) -> Result<(), String> {
 pub async fn store_plugin_set(agent: String, id: String, enabled: bool) -> Result<(), String> {
     check_plugin_id(&id)?;
     if agent != "claude" {
-        return Err("Codex has no command to turn a plugin on or off; it can only be removed".to_owned());
+        return Err(
+            "Codex has no command to turn a plugin on or off; it can only be removed".to_owned(),
+        );
     }
     let verb = if enabled { "enable" } else { "disable" };
-    run(&agent, &["plugin", verb, id.as_str()]).await.map(|_| ())
+    run(&agent, &["plugin", verb, id.as_str()])
+        .await
+        .map(|_| ())
 }
 
 #[tauri::command]
 pub async fn store_plugin_uninstall(agent: String, id: String) -> Result<(), String> {
     check_plugin_id(&id)?;
-    let verb = if agent == "codex" { "remove" } else { "uninstall" };
-    run(&agent, &["plugin", verb, id.as_str()]).await.map(|_| ())
+    let verb = if agent == "codex" {
+        "remove"
+    } else {
+        "uninstall"
+    };
+    run(&agent, &["plugin", verb, id.as_str()])
+        .await
+        .map(|_| ())
 }
 
 /// Uses an installed plugin's skills and MCP servers with the chosen agents.
 #[tauri::command]
-pub async fn store_plugin_share(agent: String, id: String, agents: Vec<String>, acknowledged: bool) -> Result<Vec<String>, String> {
+pub async fn store_plugin_share(
+    agent: String,
+    id: String,
+    agents: Vec<String>,
+    acknowledged: bool,
+) -> Result<Vec<String>, String> {
     check_plugin_id(&id)?;
     share::share(&home()?, &agent, &id, &agents, acknowledged).await
 }
@@ -113,10 +130,15 @@ pub async fn store_plugin_share(agent: String, id: String, agents: Vec<String>, 
 #[tauri::command]
 pub async fn store_mcp_login(agent: String, name: String) -> Result<String, String> {
     if agent != "codex" {
-        return Err("Claude Code asks for the OAuth login itself the first time the server is used".to_owned());
+        return Err(
+            "Claude Code asks for the OAuth login itself the first time the server is used"
+                .to_owned(),
+        );
     }
     checked_name(&name)?;
-    run("codex", &["mcp", "login", name.as_str()]).await.map(|out| out.trim().to_owned())
+    run("codex", &["mcp", "login", name.as_str()])
+        .await
+        .map(|out| out.trim().to_owned())
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -175,7 +197,11 @@ pub async fn store_stage(source: stage::Source) -> Result<install::StagedJob, St
 
 /// Runs the agent review on a staged job and saves the answer. The verdict is the stricter of scan and review.
 #[tauri::command]
-pub async fn store_review(job_id: String, agent: String, model: String) -> Result<install::ReviewOutcome, String> {
+pub async fn store_review(
+    job_id: String,
+    agent: String,
+    model: String,
+) -> Result<install::ReviewOutcome, String> {
     let job = checked_job(&job_id)?.to_owned();
     let home = home()?;
     let root = stage::staging_root(&home).join(&job);
@@ -185,7 +211,15 @@ pub async fn store_review(job_id: String, agent: String, model: String) -> Resul
     let scanned = root.clone();
     let scan_report = blocking(move || Ok(scan::scan_folder(&scanned))).await?;
     let prompt = review::build_prompt("skill, MCP config or plugin", &scan_report);
-    let (answer, error) = match review::run(&agent, &model, &root, &prompt, &install::reply_file(&home, &job)).await {
+    let (answer, error) = match review::run(
+        &agent,
+        &model,
+        &root,
+        &prompt,
+        &install::reply_file(&home, &job),
+    )
+    .await
+    {
         Ok(answer) => (Some(answer), None),
         Err(error) => (None, Some(error)),
     };
@@ -208,7 +242,11 @@ pub async fn store_review(job_id: String, agent: String, model: String) -> Resul
 
 /// Installs a reviewed job, with the verdict the user saw (scan and saved review, the stricter one).
 #[tauri::command]
-pub async fn store_install_staged(job_id: String, agents: Vec<String>, acknowledged: bool) -> Result<Vec<String>, String> {
+pub async fn store_install_staged(
+    job_id: String,
+    agents: Vec<String>,
+    acknowledged: bool,
+) -> Result<Vec<String>, String> {
     let job = checked_job(&job_id)?.to_owned();
     let home = home()?;
     let root = stage::staging_root(&home).join(&job);
@@ -217,7 +255,11 @@ pub async fn store_install_staged(job_id: String, agents: Vec<String>, acknowled
         .and_then(|text| serde_json::from_str(&text).map_err(|error| error.to_string()))?;
     let scanned = root.clone();
     let scan_report = blocking(move || Ok(scan::scan_folder(&scanned))).await?;
-    scan::gate(review::merge(scan_report.verdict, saved.review.as_ref()), acknowledged, "this source")?;
+    scan::gate(
+        review::merge(scan_report.verdict, saved.review.as_ref()),
+        acknowledged,
+        "this source",
+    )?;
     let lines = install::install_job(&home, &job, &root, &agents).await?;
     discard(&home, &job);
     Ok(lines)
@@ -237,9 +279,21 @@ pub async fn store_discard_staged(job_id: String) -> Result<(), String> {
 /// One page of the catalog that matches `filter`. The list is filtered and cut here, so the UI only ever holds the pages
 /// it has scrolled to, not the thousands of items in all.
 #[tauri::command]
-pub async fn store_catalog_page(filter: catalog::Filter, offset: usize, limit: usize) -> Result<catalog::Page, String> {
+pub async fn store_catalog_page(
+    filter: catalog::Filter,
+    offset: usize,
+    limit: usize,
+) -> Result<catalog::Page, String> {
     let home = home()?;
-    blocking(move || Ok(catalog::page(&catalog::cached(&home), &filter, offset, limit.clamp(1, 200)))).await
+    blocking(move || {
+        Ok(catalog::page(
+            &catalog::cached(&home),
+            &filter,
+            offset,
+            limit.clamp(1, 200),
+        ))
+    })
+    .await
 }
 
 /// Rebuilds the catalog from every source. Returns its totals (no items): the UI then asks for the first page again.
@@ -253,12 +307,29 @@ pub async fn store_catalog_refresh() -> Result<catalog::Page, String> {
 /// A plugin is scanned at its pinned source first, a skill after its clone. An MCP server runs a command, so it needs
 /// `acknowledged` after the user has read the command.
 #[tauri::command]
-pub async fn store_catalog_install(item: catalog::CatalogItem, acknowledged: bool, project: Option<PathBuf>) -> Result<Vec<String>, String> {
+pub async fn store_catalog_install(
+    item: catalog::CatalogItem,
+    acknowledged: bool,
+    project: Option<PathBuf>,
+) -> Result<Vec<String>, String> {
     let home = home()?;
-    if project.as_ref().is_some_and(|p| !p.is_absolute() || !p.is_dir()) { return Err("Select an existing project folder".into()); }
+    if project
+        .as_ref()
+        .is_some_and(|p| !p.is_absolute() || !p.is_dir())
+    {
+        return Err("Select an existing project folder".into());
+    }
     match item.install {
-        catalog::Install::Plugin { agent, plugin_id, source } => {
-            if project.is_some() { return Err("Plugin install scope is controlled by its provider; choose Global".into()); }
+        catalog::Install::Plugin {
+            agent,
+            plugin_id,
+            source,
+        } => {
+            if project.is_some() {
+                return Err(
+                    "Plugin install scope is controlled by its provider; choose Global".into(),
+                );
+            }
             check_plugin_id(&plugin_id)?;
             let job = stage::new_job_id();
             let scanned = catalog::plugin_folder(&home, &job, &source).await;
@@ -269,38 +340,83 @@ pub async fn store_catalog_install(item: catalog::CatalogItem, acknowledged: boo
             discard(&home, &job);
             scan::gate(verdict?, acknowledged, &plugin_id)?;
             let verb = if agent == "codex" { "add" } else { "install" };
-            run(&agent, &["plugin", verb, plugin_id.as_str()]).await.map(|out| vec![out.trim().to_owned()])
+            run(&agent, &["plugin", verb, plugin_id.as_str()])
+                .await
+                .map(|out| vec![out.trim().to_owned()])
         }
         catalog::Install::Mcp { spec } => {
             scan::gate(scan::Verdict::Caution, acknowledged, &item.name)?;
-            if let Some(project) = project { return sync::install_project_mcp(&project, spec); }
+            if let Some(project) = project {
+                return sync::install_project_mcp(&project, spec);
+            }
             install::add_mcp(spec).await
         }
         catalog::Install::Skill { url, subpath } => {
             let job = stage::new_job_id();
-            let result = install_catalog_skill(&home, &job, &url, &subpath, acknowledged, project.as_deref()).await;
+            let result = install_catalog_skill(
+                &home,
+                &job,
+                &url,
+                &subpath,
+                acknowledged,
+                project.as_deref(),
+            )
+            .await;
             discard(&home, &job);
             result
         }
     }
 }
 
-async fn install_catalog_skill(home: &std::path::Path, job: &str, url: &str, subpath: &str, acknowledged: bool, project: Option<&std::path::Path>) -> Result<Vec<String>, String> {
-    let root = stage::stage(home, job, stage::Source::Git { url: url.to_owned() }).await?;
+async fn install_catalog_skill(
+    home: &std::path::Path,
+    job: &str,
+    url: &str,
+    subpath: &str,
+    acknowledged: bool,
+    project: Option<&std::path::Path>,
+) -> Result<Vec<String>, String> {
+    let root = stage::stage(
+        home,
+        job,
+        stage::Source::Git {
+            url: url.to_owned(),
+        },
+    )
+    .await?;
     let folder = root.join(subpath);
     if !folder.join("SKILL.md").is_file() {
         return Err("the source no longer has a SKILL.md there".to_owned());
     }
-    let name = folder.file_name().and_then(|name| name.to_str()).unwrap_or_default().to_owned();
+    let name = folder
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_owned();
     let scanned = folder.clone();
     let verdict = blocking(move || Ok(scan::scan_folder(&scanned).verdict)).await?;
     scan::gate(verdict, acknowledged, &name)?;
-    let agents: Vec<String> = SKILL_AGENTS.iter().map(|agent| (*agent).to_owned()).collect();
-    library::add(home, &name, &folder, url, subpath, if project.is_some() { &[] } else { &agents })?;
+    let agents: Vec<String> = SKILL_AGENTS
+        .iter()
+        .map(|agent| (*agent).to_owned())
+        .collect();
+    library::add(
+        home,
+        &name,
+        &folder,
+        url,
+        subpath,
+        if project.is_some() { &[] } else { &agents },
+    )?;
     if let Some(project) = project {
         sync::remember_projects(home, &[project.to_path_buf()])?;
         for target in library::project_folders() {
-            sync::link_skill(project, target, &name, &library::library_root(home).join(&name))?;
+            sync::link_skill(
+                project,
+                target,
+                &name,
+                &library::library_root(home).join(&name),
+            )?;
         }
     }
     Ok(vec![format!("{name} installed")])

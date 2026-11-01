@@ -4,31 +4,34 @@
   import type { ZIconName, ZTab } from '@shival99/z-ui-svelte';
   import { toast } from '../../../app/platform/toast';
   import { ticker } from '../../../app/platform/clock.svelte';
-  import { ALIBABA_SVG, CEREBRAS_SVG, CLAUDE_LOGO, CLOUDFLARE_SVG, COMMAND_CODE_SVG, COPILOT_LOGO, DEEPSEEK_SVG, GEMINI_LOGO, GEMINI_SVG, GITHUB_SVG, GROQ_SVG, KIMI_SVG, MINIMAX_SVG, MUSE_SVG, OPENAI_SVG, OPENCODE_SVG, OPENROUTER_SVG, WORKBUDDY_LOGO, ZHIPU_SVG, connectorLogo } from '../../../agents/brand-icons';
-  import SecretInput from '../../ui/SecretInput.svelte';
+  import { CLAUDE_LOGO, COPILOT_LOGO, GEMINI_LOGO, GITHUB_SVG, MUSE_LOGO, OPENAI_SVG, OPENCODE_SVG, WORKBUDDY_LOGO } from '../../../agents/brand-icons';
   import { openExternal } from '../../../browser/browser.svelte';
   import {
     addAccount,
     cancelAccountAdd,
     cancelLogin,
-    API_CONNECTORS,
     connectors,
     install,
     installed,
     login,
+    logoutNativeConnector,
     refreshAccounts,
+    refreshAccount,
+    refreshAgyAccount,
+    refreshAgyAccounts,
+    refreshAgyQuota,
     refreshDetect,
     removeAccount,
+    removeAgyAccount,
     retrySaveAgyAccount,
     setCodexAutoSwitch,
     setConnectorAutoSwitch,
-    saveApiConnectorKey,
     switchAccount,
     switchAgyAccount,
+    subscribeQuotaRefresh,
     tool,
     type Account,
     type AccountProvider,
-    type ApiConnectorId,
     type ConnectorId,
     type Login,
     type UsageWindow,
@@ -53,21 +56,7 @@
     note: string;
     accounts?: AccountProvider;
     manager?: { id: string; label: string; why: string };
-    auth?: 'api-key';
-    keyUrl?: string;
   };
-  const apiCard = (id: ApiConnectorId, label: string, svg: string, tone: string, note: string, keyUrl: string): Card => ({
-    id,
-    label,
-    binary: id,
-    brand: 'lucideKeyRound',
-    image: connectorLogo(id),
-    svg,
-    tone,
-    note,
-    auth: 'api-key',
-    keyUrl,
-  });
   const CARDS: Card[] = [
     {
       id: 'claude',
@@ -85,7 +74,6 @@
       label: 'Codex',
       binary: 'codex',
       brand: 'brandOpenai',
-
       svg: OPENAI_SVG,
       tone: 'bg-foreground/10 text-foreground',
       note: 'OpenAI’s coding agent. Sign-in opens your browser.',
@@ -106,7 +94,6 @@
       label: 'OpenCode',
       binary: 'opencode',
       brand: 'lucideTerminal',
-
       svg: OPENCODE_SVG,
       tone: 'bg-foreground/10 text-foreground',
       note: 'Open-source coding agent. Sign-in opens the OpenCode provider chooser.',
@@ -117,9 +104,9 @@
       binary: 'copilot',
       brand: 'lucideBot',
       svg: GITHUB_SVG,
-      image: COPILOT_LOGO,
-      tone: 'bg-violet-500/12 text-violet-600 dark:text-violet-400',
+      tone: 'bg-foreground/10 text-foreground',
       note: 'GitHub Copilot coding models. The Copilot CLI is installed here; sign in and switch accounts with GitHub CLI.',
+      image: COPILOT_LOGO,
       accounts: 'copilot',
       manager: { id: 'gh', label: 'GitHub CLI', why: 'Uses the active gh auth account for Copilot access.' },
     },
@@ -132,48 +119,29 @@
       tone: 'bg-cyan-500/12 text-cyan-600 dark:text-cyan-400',
       note: 'Tencent WorkBuddy. Sign-in uses a browser device flow; chat uses its authenticated model catalog.',
     },
-    apiCard('muse', 'Muse (Meta Model API)', MUSE_SVG, 'bg-blue-500/12 text-blue-600 dark:text-blue-400', 'API key for Muse Model API. This is separate from Muse Code subscription login.', 'https://dev.meta.ai/'),
-    apiCard('commandcode', 'Command Code', COMMAND_CODE_SVG, 'bg-foreground/10 text-foreground', 'API key for the Command Code Provider API and its subscription credits.', 'https://commandcode.ai/studio/api-keys'),
-    apiCard('qwen', 'Alibaba Qwen', ALIBABA_SVG, 'bg-orange-500/12 text-orange-600 dark:text-orange-400', 'DashScope API key for Qwen coding and multimodal models.', 'https://bailian.console.aliyun.com/?tab=model#/api-key'),
-    apiCard('deepseek', 'DeepSeek', DEEPSEEK_SVG, 'bg-sky-500/12 text-sky-600 dark:text-sky-400', 'API key for DeepSeek chat and reasoning models.', 'https://platform.deepseek.com/api_keys'),
-    apiCard('moonshot', 'Kimi (Moonshot)', KIMI_SVG, 'bg-blue-500/12 text-blue-600 dark:text-blue-400', 'API key for Kimi long-context models.', 'https://platform.moonshot.ai/console/api-keys'),
-    apiCard('zai', 'GLM (Z.AI)', ZHIPU_SVG, 'bg-indigo-500/12 text-indigo-600 dark:text-indigo-400', 'API key for GLM multilingual and coding models.', 'https://z.ai/manage-apikey/apikey-list'),
-    apiCard('minimax', 'MiniMax', MINIMAX_SVG, 'bg-pink-500/12 text-pink-600 dark:text-pink-400', 'API key for MiniMax agent and coding models.', 'https://platform.minimax.io/user-center/basic-information/interface-key'),
-    apiCard('gemini', 'Google Gemini', GEMINI_SVG, 'bg-blue-500/12 text-blue-600 dark:text-blue-400', 'API key for the Gemini OpenAI-compatible endpoint.', 'https://aistudio.google.com/app/apikey'),
-    apiCard('groq', 'Groq', GROQ_SVG, 'bg-orange-500/12 text-orange-600 dark:text-orange-400', 'API key for fast open models.', 'https://console.groq.com/keys'),
-    apiCard('cerebras', 'Cerebras', CEREBRAS_SVG, 'bg-orange-500/12 text-orange-600 dark:text-orange-400', 'API key for high-throughput open models.', 'https://cloud.cerebras.ai'),
-    apiCard('openrouter', 'OpenRouter', OPENROUTER_SVG, 'bg-indigo-500/12 text-indigo-600 dark:text-indigo-400', 'One API key for multiple model providers.', 'https://openrouter.ai/settings/keys'),
-    apiCard('cloudflare', 'Cloudflare Workers AI', CLOUDFLARE_SVG, 'bg-orange-500/12 text-orange-600 dark:text-orange-400', 'Account token for Workers AI. The account ID remains part of the endpoint configuration.', 'https://dash.cloudflare.com/profile/api-tokens'),
+    {
+      id: 'muse-code',
+      label: 'Muse Code',
+      binary: 'muse-code',
+      brand: 'lucideBot',
+      image: MUSE_LOGO,
+      tone: 'bg-violet-500/12 text-violet-600 dark:text-violet-400',
+      note: 'Muse Code subscription. Sign-in uses Meta’s device flow and mints a native inference key.',
+    },
   ];
 
-  const apiKeyDraft = $state<Partial<Record<ApiConnectorId, string>>>({});
-  const apiKeyBusy = $state<Partial<Record<ApiConnectorId, boolean>>>({});
-
   const loginOf = (id: ConnectorId): Login | undefined => {
-    if (id in API_CONNECTORS) return { logged_in: Boolean(connectors.apiKeys[id as ApiConnectorId]), email: null, plan: null, detail: 'API key' };
     const detected = connectors.detected;
     if (!detected) return undefined;
-    const nativeId = id as Exclude<ConnectorId, ApiConnectorId>;
-    return nativeId === 'agy' ? detected.antigravity : detected[nativeId];
+    if (id === 'agy') return detected.antigravity;
+    if (id === 'muse-code') return detected.muse_code;
+    return (detected as unknown as Record<string, Login | undefined>)[id];
   };
-
-  async function saveApiKey(card: Card) {
-    if (card.auth !== 'api-key') return;
-    const id = card.id as ApiConnectorId;
-    apiKeyBusy[id] = true;
-    try {
-      if (await saveApiConnectorKey(id, apiKeyDraft[id] ?? '')) {
-        apiKeyDraft[id] = '';
-        toast.success(`${card.label} key saved`);
-      } else toast.error(`Could not save ${card.label} key`);
-    } finally {
-      apiKeyBusy[id] = false;
-    }
-  }
 
 
   /** Email of the account card whose Refresh button was clicked: only that card's icon spins. */
   let refreshing = $state('');
+  let refreshingCard = $state('');
   const busyOf = (...keys: string[]) => keys.map((key) => connectors.busy[key]).find(Boolean);
   const lastLog = (id: string) => connectors.logs[id]?.slice(-4) ?? [];
   const urlIn = (lines: string[]) => lines.map((line) => line.match(/https?:\/\/\S+/)?.[0]).filter(Boolean).pop();
@@ -229,6 +197,33 @@
 
   const barColor = (pct: number) => (pct >= 90 ? 'bg-destructive' : pct >= 70 ? 'bg-amber-500' : 'bg-emerald-500');
   const stale = (account: Account, now: number) => account.observed_at !== null && now / 1000 - account.observed_at > 15 * 60;
+  const authFailure = (status: string | null | undefined) => /\b(?:401|404)\b|expired|unauthori[sz]ed|authentication required|login required|invalid token|credentials are missing|saved credentials are missing/i.test(status ?? '');
+  const needsLogin = (account: Account) => account.expired || authFailure(account.status);
+  const needsAgyLogin = (account: { expired: boolean; status: string | null }, error: string | null | undefined) => account.expired || authFailure(account.status) || authFailure(error);
+
+  async function refreshCardAccounts(card: Card) {
+    if (refreshingCard) return;
+    refreshingCard = card.id;
+    try {
+      if (card.id === 'agy') {
+        await Promise.all([refreshAgyAccounts(false, true), refreshAgyQuota(false, true)]);
+      } else if (card.accounts) {
+        await refreshAccounts(card.accounts, true);
+      }
+    } finally {
+      refreshingCard = '';
+    }
+  }
+
+  $effect(() => {
+    const card = CARDS.find((item) => item.id === activeCard);
+    if (!card || (!card.accounts && card.id !== 'agy')) return;
+    const refresh = () => {
+      if (card.id === 'agy') void refreshAgyQuota();
+      else if (card.accounts) void refreshAccounts(card.accounts);
+    };
+    return subscribeQuotaRefresh(refresh);
+  });
   const shown = (window: UsageWindow, now: number) => (window.resets_at !== null && window.resets_at * 1000 <= now ? 0 : Math.min(100, window.pct));
 
   const refreshingDetect = $derived(Boolean(connectors.busy.detect));
@@ -236,8 +231,7 @@
 
 {#snippet tabIcon(tab: ZTab)}
   {@const card = CARDS.find((item) => item.id === tab.value)}
-  {@const textTone = card?.tone?.split(' ').find((c) => c.startsWith('text-')) ?? ''}
-  {#if card?.image}<img src={card.image} alt="" class="size-3.5 shrink-0 rounded-xs object-contain" />{:else if card?.svg}<ZIcon zSvg={card.svg} class="size-3.5 {textTone}" />{:else if card}<ZIcon zType={icon(card.brand)} class="size-3.5 {textTone}" />{/if}
+  {#if card?.image}<img src={card.image} alt="" class="size-3.5 shrink-0 rounded-xs object-contain" />{:else if card?.svg}<ZIcon zSvg={card.svg} class="size-3.5" />{:else if card}<ZIcon zType={icon(card.brand)} class="size-3.5" />{/if}
 {/snippet}
 
 <!-- The tab strip stays put; only the body below it scrolls, so nothing shifts and the body never runs under the strip. -->
@@ -298,9 +292,9 @@
             <div class="col-start-1 row-start-1 flex min-w-0 flex-col gap-4" in:fade={{ duration: 220, delay: 60 }}>
               {#each CARDS.filter((item) => item.id === activeCard) as card (card.id)}
                 {@const info = loginOf(card.id)}
-                {@const native = card.id === 'workbuddy'}
-                {@const path = card.auth === 'api-key' ? card.id : native ? card.id : tool(card.binary)?.path}
-                {@const version = card.auth === 'api-key' ? 'API key' : native ? 'OAuth' : tool(card.binary)?.version}
+                {@const native = card.id === 'workbuddy' || card.id === 'muse-code'}
+                {@const path = native ? card.id : tool(card.binary)?.path}
+                {@const version = native ? 'OAuth' : tool(card.binary)?.version}
                 {@const list = card.accounts ? connectors.accounts[card.accounts] : null}
                 {@const working = busyOf(`install:${card.id}`, `login:${card.id}`, `add:${card.id}`)}
                 {@const log = lastLog(card.id)}
@@ -333,11 +327,7 @@
                     </div>
                     <div class="flex shrink-0 items-center gap-1.5">
                       <!-- The buttons cross-fade when the state changes (install → installing → signed in) instead of cutting over. -->
-                      {#if card.auth === 'api-key'}
-                        <ZButton zWave={false} zType={info?.logged_in ? 'outline' : 'default'} zSize="sm" class="h-8 gap-1.5 px-3 text-sm" onclick={() => (apiKeyDraft[card.id as ApiConnectorId] = '')}>
-                          <ZIcon zType={icon('lucideKeyRound')} class="size-3.5" /> {info?.logged_in ? 'Replace key' : 'Add key'}
-                        </ZButton>
-                      {:else if connectors.detected && !path}
+                      {#if connectors.detected && !path}
                         <span class="inline-flex" in:fade={{ duration: 180, delay: 60 }} out:fade={{ duration: 120 }}>
                           <ZButton zWave={false} zSize="sm" class="h-8 gap-1.5 px-3 text-sm" disabled={Boolean(working)} onclick={() => void install(card.id, card.label)}>
                             <ZIcon zType={icon(working ? 'lucideLoaderCircle' : 'lucideDownload')} class="size-3.5 {working ? 'animate-spin' : ''}" /> <ZTextMorph zText={working ? 'Installing…' : 'Install'} />
@@ -351,39 +341,22 @@
                               Cancel
                             </ZButton>
                           {/if}
-                          <ZButton zWave={false} zType={info?.logged_in || card.id === 'agy' ? 'outline' : 'default'} zSize="sm" class="h-8 gap-1.5 px-3 text-sm" disabled={waiting || Boolean(working)} onclick={() => void login(card.id, card.label)}>
+                          <ZButton zWave={false} zType="outline" zSize="sm" class="h-8 gap-1.5 px-3 text-sm" disabled={waiting || Boolean(working)} onclick={() => void login(card.id, card.label)}>
                             <ZIcon zType={icon(waiting ? 'lucideLoaderCircle' : 'lucideLogIn')} class="size-3.5 {waiting ? 'animate-spin' : ''}" />
                             <ZTextMorph zText={waiting ? 'Waiting for login…' : info?.logged_in ? 'Sign in again' : 'Sign in'} />
                           </ZButton>
+                          {#if native && info?.logged_in === true && !waiting}
+                            <ZButton zWave={false} zType="outline" zSize="sm" class="h-8 px-3 text-sm text-muted-foreground" disabled={Boolean(working)} onclick={() => void logoutNativeConnector(card.id as 'workbuddy' | 'muse-code')}>Sign out</ZButton>
+                          {/if}
                         </span>
                       {/if}
                     </div>
                   </div>
 
-                  {#if card.auth === 'api-key'}
-                    {@const apiId = card.id as ApiConnectorId}
-                    <div class="border-t border-border/70 px-4 py-3">
-                      <div class="mb-2 flex items-center gap-2">
-                        <h4 class="text-sm font-semibold tracking-wide text-muted-foreground uppercase">API key</h4>
-                        <a class="ml-auto text-[0.6875rem] text-primary hover:underline" href={card.keyUrl} target="_blank" rel="noreferrer">Get a key</a>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        <div class="min-w-0 flex-1">
-                          <SecretInput bind:value={apiKeyDraft[apiId]} kept={connectors.apiKeys[apiId] ?? ''} placeholder={API_CONNECTORS[apiId].keyEnv + '…'} />
-                        </div>
-                        <ZButton zWave={false} zSize="sm" class="h-9 shrink-0 px-3 text-sm" disabled={Boolean(apiKeyBusy[apiId]) || !apiKeyDraft[apiId]?.trim()} onclick={() => void saveApiKey(card)}>
-                          <ZIcon zType={icon(apiKeyBusy[apiId] ? 'lucideLoaderCircle' : 'lucideSave')} class="size-3.5 {apiKeyBusy[apiId] ? 'animate-spin' : ''}" />
-                          {apiKeyBusy[apiId] ? 'Saving…' : 'Save'}
-                        </ZButton>
-                      </div>
-                      <p class="mt-2 text-[0.6875rem] text-muted-foreground">The key stays in the system credential store and creates the matching provider for the model picker.</p>
-                    </div>
-                  {/if}
-
                   <div class="flex items-center gap-3 border-t border-border/70 px-4 py-2.5">
-                    <span class="min-w-0 flex-1 text-[0.75rem] text-muted-foreground">{card.auth === 'api-key' || card.id === 'opencode' || card.id === 'workbuddy' ? 'Automatic account switching is unavailable for this connector.' : 'Rotate to another saved account when quota or sign-in fails.'}</span>
-                    <span class="text-xs font-medium {card.auth === 'api-key' || card.id === 'opencode' ? 'text-muted-foreground' : ''}">Auto switch</span>
-                    <ZSwitch zVariant="dot" checked={card.auth !== 'api-key' && card.id !== 'opencode' && card.id !== 'workbuddy' && Boolean(connectors.autoSwitch[card.id])} zSize="sm" zDisabled={card.auth === 'api-key' || card.id === 'opencode' || card.id === 'workbuddy'} onChange={(value) => setConnectorAutoSwitch(card.id, value)} />
+                    <span class="min-w-0 flex-1 text-[0.75rem] text-muted-foreground">{card.id === 'opencode' || card.id === 'workbuddy' || card.id === 'muse-code' ? 'Automatic account switching is unavailable for this connector.' : 'Rotate to another saved account when quota or sign-in fails.'}</span>
+                    <span class="text-xs font-medium {card.id === 'opencode' ? 'text-muted-foreground' : ''}">Auto switch</span>
+                    <ZSwitch zVariant="dot" checked={card.id !== 'opencode' && card.id !== 'workbuddy' && card.id !== 'muse-code' && Boolean(connectors.autoSwitch[card.id])} zSize="sm" zDisabled={card.id === 'opencode' || card.id === 'workbuddy' || card.id === 'muse-code'} onChange={(value) => setConnectorAutoSwitch(card.id, value)} />
                   </div>
 
                   {#if working || log.length > 0 || connectors.errors[`install:${card.id}`] || connectors.errors[`login:${card.id}`] || connectors.errors[`add:${card.id}`]}
@@ -418,6 +391,10 @@
                           <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2.5 text-sm" disabled={!path} title="Open Antigravity to add another Google account" onclick={() => void login('agy', card.label)}>
                             <ZIcon zType={icon('lucideLogIn')} class="size-3.5" /> Add account
                           </ZButton>
+                          <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2.5 text-sm" disabled={Boolean(refreshingCard)} aria-label="Refresh all accounts for {card.label}" onclick={() => void refreshCardAccounts(card)}>
+                            <ZIcon zType={icon(refreshingCard === card.id ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3.5 {refreshingCard === card.id ? 'animate-spin' : ''}" />
+                            Refresh all accounts
+                          </ZButton>
                         {/if}
                       </div>
                       {#if !info?.logged_in || !info.email}
@@ -430,20 +407,31 @@
                           {#each connectors.accounts.agy as account (account.id)}
                             {@const quota = connectors.agyAccountQuotas.find((item) => item.id === account.id)}
                             {@const switching = Boolean(connectors.busy['switch:agy']?.endsWith(account.email))}
-                            <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-primary/50 bg-primary/5' : 'border-border'}">
+                            {@const authRequired = needsAgyLogin(account, quota?.error)}
+                            {@const accountRefreshing = refreshing === account.id}
+                            <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}">
                               <div class="flex items-center gap-2">
                                 <span class="min-w-0 flex-1 truncate text-sm font-medium" title={account.email}>{account.email}</span>
-                                {#if account.active}<span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">IN USE</span>{/if}
-                                {#if account.expired || quota?.error}
+                                {#if account.active}<span class="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">IN USE</span>{/if}
+                                {#if authRequired}
                                   <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0 text-destructive" aria-label="Sign in again {account.email}" title={account.status ?? quota?.error ?? 'Sign in again'} disabled={Boolean(connectors.busy['login:agy'])} onclick={() => void login('agy', card.label)}>
                                     <ZIcon zType={icon(connectors.busy['login:agy'] ? 'lucideLoaderCircle' : 'lucideLogIn')} class="size-3 {connectors.busy['login:agy'] ? 'animate-spin' : ''}" />
                                   </ZButton>
                                 {/if}
-                                {#if !account.active}
+                                {#if !account.active && !authRequired}
                                   <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Use {account.email}" title="Use this account" disabled={Boolean(connectors.busy['switch:agy'])} onclick={() => void switchAgyAccount(account)}>
                                     <ZIcon zType={icon(switching ? 'lucideLoaderCircle' : 'lucideArrowLeftRight')} class="size-3 {switching ? 'animate-spin' : ''}" />
                                   </ZButton>
                                 {/if}
+                                {#if !account.active}
+                                  {@const removing = Boolean(connectors.busy[`remove:agy:${account.id}`])}
+                                  <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0 text-muted-foreground hover:!border-destructive/60 hover:!bg-destructive/10 hover:!text-destructive" aria-label="Remove {account.email}" title="Remove account" disabled={removing} onclick={() => void removeAgyAccount(account)}>
+                                    <ZIcon zType={icon(removing ? 'lucideLoaderCircle' : 'lucideTrash2')} class="size-3 {removing ? 'animate-spin' : ''}" />
+                                  </ZButton>
+                                {/if}
+                                <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Refresh {account.email}" title="Refresh this account" disabled={Boolean(connectors.busy[`quota:agy:${account.id}`])} onclick={() => { refreshing = account.id; void refreshAgyAccount(account.id).finally(() => (refreshing = '')); }}>
+                                  <ZIcon zType={icon(accountRefreshing ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3 {accountRefreshing ? 'animate-spin' : ''}" />
+                                </ZButton>
                               </div>
                               {#if quota?.quota && quota.quota.groups.length > 0}
                                 <div class="mt-2.5 grid gap-2.5">
@@ -461,7 +449,7 @@
                                               <span class="text-muted-foreground">{window.label} window</span>
                                               <span class="tabular-nums {pct >= 90 ? 'font-medium text-destructive' : ''}">{Math.round(pct)}%</span>
                                             </div>
-                                            <div class="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin="0" aria-valuemax="100" aria-label="{account.email} {group.label} {window.label} usage">
+                                            <div class="h-1.5 overflow-hidden rounded-full bg-muted-foreground/25" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin="0" aria-valuemax="100" aria-label="{account.email} {group.label} {window.label} usage">
                                               <div class="h-full rounded-full transition-[width] duration-500 {barColor(pct)}" style:width="{pct}%"></div>
                                             </div>
                                             {#if countdown(window.resets_at, ticker.sec)}
@@ -474,28 +462,6 @@
                                   {/each}
                                 </div>
                                 {#if quota.quota.observed_at}<p class="mt-2 text-[0.6875rem] text-muted-foreground">{observedAgo(quota.quota.observed_at, ticker.min)}</p>{/if}
-                              {:else}
-                                <!-- No figures yet: the same bars, greyed and empty, so the card keeps its shape. -->
-                                <div class="mt-2.5 grid gap-2.5 opacity-50">
-                                  {#each ['Gemini models', 'Claude and GPT-OSS models'] as label (label)}
-                                    <div>
-                                      <div class="mb-1.5 flex items-center gap-1.5 text-[0.75rem] font-medium">
-                                        <span class="truncate">{label}</span>
-                                      </div>
-                                      <div class="grid gap-y-2">
-                                        {#each ['5h', '7d'] as window (window)}
-                                          <div>
-                                            <div class="mb-1 flex items-baseline justify-between gap-2 text-[0.6875rem]">
-                                              <span class="text-muted-foreground">{window} window</span>
-                                              <span class="tabular-nums text-muted-foreground">—</span>
-                                            </div>
-                                            <div class="h-1.5 overflow-hidden rounded-full bg-muted"></div>
-                                          </div>
-                                        {/each}
-                                      </div>
-                                    </div>
-                                  {/each}
-                                </div>
                               {/if}
                             </li>
                           {/each}
@@ -526,6 +492,10 @@
                             <ZIcon zType={icon(busyOf(`add:${provider}`) ? 'lucideX' : 'lucideUserPlus')} class="size-3.5" />
                             {busyOf(`add:${provider}`) ? 'Cancel' : 'Add account'}
                           </ZButton>
+                          <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2.5 text-sm" disabled={Boolean(refreshingCard)} aria-label="Refresh all accounts for {card.label}" onclick={() => void refreshCardAccounts(card)}>
+                            <ZIcon zType={icon(refreshingCard === card.id ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3.5 {refreshingCard === card.id ? 'animate-spin' : ''}" />
+                            Refresh all accounts
+                          </ZButton>
                         {/if}
                       </div>
 
@@ -551,34 +521,38 @@
                       {:else}
                         <ul class="grid gap-2 sm:grid-cols-2">
                           {#each list.accounts as account (account.id)}
-                            <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-primary/50 bg-primary/5' : 'border-border'}">
+                            {@const authRequired = needsLogin(account)}
+                            {@const accountRefreshing = refreshing === account.id}
+                            <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}">
                               <div class="flex items-center gap-2">
                                 <span class="min-w-0 flex-1">
                                   <span class="flex items-center gap-2">
                                     <span class="truncate text-sm font-medium">{account.alias ?? account.email}</span>
                                     {#if account.plan}<span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase {planClass(account.plan)}">{account.plan}</span>{/if}
-                                    {#if account.active}<span class="shrink-0 rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">IN USE</span>{/if}
+                                    {#if account.active}<span class="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">IN USE</span>{/if}
                                   </span>
                                   {#if account.alias}<span class="block truncate text-[0.75rem] text-muted-foreground">{account.email}</span>{/if}
                                 </span>
-                                {#if account.expired}
-                                  <ZButton zWave={false} zType="outline" zSize="sm" class="h-6 shrink-0 gap-1 px-2 text-[0.6875rem]" disabled={Boolean(working)} aria-label="Sign in again for {account.email}" onclick={() => void login(provider, card.label)}>
+                                {#if authRequired}
+                                  <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0 text-destructive hover:!border-destructive/60 hover:!bg-destructive/10 hover:!text-destructive" disabled={Boolean(working)} aria-label="Sign in again for {account.email}" title={connectors.busy[`login:${card.id}`] ? 'Waiting for sign-in' : 'Sign in again'} onclick={() => void login(provider, card.label)}>
                                     <ZIcon zType={icon(connectors.busy[`login:${card.id}`] ? 'lucideLoaderCircle' : 'lucideLogIn')} class="size-3 {connectors.busy[`login:${card.id}`] ? 'animate-spin' : ''}" />
-                                    {connectors.busy[`login:${card.id}`] ? 'Waiting…' : 'Sign in again'}
                                   </ZButton>
                                 {/if}
-                                {#if !account.active && !account.expired}
+                                {#if !account.active && !authRequired}
                                   {@const switching = Boolean(connectors.busy[`switch:${provider}`]?.endsWith(account.email))}
                                   <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Use {account.email}" title="Use this account" disabled={Boolean(busyOf(`switch:${provider}`))} onclick={() => void switchAccount(provider, account)}>
                                     <ZIcon zType={icon(switching ? 'lucideLoaderCircle' : 'lucideArrowLeftRight')} class="size-3 {switching ? 'animate-spin' : ''}" />
                                   </ZButton>
                                 {/if}
-                                {#if !account.active && provider === 'codex'}
+                                {#if !account.active}
                                   {@const removing = Boolean(connectors.busy[`remove:${provider}:${account.id}`])}
                                   <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0 text-muted-foreground hover:!border-destructive/60 hover:!bg-destructive/10 hover:!text-destructive" aria-label="Remove {account.email}" aria-busy={removing} title="Remove from the list" disabled={removing} onclick={() => void removeAccount(provider, account)}>
                                     <ZIcon zType={icon(removing ? 'lucideLoaderCircle' : 'lucideTrash2')} class="size-3 {removing ? 'animate-spin' : ''}" />
                                   </ZButton>
                                 {/if}
+                                <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Refresh {account.email}" title="Refresh this account" disabled={Boolean(busyOf(`accounts:${provider}`))} onclick={() => { refreshing = account.id; void refreshAccount(provider, account.id).finally(() => (refreshing = '')); }}>
+                                  <ZIcon zType={icon(accountRefreshing ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3 {accountRefreshing ? 'animate-spin' : ''}" />
+                                </ZButton>
                               </div>
                               {#if account.usage.length > 0}
                                 <div class="mt-2.5 grid gap-y-2.5">
@@ -589,7 +563,7 @@
                                         <span class="text-muted-foreground">{window.label} window</span>
                                         <span class="tabular-nums {pct >= 90 ? 'font-medium text-destructive' : ''}">{Math.round(pct)}%</span>
                                       </div>
-                                      <div class="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin="0" aria-valuemax="100" aria-label="{window.label} usage">
+                                      <div class="h-1.5 overflow-hidden rounded-full bg-muted-foreground/25" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin="0" aria-valuemax="100" aria-label="{window.label} usage">
                                         <div class="h-full rounded-full transition-[width] duration-500 {barColor(pct)}" style:width="{pct}%"></div>
                                       </div>
                                       {#if countdown(window.resets_at, ticker.sec)}
@@ -614,9 +588,6 @@
                                   <span class="min-w-0 flex-1 truncate text-muted-foreground">
                                     {#if resetBusy}Redeeming reset…{:else if resetCredits !== undefined}Available resets: <b class="text-foreground tabular-nums">{resetCredits}</b>{:else}Reset count unavailable{/if}
                                   </span>
-                                  <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Refresh usage" title="Reload usage and reset credits" disabled={Boolean(busyOf('accounts:codex'))} onclick={() => { refreshing = account.email; void refreshAccounts('codex', true).finally(() => (refreshing = '')); }}>
-                                    <ZIcon zType={icon('lucideRefreshCw')} class="size-3 {refreshing === account.email ? 'animate-spin' : ''}" />
-                                  </ZButton>
                                   <ZButton zWave={false} zType="outline" zSize="sm" class="h-6 shrink-0 gap-1 px-2 text-[0.6875rem] {resetBusy ? 'border-primary/40 text-primary' : ''}" aria-busy={resetBusy} disabled={resetCredits === undefined || resetCredits < 1 || resetBusy} onclick={() => (resetAsk = account.email)}>
                                     {#if resetBusy}<ZIcon zType={icon('lucideLoaderCircle')} class="size-3 animate-spin" />Resetting…{:else}Reset limit{/if}
                                   </ZButton>

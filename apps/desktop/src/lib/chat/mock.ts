@@ -177,7 +177,21 @@ messages.push(
         output: '[task t-demo1 · chat claude:demo-worker · Claude · Haiku 5.5 · done · 42s]\n\nSTATUS: done\nRESULT: 4 call sites, all read-only\nFILES: src/a.ts; src/b.ts; src/c.ts; src/d.ts\nOPEN: none',
         status: 'ok',
       },
-      { kind: 'command', id: 'c6', command: 'agentdeck.delegate_task  {"agent":"codex","task":"Review the diff of the last commit for bugs.","wait":false}', output: '', status: 'running' },
+      { kind: 'command', id: 'c6', command: 'agentdeck.delegate_task  {"agent":"codex","task":"Review the diff of the last commit for bugs.","wait":true}', output: '', status: 'running', task: { status: 'started', startedAt: Date.now() - 37_000 } },
+      {
+        kind: 'command',
+        id: 'c7',
+        command: 'agentdeck.delegate_task  {"agent":"antigravity","model":"gemini-4-argon","task":"Check the mobile layout for regressions."}',
+        output: '[task t-demo3 · chat antigravity:demo-mobile · Antigravity · Gemini 4 Argon · failed · 1m 08s]\n\nFailed: the worker could not finish the mobile check.',
+        status: 'fail',
+      },
+      {
+        kind: 'command',
+        id: 'c8',
+        command: 'agentdeck.delegate_task  {"agent":"claude","model":"haiku-5.5","task":"Stop the accessibility review."}',
+        output: '[task t-demo4 · chat claude:demo-a11y · Claude · Haiku 5.5 · stopped · 18s]\n\nStopped: the user stopped this task.',
+        status: 'ok',
+      },
       { kind: 'permission', state: 'pending', requests: [{ id: 'p1', tool: 'Bash', summary: 'git push origin main', allow: 'Bash(git push origin main)' }] },
       {
         kind: 'response',

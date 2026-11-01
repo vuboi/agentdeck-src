@@ -5,6 +5,11 @@
 @import 'tailwindcss/utilities.css' layer(utilities);
 @import '@shival99/z-ui-svelte/styles.css';
 
+html,
+body {
+  background-color: var(--background);
+}
+
 /* ZChatNavigator's preview reserves an empty question row when a turn has no title. */
 .z-popover-host[role='tooltip']:not(.z-tooltip-host) > div:first-child:empty {
   display: none;
@@ -583,3 +588,13 @@ body {
 
 /* Theme swap (theme.svelte.ts): nothing eases between the old and new colours, so the window flips in one frame. */
 .theme-switching *, .theme-switching *::before, .theme-switching *::after { transition: none !important; }
+
+/* The finished chat label blinks with the dot so the completion is visible in the text too. */
+.row-done-blink { animation: row-done-blink 1.4s ease-in-out 3; }
+@keyframes row-done-blink {
+  0%, 100% { color: var(--primary); }
+  50% { color: var(--foreground); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-done-blink { animation: none; color: var(--primary); }
+}

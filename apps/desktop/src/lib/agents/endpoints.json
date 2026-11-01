@@ -17,7 +17,30 @@
     "resetCreditsConsume": "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume"
   },
   "antigravity": {
-    "quota": "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+    "quota": "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+    "quotaFallbacks": [
+      "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+      "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary"
+    ]
+  },
+  "providerQuota": {
+    "deepseekBalance": "https://api.deepseek.com/user/balance",
+    "moonshotBalance": "https://api.moonshot.ai/v1/users/me/balance",
+    "moonshotBalanceCn": "https://api.moonshot.cn/v1/users/me/balance",
+    "zaiQuota": "https://api.z.ai/api/monitor/usage/quota/limit",
+    "zaiQuotaCn": "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+    "zaiSubscription": "https://api.z.ai/api/biz/subscription/list",
+    "miniMaxUsage": "https://api.minimax.io/v1/token_plan/remains",
+    "miniMaxUsageFallback": "https://api.minimax.io/v1/api/openplatform/coding_plan/remains",
+    "miniMaxUsageCn": "https://api.minimaxi.com/v1/token_plan/remains",
+    "miniMaxUsageCnFallback": "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains",
+    "commandCodeBase": "https://api.commandcode.ai",
+    "commandCodeWhoami": "https://api.commandcode.ai/alpha/whoami",
+    "commandCodeCredits": "https://api.commandcode.ai/alpha/billing/credits",
+    "commandCodeSubscriptions": "https://api.commandcode.ai/alpha/billing/subscriptions",
+    "commandCodeSummary": "https://api.commandcode.ai/alpha/usage/summary",
+    "cloudflareAnalytics": "https://api.cloudflare.com/client/v4/graphql",
+    "opencodeGoUsage": "https://opencode.ai/zen/go/v1/usage"
   },
   "web": {
     "search": "https://search.brave.com/search",

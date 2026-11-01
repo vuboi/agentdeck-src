@@ -1,17 +1,17 @@
-use std::path::{Path, PathBuf};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 mod agent_runs;
-mod awake;
 mod answers;
+mod awake;
 mod bridge;
-mod caller;
-mod channel;
 mod browser;
 mod browser_extensions;
+mod caller;
 mod cdp;
 mod changes;
+mod channel;
 mod computer;
 mod connectors;
 mod copilot;
@@ -28,26 +28,28 @@ mod image_gen;
 mod image_history;
 mod index;
 mod mcp;
-mod opencode_serve;
 mod mcp_client;
 mod mcp_manage;
 mod mcp_providers;
 mod notify;
-mod page_memory;
-mod picture_store;
-mod path_links;
+mod model_prices;
 mod officecli;
+mod opencode_serve;
+mod page_memory;
+mod path_links;
+mod picture_store;
+mod privacy;
 mod process_guard;
 mod process_registry;
+mod project_activity;
 mod project_memory;
 mod providers;
-mod tts;
-mod voice;
-mod privacy;
 mod pty;
 mod servers;
 mod slash_commands;
 mod store;
+mod tts;
+mod voice;
 
 use ag_adapters::agent::antigravity::Antigravity;
 use ag_adapters::agent::opencode::OpenCode;
@@ -55,6 +57,17 @@ use ag_adapters::agent::runner::resolve_binary;
 use ag_adapters::history::{self, HistoryMessage, HistoryPage, HistorySession, Roots, Source};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+
+/// When the last close-to-tray was handled (ms since the epoch). A burst of close requests — a stuck X, key
+/// repeat or something re-posting close — is still kept from closing the app, but only the first of a burst
+/// runs the hide and writes the log, so one press cannot flood the log or hide/show race itself.
+static LAST_CLOSE_TO_TRAY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() as u64)
+}
 
 #[derive(Default)]
 struct TrayState {
@@ -132,6 +145,160 @@ fn tray_update_recent(app: AppHandle, sessions: Vec<TrayRecentSession>) -> Resul
     Ok(())
 }
 
+/// Hides the main window to the tray and says in the log whether it really went away.
+///
+/// `Window::hide()` used to be called with its result dropped (`let _ =`), so a failure was invisible: the
+/// close was prevented, the window stayed on screen and pressing X again only repeated the same silent
+/// failure. Now a failed (or ineffective) Tauri hide falls back to `ShowWindow(SW_HIDE)` on the window's own
+/// handle — the Preview's child webviews are separate handles, so hiding the parent is all it takes — and the
+/// outcome (`hidden` / `hide failed: …`) is always logged, with `is_visible` checked after each attempt.
+fn hide_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        flow_log::note("rust", "-", "window", "hide failed: no main window");
+        return;
+    };
+    match window.hide() {
+        Ok(()) => match window.is_visible() {
+            Ok(false) => {
+                flow_log::note("rust", "-", "window", "hidden to the tray");
+                return;
+            }
+            Ok(true) => flow_log::note(
+                "rust",
+                "-",
+                "window",
+                "hide reported success but the window is still visible; using the Win32 fallback",
+            ),
+            Err(error) => flow_log::note(
+                "rust",
+                "-",
+                "window",
+                &format!("cannot check visibility after hide: {error}; using the Win32 fallback"),
+            ),
+        },
+        Err(error) => flow_log::note(
+            "rust",
+            "-",
+            "window",
+            &format!("hide failed: {error}; using the Win32 fallback"),
+        ),
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+        match window.hwnd() {
+            // SAFETY: a plain visibility call on the app's own window handle.
+            Ok(handle) => unsafe {
+                let _ = ShowWindow(HWND(handle.0 as *mut _), SW_HIDE);
+            },
+            Err(error) => {
+                flow_log::note(
+                    "rust",
+                    "-",
+                    "window",
+                    &format!("hide failed: no window handle: {error}"),
+                );
+                return;
+            }
+        }
+        match window.is_visible() {
+            Ok(false) => {
+                flow_log::note("rust", "-", "window", "hidden to the tray (Win32 fallback)")
+            }
+            Ok(true) => flow_log::note(
+                "rust",
+                "-",
+                "window",
+                "hide failed: the window is still visible after the Win32 fallback",
+            ),
+            Err(error) => flow_log::note(
+                "rust",
+                "-",
+                "window",
+                &format!("hide failed: cannot check visibility: {error}"),
+            ),
+        }
+    }
+    #[cfg(not(windows))]
+    flow_log::note(
+        "rust",
+        "-",
+        "window",
+        "hide failed: the window is still visible",
+    );
+}
+
+/// Shows the main window again (tray click, tray menu, second launch) and logs whether it really came back.
+/// Same rule as `hide_main_window`: no dropped results, visibility checked, and a Win32 fallback so a window
+/// hidden by the fallback can always be brought back by it too.
+fn show_main_window(app: &AppHandle, source: &str) {
+    // A close right after showing is a new press, not part of the burst before it.
+    LAST_CLOSE_TO_TRAY_MS.store(0, std::sync::atomic::Ordering::Relaxed);
+    let Some(window) = app.get_webview_window("main") else {
+        flow_log::note("rust", "-", "window", "show failed: no main window");
+        return;
+    };
+    let mut problems: Vec<String> = Vec::new();
+    if let Err(error) = window.show() {
+        problems.push(format!("show: {error}"));
+    }
+    if let Err(error) = window.unminimize() {
+        problems.push(format!("unminimize: {error}"));
+    }
+    if !matches!(window.is_visible(), Ok(true)) {
+        #[cfg(windows)]
+        {
+            use windows::Win32::Foundation::HWND;
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetForegroundWindow, ShowWindow, SW_SHOW,
+            };
+            if let Ok(handle) = window.hwnd() {
+                let handle = HWND(handle.0 as *mut _);
+                // SAFETY: plain visibility and focus calls on the app's own window handle.
+                unsafe {
+                    let _ = ShowWindow(handle, SW_SHOW);
+                    let _ = SetForegroundWindow(handle);
+                }
+            } else {
+                problems.push("no window handle for the Win32 fallback".to_string());
+            }
+        }
+    }
+    if let Err(error) = window.set_focus() {
+        problems.push(format!("focus: {error}"));
+    }
+    match window.is_visible() {
+        Ok(true) if problems.is_empty() => {
+            flow_log::note("rust", "-", "window", &format!("shown ({source})"));
+        }
+        Ok(true) => flow_log::note(
+            "rust",
+            "-",
+            "window",
+            &format!("shown ({source}) with problems: {}", problems.join("; ")),
+        ),
+        Ok(false) => flow_log::note(
+            "rust",
+            "-",
+            "window",
+            &format!(
+                "show failed ({source}): the window is still hidden; {}",
+                problems.join("; ")
+            ),
+        ),
+        Err(error) => flow_log::note(
+            "rust",
+            "-",
+            "window",
+            &format!(
+                "show failed ({source}): cannot check visibility: {error}; {}",
+                problems.join("; ")
+            ),
+        ),
+    }
+}
+
 fn roots() -> Result<Roots, String> {
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -147,7 +314,10 @@ async fn attachment_save(mime: String, data: String) -> Result<String, String> {
     use base64::Engine;
     const MAX_BYTES: usize = 15 * 1024 * 1024;
     tauri::async_runtime::spawn_blocking(move || {
-        if !matches!(mime.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp") {
+        if !matches!(
+            mime.as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+        ) {
             return Err(format!("{mime} is not a supported image type"));
         }
         let bytes = base64::engine::general_purpose::STANDARD
@@ -172,7 +342,9 @@ pub(crate) async fn save_attachment_bytes(mime: &str, bytes: Vec<u8>) -> Result<
 
 fn write_attachment(mime: &str, bytes: Vec<u8>) -> Result<String, String> {
     let (extension, bytes) = picture_store::stored_picture(mime, bytes);
-    let folder = home_folder()?.join(crate::channel::home_folder_name()).join("attachments");
+    let folder = home_folder()?
+        .join(crate::channel::home_folder_name())
+        .join("attachments");
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -207,7 +379,9 @@ async fn attachment_save_file(name: String, data: String) -> Result<String, Stri
             .collect();
         let safe = safe.trim_matches(|c: char| c == '.' || c == ' ');
         let safe = if safe.is_empty() { "file" } else { safe };
-        let folder = home_folder()?.join(crate::channel::home_folder_name()).join("attachments");
+        let folder = home_folder()?
+            .join(crate::channel::home_folder_name())
+            .join("attachments");
         std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -222,23 +396,45 @@ async fn attachment_save_file(name: String, data: String) -> Result<String, Stri
 
 /// Saves a self-contained visual guide through the native Save As dialog.
 #[tauri::command]
-async fn browser_save_guide(app: AppHandle, title: String, html: String) -> Result<Option<String>, String> {
+async fn browser_save_guide(
+    app: AppHandle,
+    title: String,
+    html: String,
+) -> Result<Option<String>, String> {
     const MAX_BYTES: usize = 120 * 1024 * 1024;
     if html.len() > MAX_BYTES {
-        return Err("The guide is larger than 120 MB. Remove some video or screenshots and try again.".into());
+        return Err(
+            "The guide is larger than 120 MB. Remove some video or screenshots and try again."
+                .into(),
+        );
     }
     tauri::async_runtime::spawn_blocking(move || {
         use tauri_plugin_dialog::DialogExt;
 
         let mut name: String = title
             .chars()
-            .map(|character| if character.is_alphanumeric() || matches!(character, ' ' | '-' | '_') { character } else { '_' })
+            .map(|character| {
+                if character.is_alphanumeric() || matches!(character, ' ' | '-' | '_') {
+                    character
+                } else {
+                    '_'
+                }
+            })
             .collect();
         name = name.trim().trim_matches('.').to_owned();
-        if name.is_empty() { name = "user-guide".into(); }
+        if name.is_empty() {
+            name = "user-guide".into();
+        }
         name.push_str(".html");
-        let destination = app.dialog().file().set_title("Save visual guide").set_file_name(name).blocking_save_file();
-        let Some(destination) = destination else { return Ok(None); };
+        let destination = app
+            .dialog()
+            .file()
+            .set_title("Save visual guide")
+            .set_file_name(name)
+            .blocking_save_file();
+        let Some(destination) = destination else {
+            return Ok(None);
+        };
         let destination = destination.into_path().map_err(|error| error.to_string())?;
         std::fs::write(&destination, html).map_err(|error| error.to_string())?;
         Ok(Some(destination.display().to_string()))
@@ -263,7 +459,9 @@ async fn browser_save_recording(
             .map_err(|error| error.to_string())?;
         let relative = Path::new(&relative_path);
         if relative.is_absolute()
-            || relative.components().any(|component| !matches!(component, std::path::Component::Normal(_)))
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
             || relative.extension() != Some(std::ffi::OsStr::new("webm"))
         {
             return Err("recording path must be a relative .webm file inside the project".into());
@@ -284,7 +482,9 @@ async fn browser_save_recording(
             return Err("recording exceeds the 500 MB size limit".into());
         }
 
-        let file_name = relative.file_name().ok_or("recording filename is missing")?;
+        let file_name = relative
+            .file_name()
+            .ok_or("recording filename is missing")?;
         if relative != Path::new("docs").join("user-guides").join(file_name) {
             return Err("recordings must be saved under docs/user-guides".into());
         }
@@ -321,7 +521,9 @@ async fn browser_save_recording(
             output.set_file_name(format!("{stem}-{stamp}.webm"));
         }
         let temp = output.with_extension("webm.agentdeck-tmp");
-        if let Err(error) = std::fs::write(&temp, bytes).and_then(|()| std::fs::rename(&temp, &output)) {
+        if let Err(error) =
+            std::fs::write(&temp, bytes).and_then(|()| std::fs::rename(&temp, &output))
+        {
             let _ = std::fs::remove_file(&temp);
             return Err(error.to_string());
         }
@@ -544,7 +746,9 @@ pub(crate) fn home_folder() -> Result<PathBuf, String> {
 
 /// The Audit log: `~/.agentdeck/audit.jsonl`, one JSON line per finished tool call or chat error.
 fn audit_file() -> Result<PathBuf, String> {
-    Ok(home_folder()?.join(crate::channel::home_folder_name()).join("audit.jsonl"))
+    Ok(home_folder()?
+        .join(crate::channel::home_folder_name())
+        .join("audit.jsonl"))
 }
 
 /// Per-day line counts of the Audit log, kept beside it so a count does not read the whole file.
@@ -564,10 +768,20 @@ struct AuditIndex {
 }
 
 /// Counts one entry (its JSON line) into its day: every call, and the failed ones apart.
-fn count_audit_line(days: &mut std::collections::BTreeMap<i64, AuditDay>, line: &str, offset_min: i64) {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else { return };
-    let Some(started) = value.get("startedAt").and_then(serde_json::Value::as_f64) else { return };
-    let day = days.entry(audit_day(started, offset_min as f64)).or_default();
+fn count_audit_line(
+    days: &mut std::collections::BTreeMap<i64, AuditDay>,
+    line: &str,
+    offset_min: i64,
+) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    let Some(started) = value.get("startedAt").and_then(serde_json::Value::as_f64) else {
+        return;
+    };
+    let day = days
+        .entry(audit_day(started, offset_min as f64))
+        .or_default();
     day.total += 1;
     if value.get("status").and_then(serde_json::Value::as_str) == Some("fail") {
         day.failed += 1;
@@ -582,14 +796,18 @@ fn audit_day(started: f64, offset_min: f64) -> i64 {
 }
 
 fn audit_index_file() -> Result<PathBuf, String> {
-    Ok(home_folder()?.join(crate::channel::home_folder_name()).join("audit.index.json"))
+    Ok(home_folder()?
+        .join(crate::channel::home_folder_name())
+        .join("audit.index.json"))
 }
 
 /// Serialises every change to the index: appends, counts and rebuilds all read and write it.
 static AUDIT_INDEX_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn audit_index_lock() -> std::sync::MutexGuard<'static, ()> {
-    AUDIT_INDEX_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    AUDIT_INDEX_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn read_audit_index() -> Option<AuditIndex> {
@@ -610,14 +828,25 @@ fn audit_index_now(offset_min: i64) -> Result<AuditIndex, String> {
     let path = audit_file()?;
     let length = match std::fs::metadata(&path) {
         Ok(metadata) => metadata.len(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(AuditIndex { offset_min, ..Default::default() }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(AuditIndex {
+                offset_min,
+                ..Default::default()
+            })
+        }
         Err(error) => return Err(error.to_string()),
     };
-    if let Some(index) = read_audit_index().filter(|index| index.length == length && index.offset_min == offset_min) {
+    if let Some(index) =
+        read_audit_index().filter(|index| index.length == length && index.offset_min == offset_min)
+    {
         return Ok(index);
     }
     let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    let mut index = AuditIndex { length: text.len() as u64, offset_min, days: Default::default() };
+    let mut index = AuditIndex {
+        length: text.len() as u64,
+        offset_min,
+        days: Default::default(),
+    };
     for line in text.lines() {
         count_audit_line(&mut index.days, line, offset_min);
     }
@@ -632,7 +861,9 @@ fn audit_append(line: String, offset_min: i64) -> Result<(), String> {
     let path = audit_file()?;
     std::fs::create_dir_all(path.parent().ok_or("no folder for the audit log")?)
         .map_err(|error| error.to_string())?;
-    let before = std::fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+    let before = std::fs::metadata(&path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -640,9 +871,13 @@ fn audit_append(line: String, offset_min: i64) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     writeln!(file, "{line}").map_err(|error| error.to_string())?;
     // The index follows the append only while it was up to date before it; otherwise the next count rebuilds it.
-    if let Some(mut index) = read_audit_index().filter(|index| index.length == before && index.offset_min == offset_min) {
+    if let Some(mut index) =
+        read_audit_index().filter(|index| index.length == before && index.offset_min == offset_min)
+    {
         count_audit_line(&mut index.days, &line, offset_min);
-        index.length = std::fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+        index.length = std::fs::metadata(&path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
         save_audit_index(&index)?;
     }
     Ok(())
@@ -692,16 +927,22 @@ async fn audit_read(cursor: Option<u64>, limit: usize) -> Result<AuditPage, Stri
         let mut file = match std::fs::File::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(AuditPage { entries: Vec::new(), cursor: None, has_more: false });
+                return Ok(AuditPage {
+                    entries: Vec::new(),
+                    cursor: None,
+                    has_more: false,
+                });
             }
             Err(error) => return Err(error.to_string()),
         };
         let length = file.metadata().map_err(|error| error.to_string())?.len();
         let mut end = cursor.unwrap_or(length).min(length);
         if end > 0 {
-            file.seek(SeekFrom::Start(end - 1)).map_err(|error| error.to_string())?;
+            file.seek(SeekFrom::Start(end - 1))
+                .map_err(|error| error.to_string())?;
             let mut last = [0];
-            file.read_exact(&mut last).map_err(|error| error.to_string())?;
+            file.read_exact(&mut last)
+                .map_err(|error| error.to_string())?;
             if last[0] == b'\n' {
                 end -= 1;
             }
@@ -710,12 +951,15 @@ async fn audit_read(cursor: Option<u64>, limit: usize) -> Result<AuditPage, Stri
         let page_size = limit.clamp(1, 100);
         let mut entries = Vec::with_capacity(page_size + 1);
         while end > 0 && entries.len() <= page_size {
-            let separator = audit_previous_newline(&mut file, end).map_err(|error| error.to_string())?;
+            let separator =
+                audit_previous_newline(&mut file, end).map_err(|error| error.to_string())?;
             let start = separator.map_or(0, |offset| offset + 1);
             if start < end {
                 let mut bytes = vec![0; (end - start) as usize];
-                file.seek(SeekFrom::Start(start)).map_err(|error| error.to_string())?;
-                file.read_exact(&mut bytes).map_err(|error| error.to_string())?;
+                file.seek(SeekFrom::Start(start))
+                    .map_err(|error| error.to_string())?;
+                file.read_exact(&mut bytes)
+                    .map_err(|error| error.to_string())?;
                 if !bytes.iter().all(u8::is_ascii_whitespace)
                     && serde_json::from_slice::<serde_json::Value>(&bytes).is_ok()
                 {
@@ -732,8 +976,14 @@ async fn audit_read(cursor: Option<u64>, limit: usize) -> Result<AuditPage, Stri
         let has_more = entries.len() > page_size;
         entries.truncate(page_size);
         entries.reverse();
-        let cursor = has_more.then(|| entries.first().map(|entry| entry.offset)).flatten();
-        Ok(AuditPage { entries, cursor, has_more })
+        let cursor = has_more
+            .then(|| entries.first().map(|entry| entry.offset))
+            .flatten();
+        Ok(AuditPage {
+            entries,
+            cursor,
+            has_more,
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -757,7 +1007,11 @@ async fn audit_days(offset_min: i64) -> Result<Vec<AuditDayCount>, String> {
         Ok(index
             .days
             .into_iter()
-            .map(|(day, count)| AuditDayCount { day, total: count.total, failed: count.failed })
+            .map(|(day, count)| AuditDayCount {
+                day,
+                total: count.total,
+                failed: count.failed,
+            })
             .collect())
     })
     .await
@@ -836,7 +1090,9 @@ fn audit_clear() -> Result<(), String> {
 /// Pictures a tool call returned (a screenshot of the page): `~/.agentdeck/audit-images`, one file each. The log
 /// line keeps the file's name, not the picture, so the log stays small.
 fn audit_images() -> Result<PathBuf, String> {
-    Ok(home_folder()?.join(crate::channel::home_folder_name()).join("audit-images"))
+    Ok(home_folder()?
+        .join(crate::channel::home_folder_name())
+        .join("audit-images"))
 }
 
 /// Saves a picture given as a data URL (`data:image/png;base64,…`). Returns the file's name.
@@ -849,7 +1105,10 @@ async fn audit_image_save(image: String) -> Result<String, String> {
             .strip_prefix("data:")
             .and_then(|rest| rest.strip_suffix(";base64"))
             .ok_or_else(|| format!("{head} is not a supported picture"))?;
-        if !matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp") {
+        if !matches!(
+            mime,
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+        ) {
             return Err(format!("{mime} is not a supported picture"));
         }
         let bytes = base64::engine::general_purpose::STANDARD
@@ -966,7 +1225,11 @@ fn run_file(root: Option<String>, run: &str, name: &str) -> Result<PathBuf, Stri
         Some(root) if !root.is_empty() => PathBuf::from(root),
         _ => home_folder()?,
     };
-    Ok(base.join(crate::channel::home_folder_name()).join("runs").join(run).join(name))
+    Ok(base
+        .join(crate::channel::home_folder_name())
+        .join("runs")
+        .join(run)
+        .join(name))
 }
 
 /// Writes one file of a run's notes and returns its full path. The runs folder ignores itself in git.
@@ -1050,9 +1313,9 @@ async fn folder_list(root: String, path: String) -> Result<Vec<FolderEntry>, Str
                 let has_children = if dir {
                     std::fs::read_dir(entry.path())
                         .map(|children| {
-                            children.filter_map(Result::ok).any(|child| {
-                                child.file_name().to_string_lossy() != ".git"
-                            })
+                            children
+                                .filter_map(Result::ok)
+                                .any(|child| child.file_name().to_string_lossy() != ".git")
                         })
                         .unwrap_or(true)
                 } else {
@@ -1240,9 +1503,7 @@ async fn file_pick_app(app: AppHandle, path: String) -> Result<Option<String>, S
     .map_err(|error| error.to_string())?;
     match picked {
         Some(picked) => {
-            let app_path = picked
-                .into_path()
-                .map_err(|error| error.to_string())?;
+            let app_path = picked.into_path().map_err(|error| error.to_string())?;
             if !app_path.is_file() {
                 return Err("application path is not a file".to_string());
             }
@@ -1332,18 +1593,25 @@ fn macos_app_icon(label: &str) -> Option<String> {
         .filter(|path| {
             path.extension()
                 .and_then(|value| value.to_str())
-                .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "icns" | "png"))
+                .is_some_and(|extension| {
+                    matches!(extension.to_ascii_lowercase().as_str(), "icns" | "png")
+                })
         })
         .collect::<Vec<_>>();
     candidates.sort_by_key(|path| {
-        let name = path.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase();
         (!name.contains("appicon"), !name.contains("icon"), name)
     });
     let source = candidates.into_iter().next()?;
     if source.extension().and_then(|value| value.to_str()) == Some("png") {
         return image_data_url(&source);
     }
-    let output = std::env::temp_dir().join(format!("agentdeck-app-icon-{}.png", uuid::Uuid::new_v4()));
+    let output =
+        std::env::temp_dir().join(format!("agentdeck-app-icon-{}.png", uuid::Uuid::new_v4()));
     let result = std::process::Command::new("sips")
         .args(["-s", "format", "png"])
         .arg(&source)
@@ -1384,7 +1652,11 @@ fn linux_app_icon(app_id: &str) -> Option<String> {
     );
     let desktop = data_dirs
         .iter()
-        .flat_map(|root| desktop_ids.iter().map(move |id| root.join(format!("applications/{id}.desktop"))))
+        .flat_map(|root| {
+            desktop_ids
+                .iter()
+                .map(move |id| root.join(format!("applications/{id}.desktop")))
+        })
         .find(|path| path.is_file())?;
     let contents = std::fs::read_to_string(desktop).ok()?;
     let icon = contents
@@ -1394,10 +1666,24 @@ fn linux_app_icon(app_id: &str) -> Option<String> {
     if icon_path.is_absolute() {
         return image_data_url(icon_path);
     }
-    let names = [format!("{icon}.png"), format!("{icon}.svg"), format!("{icon}.jpg")];
+    let names = [
+        format!("{icon}.png"),
+        format!("{icon}.svg"),
+        format!("{icon}.jpg"),
+    ];
     for root in &data_dirs {
         for name in &names {
-            for size in ["scalable/apps", "256x256/apps", "128x128/apps", "96x96/apps", "64x64/apps", "48x48/apps", "32x32/apps", "24x24/apps", "16x16/apps"] {
+            for size in [
+                "scalable/apps",
+                "256x256/apps",
+                "128x128/apps",
+                "96x96/apps",
+                "64x64/apps",
+                "48x48/apps",
+                "32x32/apps",
+                "24x24/apps",
+                "16x16/apps",
+            ] {
                 let candidate = root.join("icons/hicolor").join(size).join(name);
                 if candidate.is_file() {
                     return image_data_url(&candidate);
@@ -1441,7 +1727,10 @@ struct SavedFileOpenApp {
 }
 
 fn file_open_apps_config(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|dir| dir.join("open-with.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|dir| dir.join("open-with.json"))
 }
 
 fn saved_file_open_apps(app: &AppHandle) -> std::collections::HashMap<String, SavedFileOpenApp> {
@@ -1534,9 +1823,18 @@ fn file_open_options_sync(app: AppHandle, path: String) -> Result<Vec<FileOpenOp
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico"
     );
     let pdf = extension == "pdf";
-    let word = matches!(extension.as_str(), "doc" | "docx" | "docm" | "dot" | "dotx" | "rtf");
-    let excel = matches!(extension.as_str(), "xls" | "xlsx" | "xlsm" | "xlsb" | "xltx");
-    let powerpoint = matches!(extension.as_str(), "ppt" | "pptx" | "pptm" | "ppsx" | "potx");
+    let word = matches!(
+        extension.as_str(),
+        "doc" | "docx" | "docm" | "dot" | "dotx" | "rtf"
+    );
+    let excel = matches!(
+        extension.as_str(),
+        "xls" | "xlsx" | "xlsm" | "xlsb" | "xltx"
+    );
+    let powerpoint = matches!(
+        extension.as_str(),
+        "ppt" | "pptx" | "pptm" | "ppsx" | "potx"
+    );
     let mut options = Vec::new();
     if let Some(saved) = saved_file_open_apps(&app).get(&extension) {
         if Path::new(&saved.path).is_file() {
@@ -1928,7 +2226,11 @@ async fn file_save_as(
 /// Saves an edited screenshot (a PNG, base64 without a prefix) where the user picks, with the native Save As dialog.
 /// Answers the chosen path, or `None` when the dialog was cancelled.
 #[tauri::command]
-async fn image_save_as(app: AppHandle, name: String, data: String) -> Result<Option<String>, String> {
+async fn image_save_as(
+    app: AppHandle,
+    name: String,
+    data: String,
+) -> Result<Option<String>, String> {
     use base64::Engine;
     use tauri_plugin_dialog::DialogExt;
     const MAX_BYTES: usize = 100 * 1024 * 1024;
@@ -1992,7 +2294,11 @@ async fn file_copy_as(app: AppHandle, path: String) -> Result<Option<String>, St
 /// Saves an export of AgentDeck's settings (JSON text) where the user picks, with the native Save As dialog.
 /// Answers the chosen path, or `None` when the dialog was cancelled.
 #[tauri::command]
-async fn settings_export(app: AppHandle, name: String, text: String) -> Result<Option<String>, String> {
+async fn settings_export(
+    app: AppHandle,
+    name: String,
+    text: String,
+) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     tauri::async_runtime::spawn_blocking(move || {
         let destination = app
@@ -2063,11 +2369,15 @@ async fn settings_import(app: AppHandle) -> Result<Option<String>, String> {
             return Ok(None);
         };
         let source = source.into_path().map_err(|error| error.to_string())?;
-        let size = std::fs::metadata(&source).map_err(|error| error.to_string())?.len();
+        let size = std::fs::metadata(&source)
+            .map_err(|error| error.to_string())?
+            .len();
         if size > MAX_BYTES {
             return Err("the file is larger than 50 MB: it is not an AgentDeck export".to_string());
         }
-        std::fs::read_to_string(&source).map(Some).map_err(|error| error.to_string())
+        std::fs::read_to_string(&source)
+            .map(Some)
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2126,12 +2436,7 @@ async fn file_read_bytes(root: String, path: String) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            flow_log::note("rust", "-", "window", "shown by a second launch");
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            show_main_window(app, "second launch");
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2200,19 +2505,11 @@ pub fn run() {
                     if id == "exit" {
                         app.exit(0);
                     } else if id == "new-chat" {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(app, "tray menu: new chat");
                         let _ =
                             app.emit("tray-action", serde_json::json!({ "action": "new-chat" }));
                     } else if let Some(session_id) = id.strip_prefix("recent:") {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
+                        show_main_window(app, "tray menu: recent chat");
                         let _ = app.emit(
                         "tray-action",
                         serde_json::json!({ "action": "open-session", "sessionId": session_id }),
@@ -2230,12 +2527,7 @@ pub fn run() {
                         if button_state == tauri::tray::MouseButtonState::Up
                             && button == tauri::tray::MouseButton::Left
                         {
-                            flow_log::note("rust", "-", "window", "shown from the tray (left click)");
-                            if let Some(window) = tray.app_handle().get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.unminimize();
-                                let _ = window.set_focus();
-                            }
+                            show_main_window(tray.app_handle(), "tray left click");
                         }
                     }
                 })
@@ -2339,12 +2631,16 @@ pub fn run() {
             connectors::antigravity_accounts_list,
             connectors::antigravity_account_adopt,
             connectors::antigravity_account_switch,
+            connectors::antigravity_account_remove,
             connectors::account_adopt,
             connectors::account_remove,
             connectors::codex_auto_switch,
             connectors::provider_probe,
             connectors::provider_quota,
+            connectors::opencode_quota,
             connectors::workbuddy_models,
+            connectors::muse_code_models,
+            connectors::connector_logout,
             connectors::claude_console_credit,
             notify::system_notify,
             error_log::error_log_append,
@@ -2357,6 +2653,7 @@ pub fn run() {
             flow_log::debug_bundle_save,
             flow_log::debug_log_path,
             connectors::local_scan,
+            model_prices::model_price_catalog,
             audit_append,
             audit_read,
             audit_days,
@@ -2382,6 +2679,8 @@ pub fn run() {
             project_memory::project_memory_write,
             project_memory::project_proposals_read,
             project_memory::project_proposals_write,
+            project_activity::project_activity_read,
+            project_activity::project_activity_append,
             file_open_options,
             file_open_with,
             file_save_as,
@@ -2464,8 +2763,8 @@ pub fn run() {
             browser::browser_close,
             browser::browser_capture,
             browser::browser_element_capture,
-        browser::browser_capture_file,
-        browser::browser_element_capture_file,
+            browser::browser_capture_file,
+            browser::browser_element_capture_file,
             browser::browser_press,
             browser::open_external,
             browser::browser_favicon,
@@ -2491,10 +2790,23 @@ pub fn run() {
                 // Close keeps the app running in the background, like the Claude app: the window hides, so it leaves the
                 // taskbar and only the tray icon remains. The tray icon (left click) or a second launch shows it again.
                 api.prevent_close();
-                flow_log::note("rust", "-", "window", "close requested: hiding to the tray");
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
+                // A burst of close requests in under a second (see the log of 2026-10-31: ~50 in 12 s) is one press:
+                // the app stays un-closed, but the hide and its log line run only for the first of the burst.
+                let now = now_ms();
+                let last = LAST_CLOSE_TO_TRAY_MS.load(std::sync::atomic::Ordering::Relaxed);
+                if now.saturating_sub(last) < 1000 {
+                    // Already handled for this press — unless the window is somehow back on screen, where a
+                    // fresh close must hide it again rather than be swallowed.
+                    let visible = app
+                        .get_webview_window("main")
+                        .is_some_and(|window| !matches!(window.is_visible(), Ok(false)));
+                    if !visible {
+                        return;
+                    }
                 }
+                LAST_CLOSE_TO_TRAY_MS.store(now, std::sync::atomic::Ordering::Relaxed);
+                flow_log::note("rust", "-", "window", "close requested: hiding to the tray");
+                hide_main_window(app);
             }
             // Focus changes show whether the window is on screen again after a close (a hidden window gets no focus).
             tauri::RunEvent::WindowEvent {
@@ -2502,7 +2814,12 @@ pub fn run() {
                 event: tauri::WindowEvent::Focused(focused),
                 ..
             } if label == "main" => {
-                flow_log::note("rust", "-", "window", if focused { "focused" } else { "blurred" });
+                flow_log::note(
+                    "rust",
+                    "-",
+                    "window",
+                    if focused { "focused" } else { "blurred" },
+                );
             }
             // The dev servers the agents asked for end only when the user chooses Exit from the tray.
             tauri::RunEvent::Exit => {

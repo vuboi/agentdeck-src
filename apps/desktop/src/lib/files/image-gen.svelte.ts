@@ -2,7 +2,7 @@
 // right panel is folded, and the run must go on (and be there again when the panel returns). A run is also an entry
 // of the Tasks panel while it works, and of the Audit log once it ends.
 
-import { pictureSrc } from '../chat/agent';
+import { fetchImageDataUrl, pictureSrc, readImageDataUrl } from '../chat/agent';
 import { generateImages, listImageHistory, stopImageGeneration, suggestImagePrompts, type GeneratedImage, type ImageHistoryRun, type ImageModelChoice, type ImageSettings, type SuggestedKeyword } from '../chat/agent';
 import { trackImageRun } from '../chat/runs/activity.svelte';
 import { inTauri } from '../app/platform/history';
@@ -18,7 +18,7 @@ export const gen = $state({
   /** Time of the current or last run. */
   runMs: 0,
   /** The skeleton of a run is fixed when it starts: changing the settings only shapes the next run. */
-  runSkeleton: 2,
+  runSkeleton: 1,
   /** What each placeholder of the run stands for: the model and the variant it waits on. */
   runTiles: [] as { label: string; variant: number }[],
   activeRunId: null as string | null,
@@ -57,11 +57,25 @@ export async function refreshHistory(quiet = false) {
 export async function withPreviews(images: GeneratedImage[]): Promise<Preview[]> {
   const loaded = await Promise.all(
     images.map(async (image) => {
+      // URL cũ trong history được đọc thành data URL để tránh CORS hoặc URL provider hết hạn sau reload. File local thì
+      // đọc thẳng bytes thành data URL: thư mục
+      // generated-images (và cả project tùy cwd) nằm ngoài asset scope của Tauri, nên convertFileSrc
+      // qua asset.localhost bị chặn và ảnh vỡ thành image-not-found dù file thật vẫn có trên đĩa.
+      if (/^https?:\/\//i.test(image.path)) {
+        try {
+          return { ...image, src: await fetchImageDataUrl(image.path) };
+        } catch {
+          return { ...image, src: image.path };
+        }
+      }
       try {
-        const src = /^https?:\/\//i.test(image.path) ? image.path : pictureSrc({ path: image.path });
-        return { ...image, src };
+        return { ...image, src: await readImageDataUrl(image.path) };
       } catch {
-        return null;
+        try {
+          return { ...image, src: pictureSrc({ path: image.path }) };
+        } catch {
+          return null;
+        }
       }
     }),
   );
@@ -75,7 +89,7 @@ export async function startRun(args: { prompt: string; choices: (ImageModelChoic
     toast.error('Image generation needs the desktop app');
     return;
   }
-  gen.runSkeleton = Math.max(2, Math.min(6, args.choices.length * args.variants));
+  gen.runSkeleton = Math.max(1, Math.min(6, args.choices.length * args.variants));
   gen.runTiles = args.choices.flatMap((choice) => Array.from({ length: args.variants }, (_, index) => ({ label: choice.label, variant: index + 1 }))).slice(0, gen.runSkeleton);
   gen.working = true;
   runStart = performance.now();

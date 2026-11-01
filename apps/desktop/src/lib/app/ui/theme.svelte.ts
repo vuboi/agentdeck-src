@@ -37,8 +37,8 @@ class Theme {
 
   readonly dark = $derived(this.mode === 'system' ? this.systemDark : this.mode === 'dark');
   /**
-   * The theme as heavy views (the chat's rows) should see it: it follows `dark`/`primary`/`neutral` two painted frames
-   * later, so the new colours show at once and the rebuild of those views comes after instead of holding the swap.
+   * The theme as heavy views (the chat's rows) should see it: updated synchronously with the CSS tokens so the
+   * virtual list rebuilds in the same frame that already carries the new dark class — no half-painted flash.
    */
   settledKey = $state('');
   private readonly tokens = $derived({
@@ -50,7 +50,6 @@ class Theme {
   constructor() {
     media.addEventListener('change', (event) => (this.systemDark = event.matches));
     this.settledKey = this.keyNow();
-    let settle = 0;
     let unfreeze = 0;
     // App-lifetime singleton: the root effect is never torn down.
     $effect.root(() => {
@@ -69,14 +68,12 @@ class Theme {
         root.style.fontSize = `${this.uiFontSize}px`;
         for (const [name, value] of Object.entries(this.tokens)) root.style.setProperty(name, value, 'important');
         if (changed) {
-          cancelAnimationFrame(settle);
-          // First frame paints the new colours; then heavy views rebuild, and transitions come back a frame later.
-          settle = requestAnimationFrame(() => {
-            settle = requestAnimationFrame(() => {
-              this.settledKey = key;
-              unfreeze = requestAnimationFrame(() => root.classList.remove('theme-switching'));
-            });
-          });
+          // settledKey is updated synchronously so {#key settledKey} in Chat.svelte recreates the virtual-list rows
+          // in the same Svelte flush that already has the new dark class and CSS tokens — no half-painted frame.
+          // Only removing theme-switching (re-enabling transitions) is deferred: one rAF lets the browser commit the
+          // new colours first, so transitions start from the new baseline and never ease across the old→new gap.
+          this.settledKey = key;
+          unfreeze = requestAnimationFrame(() => root.classList.remove('theme-switching'));
         }
         try {
           const saved: Saved = { primary: this.primary, neutral: this.neutral, mode: this.mode, chatLayout: this.chatLayout, turnDividers: this.turnDividers, fontSize: this.uiFontSize };

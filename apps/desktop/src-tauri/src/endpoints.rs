@@ -30,6 +30,30 @@ pub struct ChatGpt {
 #[derive(Deserialize)]
 pub struct Antigravity {
     pub quota: String,
+    #[serde(default)]
+    pub quota_fallbacks: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderQuota {
+    pub deepseek_balance: String,
+    pub moonshot_balance: String,
+    pub moonshot_balance_cn: String,
+    pub zai_quota: String,
+    pub zai_quota_cn: String,
+    pub zai_subscription: String,
+    pub mini_max_usage: String,
+    pub mini_max_usage_fallback: String,
+    pub mini_max_usage_cn: String,
+    pub mini_max_usage_cn_fallback: String,
+    pub command_code_base: String,
+    pub command_code_whoami: String,
+    pub command_code_credits: String,
+    pub command_code_subscriptions: String,
+    pub command_code_summary: String,
+    pub cloudflare_analytics: String,
+    pub opencode_go_usage: String,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +88,8 @@ pub struct Endpoints {
     pub openrouter: OpenRouter,
     pub chatgpt: ChatGpt,
     pub antigravity: Antigravity,
+    #[serde(rename = "providerQuota")]
+    pub provider_quota: ProviderQuota,
     pub web: Web,
     pub local: Vec<Local>,
 }
@@ -72,7 +98,8 @@ const SOURCE: &str = include_str!("../../src/lib/agents/endpoints.json");
 
 /// The addresses, read once. The file is part of the build and checked by a test, so it always reads.
 pub static ENDPOINTS: LazyLock<Endpoints> = LazyLock::new(|| {
-    serde_json::from_str(SOURCE).unwrap_or_else(|error| panic!("src/lib/agents/endpoints.json: {error}"))
+    serde_json::from_str(SOURCE)
+        .unwrap_or_else(|error| panic!("src/lib/agents/endpoints.json: {error}"))
 });
 
 #[cfg(test)]
@@ -82,8 +109,14 @@ mod tests {
     #[test]
     fn the_endpoints_file_reads() {
         let endpoints: Endpoints = serde_json::from_str(SOURCE).expect("endpoints.json");
-        assert!(endpoints.anthropic.console_prepaid_credits.contains("{org}"));
+        assert!(endpoints
+            .anthropic
+            .console_prepaid_credits
+            .contains("{org}"));
         assert_eq!(endpoints.local.len(), 3);
-        assert!(endpoints.local.iter().all(|server| server.base.starts_with("http://127.0.0.1:")));
+        assert!(endpoints
+            .local
+            .iter()
+            .all(|server| server.base.starts_with("http://127.0.0.1:")));
     }
 }

@@ -387,7 +387,7 @@
     <span class="grid size-7 place-items-center rounded-lg bg-primary/12 text-primary"><ZIcon zType="lucideImage" class="size-4" /></span>
     <h2 class="m-0 min-w-0 flex-1 truncate text-sm font-semibold text-foreground">Image candidates</h2>
     {#if runMs > 0}
-      <span class="inline-flex h-7 shrink-0 items-center rounded border border-border bg-background px-2.5 text-[0.6875rem] font-medium tabular-nums text-muted-foreground" title="Time of the last run" aria-live="off">{formatDuration(runMs)}</span>
+      <span class="inline-flex h-7 shrink-0 items-center rounded border border-border bg-background px-2.5 text-xs font-medium tabular-nums text-muted-foreground" title="Time of the last run" aria-live="off">{formatDuration(runMs)}</span>
     {/if}
     <button
       type="button"

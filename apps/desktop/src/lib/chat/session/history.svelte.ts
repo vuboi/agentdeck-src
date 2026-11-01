@@ -1,6 +1,22 @@
 import { messages as mockMessages, type Message, type Block } from '../mock';
-import { loadHistory, inTauri, type HistorySession, listHistory, type HistoryMessage, clock, toBlocks, loadHistoryPage, renameHistory, deleteHistory } from '../../app/platform/history';
-import { restoreCommandImages, stripCommandImageData, deleteCommandImages } from '../content/command-images';
+import {
+  loadHistory,
+  fakeData,
+  inTauri,
+  type HistorySession,
+  listHistory,
+  type HistoryMessage,
+  clock,
+  toBlocks,
+  loadHistoryPage,
+  renameHistory,
+  deleteHistory,
+} from '../../app/platform/history';
+import {
+  restoreCommandImages,
+  stripCommandImageData,
+  deleteCommandImages,
+} from '../content/command-images';
 import { archivedMessages, deleteArchivedMessages } from '../content/archive';
 import { samePath } from '../../files/paths';
 import { CREDIT_PREFIX, baseModel } from '../../agents/credit-model';
@@ -8,11 +24,54 @@ import { getPref, setPref, setPrefs } from '../../app/platform/prefs';
 import { splitAttachments, attachmentBlocks } from '../content/attachments';
 import { isHandbackPrompt, stripLead } from '../runs/handback';
 import { joinContinuations } from '../runs/continuations';
-import { MODELS, NO_PROJECT, addedProjects, addedReady, draftElements, draftFiles, draftImages, draftMentions, drafts, isEmptyDraft, localMessages, localSessions, mockIds, newSession, noProjectRow, parents, rememberParents, restored, workspace, type Project, type SessionItem } from './state.svelte';
-import { liveAsks, liveReplies, messagesOf, replies, sessionLanes, withLive } from './run.svelte';
+import {
+  MODELS,
+  NO_PROJECT,
+  addedProjects,
+  addedReady,
+  draftElements,
+  draftFiles,
+  draftImages,
+  draftMentions,
+  drafts,
+  isEmptyDraft,
+  localMessages,
+  localSessions,
+  mockIds,
+  newSession,
+  noProjectRow,
+  parents,
+  placementOf,
+  rememberParents,
+  restored,
+  sessionPlacementsReady,
+  forgetSessionPlacement,
+  workspace,
+  type Project,
+  type SessionItem,
+} from './state.svelte';
+import {
+  liveAsks,
+  liveReplies,
+  messagesOf,
+  replies,
+  sessionLanes,
+  withLive,
+} from './run.svelte';
 import { hidden, signature } from './sending.svelte';
-import { lastPrompt, queuePaused, queued, stopTurn, turns } from './turns.svelte';
-import { lastEventAt, lastEventKind, recoveries, resumes } from './events.svelte';
+import {
+  lastPrompt,
+  queuePaused,
+  queued,
+  stopTurn,
+  turns,
+} from './turns.svelte';
+import {
+  lastEventAt,
+  lastEventKind,
+  recoveries,
+  resumes,
+} from './events.svelte';
 import { backlog } from './delegate-task.svelte';
 
 // ---------- real history (Claude Code and Codex, read-only) ----------
@@ -25,12 +84,17 @@ export const chat = $state({
 });
 
 /** Returns a complete, display-ready conversation without changing which chat is open. */
-export async function conversationForExport(sessionId: string): Promise<{ title: string; messages: Message[]; sourcePath?: string }> {
+export async function conversationForExport(
+  sessionId: string,
+): Promise<{ title: string; messages: Message[]; sourcePath?: string }> {
   const session = workspace.sessions.find((item) => item.id === sessionId);
   if (!session) throw new Error('This conversation no longer exists.');
   if (session.source && session.path) {
     const raw = await loadHistory(session.source, session.path);
-    const own = await restoreArchivedWork(session, await toMessages(session, raw));
+    const own = await restoreArchivedWork(
+      session,
+      await toMessages(session, raw),
+    );
     const all = assemble(session, own, own[0]?.at);
     return {
       title: session.title,
@@ -39,10 +103,13 @@ export async function conversationForExport(sessionId: string): Promise<{ title:
     };
   }
   const messages = messagesOf(sessionId);
-  return { title: session.title, messages: JSON.parse(JSON.stringify(messages)) as Message[] };
+  return {
+    title: session.title,
+    messages: JSON.parse(JSON.stringify(messages)) as Message[],
+  };
 }
 
-export const history = $state({ imported: false, loading: inTauri() });
+export const history = $state({ imported: fakeData, loading: inTauri() && !fakeData });
 
 // Older indexes treated every cwd as a project; never paint those classifications during startup.
 /** The chat history index, kept in IndexedDB (prefs.ts `index.` collection). */
@@ -57,11 +124,16 @@ export const folderName = (cwd: string) =>
 
 /** Replaces the mock workspace with what Claude Code and Codex already saved on this machine. */
 export async function importHistory({ refresh = false } = {}) {
+  if (fakeData) {
+    history.imported = true;
+    history.loading = false;
+    return;
+  }
   if (!inTauri()) {
     history.loading = false;
     return;
   }
-  await Promise.all([restored, addedReady]);
+  await Promise.all([restored, addedReady, sessionPlacementsReady]);
   // Show the last known index at once, then refresh it: indexing every file takes a moment.
   if (!refresh)
     try {
@@ -71,7 +143,9 @@ export async function importHistory({ refresh = false } = {}) {
         // subsequent full import preserve the wrong session even when it found the session the user had open.
         const activeId = workspace.activeId;
         const hasActive = cached.some((item) => item.id === activeId);
-        const hasLocalActive = localSessions().some((item) => item.id === activeId);
+        const hasLocalActive = localSessions().some(
+          (item) => item.id === activeId,
+        );
         if (!activeId || hasActive || hasLocalActive) {
           applyHistory(cached);
           history.imported = true;
@@ -133,15 +207,23 @@ function applyHistory(all: HistorySession[]) {
   // `claude:<id>`). That file is the same chat: it is merged into the chat, not listed again on its own.
   const aliasOf = new Map<string, string>();
   for (const item of workspace.sessions) {
-    if (item.agentSession) aliasOf.set(`${item.source ?? item.agent}:${item.agentSession}`, item.id);
-    for (const [agent, ids] of Object.entries(item.agentIds ?? {})) if (ids?.id) aliasOf.set(`${agent}:${ids.id}`, item.id);
+    if (item.agentSession)
+      aliasOf.set(`${item.source ?? item.agent}:${item.agentSession}`, item.id);
+    for (const [agent, ids] of Object.entries(item.agentIds ?? {}))
+      if (ids?.id) aliasOf.set(`${agent}:${ids.id}`, item.id);
   }
   const seen = new Set<string>();
   const found = all
     .map((item) => {
       const id = aliasOf.get(item.id);
       if (!id || id === item.id) return item;
-      return { ...item, id, title: workspace.sessions.find((session) => session.id === id)?.title ?? item.title };
+      return {
+        ...item,
+        id,
+        title:
+          workspace.sessions.find((session) => session.id === id)?.title ??
+          item.title,
+      };
     })
     .filter((item) => !seen.has(item.id) && seen.add(item.id));
   const ids = new Set(found.map((item) => item.id));
@@ -152,15 +234,23 @@ function applyHistory(all: HistorySession[]) {
     // A chat created in AgentDeck can already have a matching Claude/Codex history file after its first turn. Keep
     // the project chosen in the app even when the history index has not recognised that folder as a project yet.
     const existing = current.get(item.id);
-    const existingProject = existing && !existing.path && existing.projectId !== NO_PROJECT
-      ? workspace.projects.find((project) => project.id === existing.projectId)
-      : undefined;
+    const explicitProjectId = placementOf(item.id)?.projectId;
+    const existingProject = explicitProjectId && explicitProjectId !== NO_PROJECT
+      ? workspace.projects.find((project) => project.id === explicitProjectId)
+      : existing && !existing.path && existing.projectId !== NO_PROJECT
+        ? workspace.projects.find((project) => project.id === existing.projectId)
+        : undefined;
     if (existingProject) {
       projectIds.set(item.cwd, existingProject.id);
-      if (!projects.some((project) => project.id === existingProject.id)) projects.push(existingProject);
+      if (!projects.some((project) => project.id === existingProject.id))
+        projects.push(existingProject);
       continue;
     }
-    if (!item.is_project && !addedProjects.some((path) => samePath(path, item.cwd))) continue;
+    if (
+      !item.is_project &&
+      !addedProjects.some((path) => samePath(path, item.cwd))
+    )
+      continue;
     if (!projectIds.has(item.cwd)) {
       const id = `dir:${item.cwd}`;
       projectIds.set(item.cwd, id);
@@ -174,14 +264,18 @@ function applyHistory(all: HistorySession[]) {
   const sessions: SessionItem[] = found.map((item) => ({
     // The history file is the provider's storage, but its sidebar placement belongs to AgentDeck. A local session
     // may therefore become history-backed without changing from its selected project or from This computer.
-    ...(current.get(item.id) && !current.get(item.id)?.path
-      ? { made: current.get(item.id)!.made ?? true }
+    ...(placementOf(item.id)?.origin === 'agentdeck' || current.get(item.id)?.made
+      ? { made: true }
       : {}),
     // A saved chat continued with another agent: which agents it has had, and their own conversation ids.
     ...(mixed[item.id] ?? {}),
     id: item.id,
     // A chat already listed keeps the project it was placed in: its cwd is only the place for a chat seen first here.
-    projectId: current.get(item.id)?.projectId ?? projectIds.get(item.cwd) ?? NO_PROJECT,
+    projectId:
+      placementOf(item.id)?.projectId ??
+      (current.get(item.id)?.made ? current.get(item.id)?.projectId : undefined) ??
+      projectIds.get(item.cwd) ??
+      NO_PROJECT,
     workingDirectory: item.cwd || undefined,
     title: item.title,
     agent: mixed[item.id]?.agents?.at(-1) ?? item.source,
@@ -247,14 +341,22 @@ function applyHistory(all: HistorySession[]) {
   // A local chat keeps its project while the project still exists, even when no imported chat is in its folder yet (a chat
   // that has not written its history file, or a project that holds only local chats). Otherwise it fell to This computer.
   for (const item of local) {
-    if (item.projectId === NO_PROJECT || projects.some((project) => project.id === item.projectId)) continue;
-    const kept = workspace.projects.find((project) => project.id === item.projectId);
+    if (
+      item.projectId === NO_PROJECT ||
+      projects.some((project) => project.id === item.projectId)
+    )
+      continue;
+    const kept = workspace.projects.find(
+      (project) => project.id === item.projectId,
+    );
     if (kept) projects.push(kept);
   }
   // Local chats saved under the old cwd-based projects survive reclassification too.
   for (const item of local) {
     if (projects.some((project) => project.id === item.projectId)) continue;
-    item.workingDirectory ??= workspace.projects.find((project) => project.id === item.projectId)?.path;
+    item.workingDirectory ??= workspace.projects.find(
+      (project) => project.id === item.projectId,
+    )?.path;
     item.projectId = NO_PROJECT;
   }
   workspace.projects = projects;
@@ -338,7 +440,9 @@ export function settleKeptPermission(
   state: 'allowed' | 'denied' | 'expired',
 ) {
   const settle = (list: Message[] | undefined) => {
-    const block = list?.find((message) => message.id === messageId)?.blocks[blockIndex];
+    const block = list?.find((message) => message.id === messageId)?.blocks[
+      blockIndex
+    ];
     if (block?.kind !== 'permission' || block.state === state) return false;
     block.state = state;
     return true;
@@ -453,7 +557,8 @@ async function toMessages(
             },
             // The transcript records the plain id: a chat run on the Console credit shows the `credit:` name it was picked by.
             model:
-              session.model?.startsWith(CREDIT_PREFIX) && baseModel(session.model) === message.model
+              session.model?.startsWith(CREDIT_PREFIX) &&
+              baseModel(session.model) === message.model
                 ? session.model
                 : message.model,
           }
@@ -464,7 +569,10 @@ async function toMessages(
 
 const responseText = (message: Message) =>
   message.blocks
-    .filter((block): block is Extract<Block, { kind: 'response' }> => block.kind === 'response')
+    .filter(
+      (block): block is Extract<Block, { kind: 'response' }> =>
+        block.kind === 'response',
+    )
     .map((block) => block.text)
     .join('\n\n')
     .trim();
@@ -474,7 +582,10 @@ const isWorkMessage = (message: Message) =>
   message.blocks.some(
     (block) =>
       block.kind === 'delegate' ||
-      (block.kind === 'command' && Boolean(block.taskId || block.task || block.children || block.background)),
+      (block.kind === 'command' &&
+        Boolean(
+          block.taskId || block.task || block.children || block.background,
+        )),
   );
 
 function mergeWorkMessages(messages: Message[], extras: Message[]): Message[] {
@@ -487,7 +598,10 @@ function mergeWorkMessages(messages: Message[], extras: Message[]): Message[] {
         (Boolean(text) &&
           message.role === extra.role &&
           responseText(message) === text &&
-          (!message.at || !extra.at || Math.abs(Date.parse(message.at) - Date.parse(extra.at)) < 10 * 60_000)),
+          (!message.at ||
+            !extra.at ||
+            Math.abs(Date.parse(message.at) - Date.parse(extra.at)) <
+              10 * 60_000)),
     );
     if (index >= 0) restored[index] = { ...restored[index], ...extra };
     else if (extra.autoTurn) restored.push(extra);
@@ -496,9 +610,15 @@ function mergeWorkMessages(messages: Message[], extras: Message[]): Message[] {
 }
 
 /** Reattaches AgentDeck-only work report metadata that provider history cannot represent. */
-async function restoreArchivedWork(session: SessionItem, messages: Message[]): Promise<Message[]> {
+async function restoreArchivedWork(
+  session: SessionItem,
+  messages: Message[],
+): Promise<Message[]> {
   const records = await archivedMessages(session.id);
-  return mergeWorkMessages(messages, records.flatMap((record) => (record.snapshot ? [record.snapshot] : [])));
+  return mergeWorkMessages(
+    messages,
+    records.flatMap((record) => (record.snapshot ? [record.snapshot] : [])),
+  );
 }
 
 /** The file's messages minus the deleted ones, with the other agents' turns that fall in the time range `[lower, upper)`. */
@@ -532,7 +652,10 @@ async function fetchTranscript(
     null,
     PAGE_LIMIT,
   );
-  const own = await restoreArchivedWork(session, await toMessages(session, page.messages));
+  const own = await restoreArchivedWork(
+    session,
+    await toMessages(session, page.messages),
+  );
   const assembled = assemble(
     session,
     own,
@@ -612,7 +735,9 @@ function remember(session: SessionItem, messages: Message[], start: number) {
       };
       // The key list, the new tail and the removal of the chats that fell out go in one batch (one transaction).
       setPrefs([
-        ...next.slice(MAX_SAVED).map((old): [string, null] => [`transcript.${old}`, null]),
+        ...next
+          .slice(MAX_SAVED)
+          .map((old): [string, null] => [`transcript.${old}`, null]),
         ['transcripts.keys', next.slice(0, MAX_SAVED)],
         [`transcript.${session.id}`, tail],
       ]);
@@ -650,7 +775,9 @@ export function transcriptSettled(): Promise<void> {
 }
 
 /** Fills the chat with the transcript of a session: from cache when it is current, from disk otherwise. */
-export function openTranscript(session: SessionItem | undefined): Promise<void> {
+export function openTranscript(
+  session: SessionItem | undefined,
+): Promise<void> {
   let finish = () => {};
   transcriptDone = new Promise<void>((resolve) => (finish = resolve));
   return readTranscript(session).finally(finish);
@@ -732,7 +859,9 @@ async function readTranscript(session: SessionItem | undefined) {
 }
 
 /** The cached index mirrors the files on disk, so a rename or delete has to reach it too. */
-async function patchCache(change: (list: HistorySession[]) => HistorySession[]) {
+async function patchCache(
+  change: (list: HistorySession[]) => HistorySession[],
+) {
   try {
     const list = (await getPref<HistorySession[]>(HISTORY_INDEX)) ?? [];
     void setPref(HISTORY_INDEX, change(list));
@@ -773,12 +902,17 @@ async function forgetSessions(removed: SessionItem[]) {
   // Forks of a removed chat move up to the nearest parent that stays.
   const survivingParent = (id: string | undefined): string | undefined => {
     let parent = id;
-    while (parent && gone.has(parent)) parent = workspace.sessions.find((item) => item.id === parent)?.parentId;
+    while (parent && gone.has(parent))
+      parent = workspace.sessions.find((item) => item.id === parent)?.parentId;
     return parent;
   };
-  for (const child of workspace.sessions) if (!gone.has(child.id) && child.parentId && gone.has(child.parentId)) child.parentId = survivingParent(child.parentId);
+  for (const child of workspace.sessions)
+    if (!gone.has(child.id) && child.parentId && gone.has(child.parentId))
+      child.parentId = survivingParent(child.parentId);
   const activeGone = gone.has(workspace.activeId);
-  const activeProject = removed.find((item) => item.id === workspace.activeId)?.projectId;
+  const activeProject = removed.find(
+    (item) => item.id === workspace.activeId,
+  )?.projectId;
   workspace.sessions = workspace.sessions.filter((item) => !gone.has(item.id));
   for (const id of gone) {
     delete drafts[id];
@@ -805,12 +939,15 @@ async function forgetSessions(removed: SessionItem[]) {
     lastEventAt.delete(id);
     lastEventKind.delete(id);
     deleteCommandImages(id);
+    forgetSessionPlacement(id);
   }
   saveOtherTurns();
   await Promise.all([...gone].map((id) => deleteArchivedMessages(id)));
   patchCache((list) => list.filter((item) => !gone.has(item.id)));
   if (activeGone) {
-    const next = workspace.sessions.find((item) => item.projectId === activeProject) ?? workspace.sessions[0];
+    const next =
+      workspace.sessions.find((item) => item.projectId === activeProject) ??
+      workspace.sessions[0];
     if (next) workspace.activeId = next.id;
     else newSession(activeProject);
   }
@@ -832,14 +969,17 @@ export async function deleteSessions(ids: string[]): Promise<string[]> {
   const sessions = workspace.sessions.filter((item) => ids.includes(item.id));
   for (const session of sessions) stopTurn(session.id);
   const failed = new Set<string>();
-  await Promise.all(sessions.map(async (session) => {
-    await releaseCli(session.id);
-    try {
-      if (session.path && session.source) await deleteHistory(session.source, session.path);
-    } catch {
-      failed.add(session.id);
-    }
-  }));
+  await Promise.all(
+    sessions.map(async (session) => {
+      await releaseCli(session.id);
+      try {
+        if (session.path && session.source)
+          await deleteHistory(session.source, session.path);
+      } catch {
+        failed.add(session.id);
+      }
+    }),
+  );
   await forgetSessions(sessions.filter((item) => !failed.has(item.id)));
   return [...failed];
 }

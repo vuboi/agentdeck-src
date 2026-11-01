@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-project-activity-append"
+description = "Enables the project_activity_append command without any pre-configured scope."
+commands.allow = ["project_activity_append"]
+
+[[permission]]
+identifier = "deny-project-activity-append"
+description = "Denies the project_activity_append command without any pre-configured scope."
+commands.deny = ["project_activity_append"]

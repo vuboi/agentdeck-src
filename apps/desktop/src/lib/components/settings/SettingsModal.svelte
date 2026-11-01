@@ -9,7 +9,8 @@
   import {
     connectors,
     consumeCodexResetCredit,
-    refreshAgyQuota,
+    refreshWorkbuddyModels,
+    refreshMuseCodeModels,
     refreshAll,
     scanLocal,
     settings,
@@ -92,27 +93,17 @@
   }
   $effect(() => {
     if (!settings.open) return;
-    // Keep the connector data cached between opens. The header Refresh button reloads it on demand;
-    // re-running all CLI/account checks whenever Settings opens makes the list feel like it is loading on scroll.
+    // Keep the connector data cached between opens; re-running all CLI/account checks whenever Settings opens
+    // makes the list feel like it is loading on scroll.
     untrack(() => {
       if (!connectors.detected) {
         void refreshAll(false);
         void scanLocal();
       }
+      if (connectors.detected?.workbuddy.logged_in) void refreshWorkbuddyModels();
+      if (connectors.detected?.muse_code.logged_in) void refreshMuseCodeModels();
     });
     void tick().then(() => panel?.focus());
-  });
-
-  // The button's icon turns while the CLIs are checked and the usage is read again.
-  const refreshingAll = $derived(connectors.manualRefreshing);
-  const refreshingDetect = $derived(Boolean(connectors.busy.detect));
-
-  // Antigravity's figures are saved to a file by the status line of agy whenever it runs, not by AgentDeck: while Settings
-  // is open the file is read again every half minute, so new figures show without pressing Refresh.
-  $effect(() => {
-    if (!settings.open) return;
-    const timer = setInterval(() => void refreshAgyQuota(), 60_000);
-    return () => clearInterval(timer);
   });
 
   onMount(() => startWatching());
@@ -164,11 +155,6 @@
         <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-5">
           <h2 class="text-sm font-semibold">{titleOf(settings.section)}</h2>
           <span class="ml-auto"></span>
-          {#if settings.section === 'connectors'}
-            <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2 text-sm" title="Check CLIs and reload usage" disabled={refreshingAll} onclick={() => void refreshAll(true)}>
-              <ZIcon zType={icon(refreshingAll ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3.5 {refreshingAll ? 'animate-spin' : ''}" /> Refresh
-            </ZButton>
-          {/if}
           <ZButton zWave={false} zType="ghost" zSize="sm" class="size-7! p-0" aria-label="Close settings" onclick={close}>
             <ZIcon zType={icon('lucideX')} class="size-4" />
           </ZButton>

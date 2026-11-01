@@ -1,6 +1,6 @@
 // One lightbox for the whole app (z-ui's gallery preview): pictures and documents attached in the composer and in messages open it.
 import type { ZGalleryFile } from '@shival99/z-ui-svelte';
-import { mimeOfPath, pictureSrc, readFileBytes, revealFile } from '../chat/agent';
+import { mimeOfPath, pictureSrc, readFileBytes, resolvedPictureSrc, revealFile } from '../chat/agent';
 import { previewMime } from '../chat/content/attachments';
 import { toast } from '../app/platform/toast';
 
@@ -18,12 +18,14 @@ export function releasePreview() {
 }
 
 /** Opens the lightbox on `images[index]`, with arrows to step through the rest. */
-export function openImages(images: { src?: string; path?: string; name: string }[], index: number) {
+export async function openImages(images: { src?: string; path?: string; name: string }[], index: number) {
   releasePreview();
+  // A picture kept as a file outside the asset scope is read from the file itself, as in the chat.
+  const urls = await Promise.all(images.map((image) => resolvedPictureSrc(image)));
   preview.files = images.map((image, position) => {
     // A picture kept in its file is drawn from the file; a data URL is only sized when it is all there is.
-    const url = pictureSrc(image);
-    const data = !image.path && image.src?.startsWith('data:') ? image.src : '';
+    const url = urls[position] ?? pictureSrc(image);
+    const data = url.startsWith('data:') ? url : '';
     return {
       id: `${position}:${image.name}`,
       name: image.name,

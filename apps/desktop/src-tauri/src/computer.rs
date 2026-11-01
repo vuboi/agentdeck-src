@@ -118,10 +118,10 @@ pub fn screenshot() -> Result<Vec<u8>, String> {
 
 #[cfg(windows)]
 pub fn click(x: i32, y: i32) -> Result<(), String> {
+    use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         mouse_event, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
     };
-    use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
     unsafe {
         // Put the user's pointer back after the click so they keep control.

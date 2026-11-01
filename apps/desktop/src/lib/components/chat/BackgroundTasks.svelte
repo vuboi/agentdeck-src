@@ -14,6 +14,7 @@
   import { modelLabel } from '../../agents/models.svelte';
   import { agentDisplayName } from '../../agents/provider-registry';
   import { ticker } from '../../app/platform/clock.svelte';
+  import { stripAnsi } from '../../app/text/ansi';
   import { LOADER, LOADER_SIZE } from '../../app/platform/loaders';
   import { showSession } from '../../app/ui/content-tabs.svelte';
   import { elapsed } from '../../chat/content/blocks';
@@ -104,7 +105,11 @@
     {:else}
       <ZIcon zType={'lucideListChecks' as ZIconName} class="size-3.5 shrink-0" />
     {/if}
-    <ZShimmerText class="font-medium" zBase="var(--muted-foreground)" zPeak="var(--foreground)" zText={title} />
+    {#if running > 0}
+      <ZShimmerText class="font-medium" zBase="var(--muted-foreground)" zPeak="var(--foreground)" zText={title} />
+    {:else}
+      <span class="font-medium">{title}</span>
+    {/if}
     <span class="flex min-w-0 flex-1 items-center gap-2 truncate tabular-nums">
       {#if running > 0}<span>{Math.round(countRunning.current)} active</span>{/if}
       {#if paused.length > 0}<span>{Math.round(countPaused.current)} paused</span>{/if}
@@ -129,7 +134,7 @@
       <div class="max-h-48 overflow-y-auto overscroll-contain border-t border-border/60" aria-label="Task list">
         {#each shown as item (item.id)}
           <div class="border-b border-border/50 last:border-b-0" data-work-id={item.id} animate:flip={{ duration: 300, easing: cubicOut }}>
-            <div class="flex min-h-9 min-w-0 items-center gap-3 px-3 py-1.5">
+            <div class="sticky top-0 z-10 flex min-h-9 min-w-0 items-center gap-3 border-b border-border/50 bg-card/95 px-3 py-1.5 shadow-sm backdrop-blur-sm">
               <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left outline-none" aria-label="Details: {item.title}" aria-expanded={Boolean(details[item.id])} onclick={() => (details[item.id] = !details[item.id])}>
                 <!-- The state leads the row: the loader while it works, then a check, a cross, a clock while it waits. -->
                 <span class="grid size-4 shrink-0 place-items-center {tone(item)}" role="img" aria-label={labels[item.state]}>
@@ -187,7 +192,7 @@
               <div class="min-h-0 overflow-hidden {details[item.id] ? 'border-t border-border/50' : ''}" inert={!details[item.id]}>
                 <div class="m-2 flex flex-col gap-2 rounded-md border border-border/60 bg-muted/30 p-1.5 text-xs leading-snug text-muted-foreground">
                   {#if item.sourceTitle}<p class="m-0 whitespace-pre-wrap break-words"><span class="font-medium text-foreground">Request:</span> {item.sourceTitle}</p>{/if}
-                  <p class="m-0 whitespace-pre-wrap break-words">{item.detail || (item.state === 'paused' ? 'Paused by you. Resume to continue this task.' : item.state === 'unknown' ? 'No live status after reload. Open the worker to check its result.' : isWorkActive(item) ? 'Waiting for the next update from the worker.' : 'No additional output was reported.')}</p>
+                  <p class="m-0 whitespace-pre-wrap break-words">{stripAnsi(item.detail || (item.state === 'paused' ? 'Paused by you. Resume to continue this task.' : item.state === 'unknown' ? 'No live status after reload. Open the worker to check its result.' : isWorkActive(item) ? 'Waiting for the next update from the worker.' : 'No additional output was reported.'))}</p>
                   {#if item.delegateId && item.canReturn}
                     <div class="flex flex-wrap gap-2">
                       <ZButton zWave={false} zType="outline" zSize="sm" type="button" class="h-6! px-2! text-xs!" onclick={() => returnTaskResult(item.delegateId!)}>Return saved result</ZButton>

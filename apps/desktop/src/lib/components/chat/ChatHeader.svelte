@@ -115,7 +115,7 @@
       : []),
     ...(menuTab?.kind === 'file'
       ? [
-          { label: 'Open in the side panel', icon: 'lucidePanelRight', iconSize: '12', class: 'text-sm! py-1', onClick: () => openInViewer(menuTab.path, menuTab.root, menuTab.view) } as ZDropdownMenuItem,
+          { label: 'Open in the side panel', icon: 'lucidePanelRight', iconSize: '12', class: 'text-sm! py-1', onClick: () => openInViewer(menuTab.path, menuTab.root, menuTab.view, { revealPanel: true }) } as ZDropdownMenuItem,
           ...openWithItem(menuTab.path, openWithList, () => loadTabOpenWith(menuTab.path, menuTab.id)),
           { label: 'Copy path', icon: 'lucideCopy', iconSize: '12', class: 'text-sm! py-1', divide: 'after', onClick: () => void navigator.clipboard.writeText(menuTab.path) } as ZDropdownMenuItem,
         ]

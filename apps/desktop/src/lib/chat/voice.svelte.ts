@@ -71,6 +71,8 @@ class VoiceCapture {
     private startedAt = 0;
     private token = 0;
     private starting = false;
+    /** True while speech pushes energy past the mic noise floor; bars stay flat otherwise. */
+    private speechGate = false;
 
     /** Requests the microphone and begins a toggle-style recording. */
     async start(): Promise<void> {
@@ -222,12 +224,18 @@ class VoiceCapture {
         this.meterSource = source;
         this.level = 0;
         this.levels = [0, 0, 0, 0, 0];
+        this.speechGate = false;
         const sample = () => {
             analyser.getByteFrequencyData(freqData);
             let sum = 0;
             for (let i = 0; i < 20; i++) sum += freqData[i];
             const avg = sum / (20 * 255);
             this.level = this.level * 0.7 + avg * 0.3;
+
+            // Heartbeat-style gating: only lift while speech clears the noise
+            // floor, with hysteresis so background hum cannot flicker it.
+            if (avg > 0.16) this.speechGate = true;
+            else if (avg < 0.08) this.speechGate = false;
 
             const bands = [
                 freqData[1],
@@ -240,7 +248,8 @@ class VoiceCapture {
 
             const current = [...this.levels];
             for (let i = 0; i < 5; i++) {
-                const target = Math.min(1, Math.max(0, (bands[i] - 12) / 100));
+                const raw = Math.min(1, Math.max(0, (bands[i] - 12) / 100));
+                const target = this.speechGate ? raw : 0;
                 if (target > current[i]) {
                     current[i] = current[i] * 0.2 + target * 0.8;
                 } else {

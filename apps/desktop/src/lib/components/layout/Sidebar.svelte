@@ -3,6 +3,7 @@
   import Menu from '../ui/Menu.svelte';
   import { closeOnScroll } from '../../app/ui/close-on-scroll';
   import { customProviderName } from '../../agents/models.svelte';
+  import { agentDisplayName } from '../../agents/provider-registry';
   import { tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { ZButton, ZDropdownMenu, ZIcon, ZInput, ZLoading, ZModal, ZPopover, zModalService } from '@shival99/z-ui-svelte';
@@ -11,7 +12,6 @@
   import Logo from '../ui/Logo.svelte';
   import { toast } from '../../app/platform/toast';
   import AgentStack from './AgentStack.svelte';
-  import AgentLogo from '../ui/AgentLogo.svelte';
   import { contentTabs, openNewChatTab, showSession } from '../../app/ui/content-tabs.svelte';
   import SearchPalette from './SearchPalette.svelte';
   import DockZone from '../ui/DockZone.svelte';
@@ -186,7 +186,7 @@
   function labelClass(id: string, selected: boolean) {
     if (selected) return 'font-medium text-primary';
     if (working.has(id)) return seenRun.has(id) ? 'font-medium text-primary/90' : 'row-running-blink font-medium';
-    if (doneUnseen.has(id)) return 'font-medium text-primary/90';
+    if (doneUnseen.has(id)) return 'row-done-blink font-medium text-primary/90';
     if (runningParents.has(id)) return 'font-medium text-primary/65';
     return '';
   }
@@ -460,6 +460,19 @@
   // The view menu of the headings: like the list options of Claude's own sidebar.
   const viewItems = $derived<ZDropdownMenuItem[]>([
     {
+      label: 'Filter',
+      icon: 'lucideFilter' as ZIconName,
+      iconSize: '12',
+      class: ITEM,
+      shortcut: { all: 'All chats', agentdeck: 'AgentDeck', imported: 'Imported', claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity', opencode: 'OpenCode', copilot: 'Copilot', custom: 'Custom' }[view.filter],
+      submenu: [
+        { label: 'All chats', class: ITEM, checked: view.filter === 'all', onClick: () => setView({ filter: 'all' }) },
+        { label: 'AgentDeck chats', class: ITEM, checked: view.filter === 'agentdeck', onClick: () => setView({ filter: 'agentdeck' }) },
+        { label: 'Imported history', class: ITEM, checked: view.filter === 'imported', onClick: () => setView({ filter: 'imported' }) },
+        ...(['claude', 'codex', 'antigravity', 'opencode', 'copilot', 'custom'] as const).map((agent) => ({ label: agentDisplayName(agent), class: ITEM, checked: view.filter === agent, onClick: () => setView({ filter: agent }) })),
+      ],
+    },
+    {
       label: 'Group by',
       icon: 'lucideLayers' as ZIconName,
       iconSize: '12',
@@ -490,7 +503,7 @@
       iconSize: '12',
       class: ITEM,
       divide: 'before',
-      disabled: view.groupBy === DEFAULT_VIEW.groupBy && view.sortBy === DEFAULT_VIEW.sortBy && view.order === DEFAULT_VIEW.order,
+      disabled: view.groupBy === DEFAULT_VIEW.groupBy && view.sortBy === DEFAULT_VIEW.sortBy && view.order === DEFAULT_VIEW.order && view.filter === DEFAULT_VIEW.filter,
       onClick: () => setView({ ...DEFAULT_VIEW }),
     },
     {
@@ -769,7 +782,6 @@
               data-section
               data-pending={key === 'computer' && pending === NO_PROJECT ? '' : undefined}
             >
-              {#if data.provider}<AgentLogo agent={data.provider.agent} model={data.provider.model} class="size-3.5 shrink-0" />{/if}
               <span class="truncate">{ctx.node.label}</span>
               {#if data.count}
                 <ZIcon zType="lucideChevronDown" class="size-3.5 shrink-0 transition-transform {collapsed.includes(key) ? '-rotate-90' : ''}" />

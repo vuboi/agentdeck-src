@@ -31,7 +31,9 @@ pub fn init(app_data: PathBuf) {
 /// Reads the list. A file that cannot be read as a list is moved aside (`processes.json.corrupt`) and the list starts
 /// empty: a damaged file must not stop the app from starting, and its content is kept for a look.
 fn load(file: &PathBuf) -> Vec<Entry> {
-    let Ok(bytes) = std::fs::read(file) else { return Vec::new() };
+    let Ok(bytes) = std::fs::read(file) else {
+        return Vec::new();
+    };
     match serde_json::from_slice(&bytes) {
         Ok(entries) => entries,
         Err(_) => {
@@ -52,12 +54,16 @@ fn save(file: &PathBuf, entries: &[Entry]) {
 
 /// Lists a process the app has just started. A process that cannot be read (it already ended) is not listed.
 pub fn record(pid: u32) {
-    let (Some(file), Some(start)) = (FILE.get(), start_time(pid)) else { return };
+    let (Some(file), Some(start)) = (FILE.get(), start_time(pid)) else {
+        return;
+    };
     let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut entries = load(file);
     // A process that ended by itself is never taken off by `forget` (only the app's own kills are): the list would grow
     // with every turn. Entries that are no longer the same running process go here.
-    entries.retain(|entry| entry.pid != pid && start_time(entry.pid).as_deref() == Some(entry.start.as_str()));
+    entries.retain(|entry| {
+        entry.pid != pid && start_time(entry.pid).as_deref() == Some(entry.start.as_str())
+    });
     entries.push(Entry { pid, start });
     save(file, &entries);
 }
@@ -76,7 +82,11 @@ pub fn forget(pid: u32) {
 
 /// The entries that are still the process they were: same PID, same start time.
 pub fn still_same(entries: &[Entry]) -> Vec<Entry> {
-    entries.iter().filter(|entry| start_time(entry.pid).as_deref() == Some(entry.start.as_str())).cloned().collect()
+    entries
+        .iter()
+        .filter(|entry| start_time(entry.pid).as_deref() == Some(entry.start.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// At start-up: ends each listed process that is still the same one (and its tree), then empties the list. A process
@@ -135,11 +145,18 @@ pub fn parse_linux_start(stat: &str) -> Option<String> {
 #[cfg(windows)]
 fn windows_start(pid: u32) -> Option<String> {
     use windows::Win32::Foundation::{CloseHandle, FILETIME};
-    use windows::Win32::System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::System::Threading::{
+        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     // SAFETY: the handle is opened for reading times and closed on every path; the FILETIME out-parameters are valid.
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let (mut created, mut exit, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        let (mut created, mut exit, mut kernel, mut user) = (
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+        );
         let ok = GetProcessTimes(process, &mut created, &mut exit, &mut kernel, &mut user).is_ok();
         let _ = CloseHandle(process);
         if !ok {
@@ -165,24 +182,37 @@ mod tests {
     fn this_process_has_a_start_time_and_is_still_the_same() {
         let pid = std::process::id();
         let start = start_time(pid).expect("the test process has a start time");
-        let listed = vec![Entry { pid, start: start.clone() }];
+        let listed = vec![Entry {
+            pid,
+            start: start.clone(),
+        }];
         assert_eq!(still_same(&listed), listed);
     }
 
     #[test]
     fn a_different_start_time_is_not_the_same_process() {
         let pid = std::process::id();
-        let listed = vec![Entry { pid, start: "not-a-start-time".into() }];
+        let listed = vec![Entry {
+            pid,
+            start: "not-a-start-time".into(),
+        }];
         assert!(still_same(&listed).is_empty());
     }
 
     #[test]
     fn entries_of_processes_that_are_gone_are_dropped_when_a_new_one_is_listed() {
-        let folder = std::env::temp_dir().join(format!("agentdeck-registry-test-{}", std::process::id()));
+        let folder =
+            std::env::temp_dir().join(format!("agentdeck-registry-test-{}", std::process::id()));
         let file = folder.join("runtime").join("processes.json");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        let gone = Entry { pid: u32::MAX - 9, start: "1".into() };
-        let alive = Entry { pid: std::process::id(), start: start_time(std::process::id()).unwrap() };
+        let gone = Entry {
+            pid: u32::MAX - 9,
+            start: "1".into(),
+        };
+        let alive = Entry {
+            pid: std::process::id(),
+            start: start_time(std::process::id()).unwrap(),
+        };
         save(&file, &[gone.clone(), alive.clone()]);
         // `record` works on the global file; the same retain rule is applied here directly.
         let mut entries = load(&file);
@@ -193,7 +223,8 @@ mod tests {
 
     #[test]
     fn a_damaged_file_is_moved_aside_and_the_list_starts_empty() {
-        let folder = std::env::temp_dir().join(format!("agentdeck-registry-corrupt-{}", std::process::id()));
+        let folder =
+            std::env::temp_dir().join(format!("agentdeck-registry-corrupt-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         let file = folder.join("processes.json");
         std::fs::write(&file, "{ not json").unwrap();

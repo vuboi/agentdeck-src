@@ -7,8 +7,8 @@
   import { inTauri } from '../../app/platform/history';
   import { activeSession, isRunning, isUnstarted, moveDraftToProject, NO_PROJECT, workspace } from '../../chat/sessions.svelte';
   import { toast } from '../../app/platform/toast';
-  import { addAccount, cancelLogin, connectors, installed, login, refreshAccounts, refreshAgyAccounts, setConnectorAutoSwitch, switchAccount, switchAgyAccount, type Account, type AccountProvider, type AgyAccount, type ConnectorId } from '../../agents/connectors.svelte';
-  import { activeProviderKey, providerKeyEnv } from '../../agents/connectors.svelte';
+  import { addAccount, cancelLogin, connectors, installed, login, providerQuotas, refreshAccounts, refreshAgyAccounts, refreshAgyQuota, refreshProviderQuotas, saveProvider, setConnectorAutoSwitch, subscribeQuotaRefresh, switchAccount, switchAgyAccount, type Account, type AccountProvider, type AgyAccount, type ConnectorId, type CustomProvider, type ProviderApiKey, type UsageWindow } from '../../agents/connectors.svelte';
+  import { providerKeyEnv } from '../../agents/connectors.svelte';
   import { parseCustomModel } from '../../agents/models.svelte';
   import AgentLogo from '../ui/AgentLogo.svelte';
   import QuotaBattery from '../settings/QuotaBattery.svelte';
@@ -31,21 +31,24 @@
   const icon = (name: string) => name as ZIconName;
 
   type QuickAccount = { provider: AccountProvider; account: Account } | { provider: 'agy'; account: AgyAccount };
+  type QuickProviderKey = { provider: 'custom'; customProvider: CustomProvider; key: ProviderApiKey };
+  type QuickEntry = QuickAccount | QuickProviderKey;
+  const isProviderKey = (entry: QuickEntry): entry is QuickProviderKey => entry.provider === 'custom';
+  const labelFor = (provider: AccountProvider | 'agy') => (provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : provider === 'copilot' ? 'GitHub Copilot' : 'Antigravity');
   const accountProvider = $derived<AccountProvider | 'agy' | null>(
     session?.agent === 'claude' || session?.agent === 'codex' || session?.agent === 'copilot' ? session.agent : session?.agent === 'antigravity' ? 'agy' : null,
   );
   const customProvider = $derived(session?.agent === 'custom' ? connectors.custom.find((item) => item.id === parseCustomModel(session.model)?.providerId) : undefined);
   const autoSwitchConnector = $derived((accountProvider === 'agy' ? 'agy' : accountProvider) as ConnectorId | null);
-  const activeKey = $derived(customProvider ? activeProviderKey(customProvider) : undefined);
-  const autoSwitchLabel = $derived(customProvider ? `${activeKey?.label || 'API key'}${activeKey?.apiKey ? ` ·••••${activeKey.apiKey.slice(-4)}` : providerKeyEnv(customProvider, activeKey) ? ' · environment key' : ''}` : '');
-  const accountRows = $derived.by<QuickAccount[]>(() => {
+  const menuLabel = $derived(customProvider?.name ?? (accountProvider ? labelFor(accountProvider) : 'Account'));
+  const accountRows = $derived.by<QuickEntry[]>(() => {
+    if (customProvider) return customProvider.keys.map((key) => ({ provider: 'custom', customProvider, key }));
     if (!accountProvider) return [];
     if (accountProvider === 'agy') return connectors.accounts.agy.map((account) => ({ provider: 'agy', account }));
     const list = connectors.accounts[accountProvider];
     return list?.manager ? list.accounts.map((account) => ({ provider: accountProvider, account })) : [];
   });
-  const activeAccount = $derived(accountRows.find((entry) => entry.account.active));
-  const canQuickSwitch = $derived(accountRows.length > 1 || Boolean(activeAccount && ('expired' in activeAccount.account && activeAccount.account.expired)));
+  const activeEntry = $derived(accountRows.find((entry) => isProviderKey(entry) ? entry.customProvider.activeKeyId === entry.key.id : entry.account.active));
   const canQuickAdd = $derived(
     accountProvider === 'agy'
       ? installed('agy')
@@ -53,19 +56,32 @@
         ? Boolean(connectors.accounts[accountProvider]?.manager)
         : false,
   );
-  const canOpenAccountMenu = $derived(canQuickSwitch || canQuickAdd);
   let lastAccountProvider: AccountProvider | 'agy' | null | undefined;
   $effect(() => {
     const selected = accountProvider;
     if (selected === lastAccountProvider) return;
     lastAccountProvider = selected;
     if (!selected || !inTauri()) return;
-    if (selected === 'agy') void refreshAgyAccounts();
-    else void refreshAccounts(selected);
+    const refresh = () => {
+      if (selected === 'agy') {
+        void refreshAgyAccounts();
+        void refreshAgyQuota();
+      } else void refreshAccounts(selected);
+    };
+    return subscribeQuotaRefresh(refresh);
+  });
+  let lastCustomProviderId: string | undefined;
+  $effect(() => {
+    const provider = customProvider;
+    if (provider?.id === lastCustomProviderId) return;
+    lastCustomProviderId = provider?.id;
+    if (!provider || !inTauri()) return;
+    return subscribeQuotaRefresh(() => void refreshProviderQuotas(provider));
   });
 
   let accountTrigger = $state<HTMLButtonElement>();
   let accountOpen = $state(false);
+  let accountRefreshing = $state(false);
   let confirmOpen = $state(false);
   let confirmBusy = $state(false);
   let switchingAccount = $state(false);
@@ -74,20 +90,51 @@
   let confirmAccount = $state<QuickAccount | null>(null);
   let confirmGeneration = 0;
   let loginRequired = $state<Record<string, boolean>>({});
-  const entryKey = (entry: QuickAccount) => `${entry.provider}:${entry.account.id}`;
-  /** Match the composer's most restrictive limit; Antigravity only exposes quota for its active account. */
-  function quotaRemaining(entry: QuickAccount): number | null {
+  const entryKey = (entry: QuickEntry) => isProviderKey(entry) ? `custom:${entry.customProvider.id}:${entry.key.id}` : `${entry.provider}:${entry.account.id}`;
+  const entryActive = (entry: QuickEntry) => isProviderKey(entry) ? entry.customProvider.activeKeyId === entry.key.id : entry.account.active;
+  function keyQuota(entry: QuickProviderKey) {
+    return providerQuotas[`${entry.customProvider.id}:${entry.key.id}`];
+  }
+  function usageWindows(entry: QuickEntry): UsageWindow[] {
+    if (isProviderKey(entry)) {
+      const quota = keyQuota(entry);
+      if (quota?.windows?.length) return quota.windows;
+      if (quota && quota.limit && quota.remaining !== null) {
+        return [{ label: 'credit', pct: Math.min(100, Math.max(0, ((quota.limit - quota.remaining) / quota.limit) * 100)), resets_at: null }];
+      }
+      return [];
+    }
+    if (entry.provider === 'agy') {
+      return (connectors.agyAccountQuotas.find((item) => item.id === entry.account.id)?.quota ?? (entry.account.active ? connectors.agyQuota : null))?.groups.flatMap((group) => group.windows) ?? [];
+    }
+    return entry.account.usage;
+  }
+  function entryDisplay(entry: QuickEntry) {
+    if (!isProviderKey(entry)) return entry.account.email;
+    const suffix = entry.key.apiKey ? ` ·••••${entry.key.apiKey.slice(-4)}` : providerKeyEnv(entry.customProvider, entry.key) ? ' · environment key' : '';
+    return `${entry.key.label || 'API key'}${suffix}`;
+  }
+  function entryStatus(entry: QuickEntry) {
+    if (!isProviderKey(entry)) return entry.account.status;
+    const quota = keyQuota(entry);
+    if (quota?.windows?.length) return quota.source ? `Quota · ${quota.source}` : 'Live quota';
+    if (quota && quota.limit !== null && quota.remaining !== null) return 'Credit limit';
+    return providerKeyEnv(entry.customProvider, entry.key) ? 'Environment key' : 'No live quota yet';
+  }
+  /** Match the composer's most restrictive limit from the shared per-account quota snapshots. */
+  function quotaRemaining(entry: QuickEntry): number | null {
     const model = session?.model ?? '';
     const family = model.startsWith('gemini-') ? 'gemini' : /^(claude-|gpt-oss-)/.test(model) ? '3p' : null;
-    const windows = entry.provider === 'agy'
-      ? entry.account.active ? connectors.agyQuota?.groups.find((group) => group.id === family)?.windows ?? [] : []
-      : entry.account.usage;
+    const windows = isProviderKey(entry)
+      ? usageWindows(entry)
+      : entry.provider === 'agy'
+        ? (connectors.agyAccountQuotas.find((item) => item.id === entry.account.id)?.quota ?? (entry.account.active ? connectors.agyQuota : null))?.groups.find((group) => group.id === family)?.windows ?? []
+        : entry.account.usage;
     const remaining = windows.filter((window) => Number.isFinite(window.pct)).map((window) =>
       window.resets_at !== null && window.resets_at * 1000 <= ticker.sec ? 100 : Math.max(0, Math.min(100, 100 - window.pct)),
     );
     return remaining.length ? Math.min(...remaining) : null;
   }
-  const labelFor = (provider: AccountProvider | 'agy') => (provider === 'claude' ? 'Claude' : provider === 'codex' ? 'Codex' : provider === 'copilot' ? 'GitHub Copilot' : 'Antigravity');
   async function addQuickAccount() {
     if (!accountProvider || !canQuickAdd) return;
     if (accountProvider === 'agy') {
@@ -96,11 +143,38 @@
     }
     await addAccount(accountProvider, labelFor(accountProvider));
   }
-  function needsLogin(entry: QuickAccount) {
+  async function forceRefreshAccounts() {
+    const nativeProvider = accountProvider;
+    const apiProvider = customProvider;
+    if ((!nativeProvider && !apiProvider) || accountRefreshing) return;
+    accountRefreshing = true;
+    try {
+      if (apiProvider) {
+        await refreshProviderQuotas(apiProvider, true);
+      } else if (!nativeProvider) {
+        return;
+      } else if (nativeProvider === 'agy') {
+        await Promise.all([refreshAgyAccounts(false, true), refreshAgyQuota(false, true)]);
+      } else if (nativeProvider) {
+        await refreshAccounts(nativeProvider, true);
+      }
+    } finally {
+      accountRefreshing = false;
+    }
+  }
+  function needsLogin(entry: QuickEntry) {
+    if (isProviderKey(entry)) return false;
     const status = entry.account.status?.toLowerCase() ?? '';
     return Boolean(('expired' in entry.account && entry.account.expired) || loginRequired[entryKey(entry)] || /\b(?:401|403|404)\b|expired|unauthori[sz]ed|authentication required|login required|invalid token|credentials are missing/i.test(status));
   }
-  function exhaustedLimits(entry: QuickAccount): string[] {
+  function exhaustedLimits(entry: QuickEntry): string[] {
+    if (isProviderKey(entry)) {
+      const quota = keyQuota(entry);
+      const windows = usageWindows(entry);
+      const exhausted = windows.filter((window) => window.pct >= 100 && (window.resets_at === null || window.resets_at * 1000 > Date.now())).map((window) => window.label);
+      if (quota?.limit !== null && quota?.limit !== undefined && quota.remaining !== null && quota.remaining <= 0) exhausted.push('credit');
+      return [...new Set(exhausted)];
+    }
     if (entry.provider === 'agy') {
       return /quota|limit reached|exhausted/i.test(entry.account.status ?? '') ? ['quota'] : [];
     }
@@ -112,12 +186,12 @@
    * every full window has reset, so that is the latest of those. Antigravity tells its windows only for the account in
    * use (the status line agy writes).
    */
-  function nextReset(entry: QuickAccount): { at: number; label: string } | null {
+  function nextReset(entry: QuickEntry): { at: number; label: string } | null {
     const now = Date.now() / 1000;
-    const windows = entry.provider === 'agy' ? (entry.account.active ? (connectors.agyQuota?.groups.flatMap((group) => group.windows) ?? []) : []) : entry.account.usage;
+    const windows = usageWindows(entry);
     const live = windows.filter((window): window is typeof window & { resets_at: number } => window.resets_at !== null && window.resets_at > now);
     const full = live.filter((window) => window.pct >= 100);
-    const at = (window: (typeof live)[number]) => steadyReset(`${entry.provider}:${entry.account.id}:${window.label}`, window.resets_at);
+    const at = (window: (typeof live)[number]) => steadyReset(`${entryKey(entry)}:${window.label}`, window.resets_at);
     if (full.length) {
       const last = full.reduce((a, b) => (at(b) > at(a) ? b : a));
       return { at: at(last), label: last.label };
@@ -127,10 +201,10 @@
     return { at: at(first), label: `${first.label} ${Math.round(first.pct)}%` };
   }
   type AccountState = 'in-use' | 'switch' | 'limit' | 'sign-in';
-  function accountState(entry: QuickAccount): AccountState {
+  function accountState(entry: QuickEntry): AccountState {
     if (needsLogin(entry)) return 'sign-in';
     if (exhaustedLimits(entry).length) return 'limit';
-    return entry.account.active ? 'in-use' : 'switch';
+    return entryActive(entry) ? 'in-use' : 'switch';
   }
   const ACCOUNT_ORDER: Record<AccountState, number> = { 'in-use': 0, switch: 1, limit: 2, 'sign-in': 3 };
   const sortedAccountRows = $derived([...accountRows].sort((a, b) => ACCOUNT_ORDER[accountState(a)] - ACCOUNT_ORDER[accountState(b)]));
@@ -180,20 +254,55 @@
     });
     previous?.close();
   }
-  function beginAccountAction(entry: QuickAccount) {
+  function switchProviderKey(entry: QuickProviderKey): boolean {
+    const current = connectors.custom.find((item) => item.id === entry.customProvider.id);
+    if (!current || !current.keys.some((key) => key.id === entry.key.id)) return false;
+    saveProvider({ ...current, keys: current.keys.map((key) => ({ ...key })), activeKeyId: entry.key.id });
+    return true;
+  }
+  function setQuickAutoSwitch(enabled: boolean) {
+    if (customProvider) {
+      saveProvider({ ...customProvider, keys: customProvider.keys.map((key) => ({ ...key })), autoSwitch: enabled });
+    } else if (autoSwitchConnector) {
+      void setConnectorAutoSwitch(autoSwitchConnector, enabled);
+    }
+  }
+  function beginAccountAction(entry: QuickEntry) {
     if (switchingAccount || confirmOpen) return;
-    if (entry.account.active && !needsLogin(entry)) {
+    if (entryActive(entry) && !needsLogin(entry)) {
       accountOpen = false;
       return;
     }
     accountOpen = false;
+    if (isProviderKey(entry)) {
+      const ref = zModalService.show({
+        zTitle: 'Switch API key?',
+        zContent: `Switch the active ${entry.customProvider.name} API key to ${entryDisplay(entry)}?`,
+        zConfirmStyle: 'dialog',
+        zIcon: 'lucideArrowLeftRight',
+        zOkIcon: 'lucideArrowLeftRight',
+        zOkText: 'Switch API key',
+        zMaskClosable: false,
+        zCancelText: 'Cancel',
+        zWidth: '440px',
+        onOk: () => {
+          const ok = switchProviderKey(entry);
+          if (ok) toast.success(`Now using ${entryDisplay(entry)}`);
+          else toast.error('Could not switch API keys.');
+          return ok;
+        },
+      });
+      void ref.closed;
+      return;
+    }
     if (needsLogin(entry)) {
       openLoginConfirm(entry);
       return;
     }
     switchingAccount = true;
     let loginError = '';
-    const originalId = accountRows.find((item) => item.account.active)?.account.id;
+    const original = accountRows.find((item) => !isProviderKey(item) && item.account.active);
+    const originalId = original && !isProviderKey(original) ? original.account.id : undefined;
     let switchPromise: Promise<boolean> | null = null;
     let rollbackPromise: Promise<boolean> | null = null;
     let cancelRequested = false;
@@ -290,7 +399,9 @@
     const entry = confirmAccount;
     if (!entry || confirmBusy) return;
     const generation = ++confirmGeneration;
+    const modal = signInRef;
     confirmBusy = true;
+    if (modal) modal.loading = true;
     confirmError = '';
     try {
       if (entry.provider === 'agy') {
@@ -337,6 +448,7 @@
         closeAccountConfirm();
       } else confirmError = connectors.errors[switchErrorKey(entry)] ?? 'Could not switch accounts.';
     } finally {
+      if (modal) modal.loading = false;
       if (generation === confirmGeneration) {
         confirmBusy = false;
         if (confirmOpen) showSignIn();
@@ -411,10 +523,9 @@
   }
 </script>
 
-{#if session}
-  <div class="mx-auto mt-1.5 flex min-w-0 max-w-full items-center gap-1 px-1 text-sm text-muted-foreground">
+<div class="mx-auto mt-1.5 flex min-w-0 max-w-full items-center gap-1 px-1 text-sm text-muted-foreground">
     <!-- Project -->
-    {#if canMove}
+    {#if session && canMove}
       <button
         bind:this={projectTrigger}
         type="button"
@@ -425,18 +536,23 @@
         onclick={() => (projectOpen = !projectOpen)}
       >
         <ZIcon zType={icon(session.projectId === NO_PROJECT ? 'lucideMonitor' : 'lucideFolder')} class="size-3.5 shrink-0" />
-        <span class="truncate">{projectName(session.projectId)}</span>
+        {#key session.projectId}<span class="truncate" in:fade={{ duration: 180 }}>{projectName(session.projectId)}</span>{/key}
         <ZIcon zType={icon('lucideChevronDown')} class="size-3 shrink-0" />
       </button>
-    {:else}
+    {:else if session}
       <span class="inline-flex h-6 min-w-0 max-w-48 items-center gap-1.5 px-1.5 max-[560px]:max-w-[26%]" title="A chat stays in its folder once it has started">
         <ZIcon zType={icon(session.projectId === NO_PROJECT ? 'lucideMonitor' : 'lucideFolder')} class="size-3.5 shrink-0" />
-        <span class="truncate">{projectName(session.projectId)}</span>
+        {#key session.projectId}<span class="truncate" in:fade={{ duration: 180 }}>{projectName(session.projectId)}</span>{/key}
+      </span>
+    {:else}
+      <span class="inline-flex h-6 min-w-0 max-w-48 items-center gap-1.5 px-1.5 text-muted-foreground/70 max-[560px]:max-w-[26%]" aria-label="Project loading">
+        <ZIcon zType={icon('lucideMonitor')} class="size-3.5 shrink-0" />
+        <span in:fade={{ duration: 180 }} class="truncate">Loading project…</span>
       </span>
     {/if}
 
     <!-- Git branch -->
-    {#if branches}
+    {#if session && branches}
       <button
         bind:this={branchTrigger}
         type="button"
@@ -454,60 +570,70 @@
       </button>
     {/if}
 
-    {#if customProvider}
-      <button
-        type="button"
-        class="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[0.6875rem] text-muted-foreground outline-none transition-colors hover:bg-primary/10 hover:text-primary {((customProvider?.autoSwitch ?? (autoSwitchConnector ? connectors.autoSwitch[autoSwitchConnector] : false))) ? 'text-primary' : ''}"
-        aria-label="Toggle automatic account switching"
-        aria-pressed={customProvider?.autoSwitch ?? (autoSwitchConnector ? connectors.autoSwitch[autoSwitchConnector] : false)}
-        title="Automatically switch accounts or API keys when quota or authentication fails"
-        onclick={() => {
-          if (customProvider) customProvider.autoSwitch = !customProvider.autoSwitch;
-          else if (autoSwitchConnector) void setConnectorAutoSwitch(autoSwitchConnector, !connectors.autoSwitch[autoSwitchConnector]);
-        }}
-      >
-        <ZIcon zType={icon('lucideArrowLeftRight')} class="size-3" /> Auto switch
-      </button>
-      {#if customProvider}<span class="max-w-32 truncate text-[0.6875rem] text-muted-foreground" title={autoSwitchLabel}>{#key autoSwitchLabel}<span in:fade={{ duration: 180 }}>{autoSwitchLabel}</span>{/key}</span>{/if}
-    {/if}
-
-    {#if accountProvider && canOpenAccountMenu}
-      <button
+    <button
         bind:this={accountTrigger}
         type="button"
-        class="ml-auto inline-flex h-6 min-w-0 max-w-[44%] cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-muted-foreground outline-none hover:bg-primary/10 hover:text-primary {accountOpen ? TRIGGER_ON_PLAIN : ''}"
-        aria-label="{labelFor(accountProvider)} account: {activeAccount?.account.email ?? 'needs attention'}"
-        title="{labelFor(accountProvider)} · {activeAccount?.account.email ?? 'Account needs attention'}"
+        class="ml-auto inline-flex h-6 min-w-0 max-w-[44%] items-center gap-1.5 rounded-md px-1.5 text-muted-foreground outline-none disabled:cursor-wait disabled:opacity-70 hover:bg-primary/10 hover:text-primary {accountOpen ? TRIGGER_ON_PLAIN : ''}"
+        aria-label="{menuLabel} account: {activeEntry ? entryDisplay(activeEntry) : session ? 'needs attention' : 'loading'}"
+        title="{menuLabel} · {activeEntry ? entryDisplay(activeEntry) : session ? 'Account needs attention' : 'Loading account'}"
         aria-haspopup="listbox"
         aria-expanded={accountOpen}
-        onclick={() => (accountOpen = !accountOpen)}
+        disabled={!session || !(accountProvider || customProvider)}
+        onclick={() => { if (session && (accountProvider || customProvider)) accountOpen = !accountOpen; }}
       >
-        <ZIcon zType={icon(activeAccount && needsLogin(activeAccount) ? 'lucideShieldAlert' : 'lucideArrowLeftRight')} class="size-3.5 shrink-0 {activeAccount && needsLogin(activeAccount) ? 'text-warning' : ''}" />
-        <span class="min-w-0 truncate">{#key activeAccount?.account.email ?? `${labelFor(accountProvider)} account`}<span in:fade={{ duration: 180 }}>{activeAccount?.account.email ?? `${labelFor(accountProvider)} account`}</span>{/key}</span>
+        {#if customProvider}
+          <AgentLogo agent="custom" model={session?.model} class="size-3.5 shrink-0" />
+        {:else}
+          <ZIcon zType={icon(activeEntry && needsLogin(activeEntry) ? 'lucideShieldAlert' : 'lucideArrowLeftRight')} class="size-3.5 shrink-0 {activeEntry && needsLogin(activeEntry) ? 'text-warning' : ''}" />
+        {/if}
+        <span class="min-w-0 truncate">{#key activeEntry ? entryDisplay(activeEntry) : session ? `${menuLabel} account` : 'Loading account…'}<span in:fade={{ duration: 180 }}>{activeEntry ? entryDisplay(activeEntry) : session ? `${menuLabel} account` : 'Loading account…'}</span>{/key}</span>
         <ZIcon zType={icon('lucideChevronDown')} class="size-3 shrink-0" />
       </button>
-    {/if}
   </div>
 
+{#if session}
   <PickerPopover anchor={projectTrigger} bind:open={projectOpen} items={projectItems} local search={choices.length >= SEARCH_FROM} placeholder="Search projects…" label="Project" empty="No project matches" position="top-left" size="sm" width={220} onpick={(item) => pickProject(item.data)} />
 
   <PickerPopover anchor={branchTrigger} bind:open={branchOpen} items={branchItems} local search={branchItems.length >= SEARCH_FROM} placeholder="Search branches…" label="Git branch" empty="No branch matches" position="top-left" size="sm" width={220} onpick={(item) => void switchTo(item.data)} />
 
   <ZPopover anchor={accountTrigger} bind:open={accountOpen} zTrigger="manual" zPosition="top-right" zOffset={6} zWidth={280}>
     {#snippet children()}
-      <div class="flex w-full flex-col text-sm" role="listbox" aria-label="{labelFor(accountProvider ?? 'agy')} accounts">
+      <div class="flex w-full flex-col text-sm" role="listbox" aria-label="{menuLabel} accounts">
         <div class="flex items-center gap-2 border-b border-border px-3 py-2 text-[0.6875rem] font-medium text-muted-foreground">
-          <AgentLogo agent={accountProvider === 'agy' ? 'antigravity' : accountProvider ?? 'antigravity'} class="size-3.5 shrink-0" />
-          <span class="min-w-0 flex-1">{labelFor(accountProvider ?? 'agy')} accounts</span>
-          {#if canQuickAdd}
-            <ZButton zWave={false} zType="ghost" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Add {labelFor(accountProvider ?? 'agy')} account" title="Add account" onclick={() => void addQuickAccount()}>
-              <ZIcon zType={icon('lucidePlus')} class="size-3.5" />
-            </ZButton>
+          {#if customProvider}
+            <AgentLogo agent="custom" model={session?.model} class="size-3.5 shrink-0" />
+          {:else}
+            <AgentLogo agent={accountProvider === 'agy' ? 'antigravity' : accountProvider ?? 'antigravity'} class="size-3.5 shrink-0" />
           {/if}
+          <span class="min-w-0 flex-1">{menuLabel} accounts</span>
+          <div class="flex items-center gap-0.5">
+            <ZButton
+              zWave={false}
+              zType="ghost"
+              zSize="sm"
+              zIconOnly
+              zTypeIcon={icon('lucideRefreshCw')}
+              zSizeIcon="14"
+              zLoading={accountRefreshing}
+              zDisabled={accountRefreshing}
+              class="size-6! shrink-0 p-0"
+              aria-label="Force refresh {menuLabel} account limits"
+              title="Force refresh account limits"
+              onclick={() => void forceRefreshAccounts()}
+            />
+            {#if canQuickAdd}
+              <ZButton zWave={false} zType="ghost" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Add {labelFor(accountProvider ?? 'agy')} account" title="Add account" onclick={() => void addQuickAccount()}>
+                <ZIcon zType={icon('lucidePlus')} class="size-3.5" />
+              </ZButton>
+            {/if}
+          </div>
         </div>
         <div class="flex max-h-[17.5rem] flex-col overflow-x-hidden overflow-y-auto p-1" {@attach glide()}>
+          {#if sortedAccountRows.length === 0}
+            <div class="px-2.5 py-3 text-[0.6875rem] text-muted-foreground" role="status">Loading accounts…</div>
+          {/if}
           {#each sortedAccountRows as entry, index (entryKey(entry))}
-            {@const active = entry.account.active}
+            {@const active = entryActive(entry)}
             {@const expired = needsLogin(entry)}
             {@const exhausted = exhaustedLimits(entry)}
             {@const unavailable = expired || exhausted.length > 0}
@@ -526,21 +652,21 @@
             >
               <ZIcon zType={icon(expired ? 'lucideLogIn' : exhausted.length ? 'lucideCircleOff' : active ? 'lucideCheck' : 'lucideArrowLeftRight')} class="size-3.5 shrink-0 {expired ? 'text-warning' : exhausted.length ? 'text-muted-foreground/55' : active ? 'text-primary' : 'text-muted-foreground'}" />
               <span class="min-w-0 flex-1">
-                <span class="block truncate font-medium {unavailable ? 'text-muted-foreground/60' : 'text-foreground'}">{entry.account.email}</span>
+                <span class="block truncate font-medium {unavailable ? 'text-muted-foreground/60' : 'text-foreground'}">{entryDisplay(entry)}</span>
                 {#if exhausted.length}<span class="mt-0.5 block truncate text-[10px]">Limit reached · {exhausted.join(', ')}{#if reset} · <span class="font-medium text-foreground/80 tabular-nums">resets in {resetCountdown(reset.at, ticker.sec)}</span>{/if}</span>
                 {:else if reset}<span class="mt-0.5 block truncate text-[10px] text-muted-foreground">{reset.label} · <span class="tabular-nums">resets in {resetCountdown(reset.at, ticker.sec)}</span></span>
-                {:else if entry.account.status}<span class="mt-0.5 block truncate text-[10px] text-muted-foreground">{entry.account.status}</span>{/if}
+                {:else if entryStatus(entry)}<span class="mt-0.5 block truncate text-[10px] text-muted-foreground">{entryStatus(entry)}</span>{/if}
               </span>
               <QuotaBattery remaining={quotaRemaining(entry)} />
             </button>
           {/each}
         </div>
-        {#if autoSwitchConnector}
+        {#if customProvider || autoSwitchConnector}
           <!-- Fixed footer under the scrolling list, separated like the header. -->
           <div class="flex items-center gap-2 border-t border-border px-3 py-2 text-[0.6875rem] font-medium text-muted-foreground">
             <ZIcon zType={icon('lucideArrowLeftRight')} class="size-3.5 shrink-0" />
             <span class="min-w-0 flex-1 truncate">Auto switch</span>
-            <ZSwitch zVariant="dot" zSize="sm" checked={connectors.autoSwitch[autoSwitchConnector]} onChange={(value) => void setConnectorAutoSwitch(autoSwitchConnector, value)} />
+            <ZSwitch zVariant="dot" zSize="sm" checked={customProvider?.autoSwitch ?? (autoSwitchConnector ? connectors.autoSwitch[autoSwitchConnector] : false)} onChange={(value) => setQuickAutoSwitch(value)} />
           </div>
         {/if}
       </div>

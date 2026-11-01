@@ -26,14 +26,14 @@ export const API_CONNECTORS = {
 } as const;
 export type ApiConnectorId = keyof typeof API_CONNECTORS;
 export const API_CONNECTOR_IDS = Object.keys(API_CONNECTORS) as ApiConnectorId[];
-export type ConnectorId = 'claude' | 'codex' | 'agy' | 'opencode' | 'copilot' | 'workbuddy' | ApiConnectorId;
-export type AccountConnectorId = Exclude<ConnectorId, ApiConnectorId>;
+export type ConnectorId = 'claude' | 'codex' | 'agy' | 'opencode' | 'copilot' | 'workbuddy' | 'muse-code' | ApiConnectorId;
+export type AccountConnectorId = Exclude<ConnectorId, ApiConnectorId | 'muse-code'>;
 export type AccountProvider = 'claude' | 'codex' | 'copilot';
 
 export type Tool = { id: string; path: string | null; version: string | null };
 export type Login = { logged_in: boolean | null; email: string | null; plan: string | null; detail: string | null };
-export type Detected = { tools: Tool[]; claude: Login; codex: Login; antigravity: Login; opencode: Login; copilot: Login; workbuddy: Login };
-export type UsageWindow = { label: string; pct: number; resets_at: number | null };
+export type Detected = { tools: Tool[]; claude: Login; codex: Login; antigravity: Login; opencode: Login; copilot: Login; workbuddy: Login; muse_code: Login };
+export type UsageWindow = { label: string; pct: number; resets_at: number | null; remaining?: number; limit?: number };
 export type Account = {
   id: string;
   email: string;
@@ -66,6 +66,7 @@ export type AgyQuota = { observed_at: number | null; groups: QuotaGroup[] };
 /** One saved Antigravity account with its own quota; `error` says why there is none. */
 export type AgyAccountQuota = { id: string; email: string; active: boolean; quota: AgyQuota | null; error: string | null };
 export type AgyAccount = { id: string; email: string; active: boolean; expired: boolean; status: string | null };
+export type OpenCodeQuota = { windows: UsageWindow[]; observed_at: number | null; error: string | null };
 export type ProviderKind = 'openai' | 'anthropic' | 'ollama';
 export type ProviderApiKey = { id: string; label: string; apiKey: string; keyEnv?: string };
 export type RoutingStrategy = 'auto' | 'coding' | 'fast' | 'subscription' | 'thrifty' | 'offline' | 'lkgp';
@@ -111,6 +112,7 @@ export type CustomProvider = {
   capabilities?: string[];
   /** Uses the native WorkBuddy connector credential and gateway request headers. */
   workbuddy?: boolean;
+  nativeAuth?: 'workbuddy' | 'muse-code';
 };
 /** The Claude Console's API credit: the key the `credit:` Claude models run on, and the Console sign-in that reads
  * the credit left. Both stay on this computer only. */
@@ -150,13 +152,42 @@ export const connectors = $state({
   /** What agy last reported per model family, read from the file a status-line tool saves. `null`: none saved. */
   agyQuota: null as AgyQuota | null,
   agyAccountQuotas: [] as AgyAccountQuota[],
+  opencodeQuota: null as OpenCodeQuota | null,
   scanning: false,
   manualRefreshing: false,
 });
 
 const ACCOUNT_CACHE_KEY = 'accounts.quota-cache';
 const ACCOUNT_AUTO_SWITCH_KEY = 'accounts.auto-switch';
+export const ACCOUNT_REFRESH_TTL_MS = 60_000;
 const accountCacheAt: Partial<Record<ConnectorId, number>> = {};
+const accountRefreshAt = new Map<string, number>();
+const accountRefreshInFlight = new Map<string, Promise<boolean>>();
+
+/** One refresh clock shared by Settings, the composer and the account switcher. */
+const quotaRefreshSubscribers = new Set<() => void>();
+let quotaRefreshTimer: ReturnType<typeof setInterval> | undefined;
+
+export function subscribeQuotaRefresh(job: () => void): () => void {
+  quotaRefreshSubscribers.add(job);
+  if (!quotaRefreshTimer) {
+    quotaRefreshTimer = setInterval(() => {
+      for (const subscriber of quotaRefreshSubscribers) subscriber();
+    }, ACCOUNT_REFRESH_TTL_MS);
+  }
+  job();
+  return () => {
+    quotaRefreshSubscribers.delete(job);
+    if (quotaRefreshSubscribers.size === 0 && quotaRefreshTimer) {
+      clearInterval(quotaRefreshTimer);
+      quotaRefreshTimer = undefined;
+    }
+  };
+}
+
+function fresh(at: number | undefined): boolean {
+  return at !== undefined && Date.now() - at < ACCOUNT_REFRESH_TTL_MS;
+}
 /** Account lists and quota snapshots are hydrated from IndexedDB before a live refresh replaces them. */
 const accountCacheReady = getPref<SavedAccountCache>(ACCOUNT_CACHE_KEY)
   .then((saved) => {
@@ -328,13 +359,21 @@ export async function refreshDetect() {
 
 let adopted = false;
 
-export async function refreshAccounts(provider: AccountProvider, refresh = false, duringSwitch = false) {
+export async function refreshAccounts(provider: AccountProvider, refresh = false, duringSwitch = false, accountId?: string) {
   if (!duringSwitch && credentialBusy(provider)) await waitForCredential(provider);
   if (!inTauri()) return;
   await Promise.all([accountCacheReady, autoSwitchReady]);
+  if (!refresh && !duringSwitch && !accountId && fresh(accountCacheAt[provider])) return;
+  const cacheKey = accountId ? `${provider}:${accountId}` : provider;
+  if (!refresh && !duringSwitch && accountId && fresh(accountRefreshAt.get(cacheKey))) return;
+  const existing = accountRefreshInFlight.get(cacheKey);
+  if (existing) {
+    await existing;
+    return;
+  }
   const timeoutMs = provider === 'claude' ? 90_000 : 65_000;
-  await task(`accounts:${provider}`, refresh ? 'Refreshing usage' : 'Reading accounts', async () => {
-    const next = await callWithTimeout<Accounts>('accounts_list', { provider, refresh }, timeoutMs);
+  const request = task(`accounts:${provider}`, refresh ? 'Refreshing usage' : 'Reading accounts', async () => {
+    const next = await callWithTimeout<Accounts>('accounts_list', { provider, refresh, ...(accountId ? { accountId } : {}) }, timeoutMs);
     // A fresh `cswap` knows no account yet: save the one Claude Code is signed in as, so the list is not empty.
     if (provider === 'claude' && next.manager && next.accounts.length === 0 && !next.error && connectors.detected?.claude.logged_in && !adopted) {
       adopted = true;
@@ -345,16 +384,41 @@ export async function refreshAccounts(provider: AccountProvider, refresh = false
         next.error = `Could not save the current Claude account: ${message(error)}`;
       }
     }
-    connectors.accounts[provider] = next;
-    accountCacheAt[provider] = Date.now();
+    if (accountId) {
+      const previous = connectors.accounts[provider];
+      const updated = next.accounts.find((item) => item.id === accountId);
+      connectors.accounts[provider] = previous && updated
+        ? { ...previous, auto_switch: next.auto_switch ?? previous.auto_switch, error: next.error, accounts: previous.accounts.map((item) => item.id === accountId ? updated : item) }
+        : next;
+      accountRefreshAt.set(cacheKey, Date.now());
+    } else {
+      connectors.accounts[provider] = next;
+      accountCacheAt[provider] = Date.now();
+      for (const account of next.accounts) accountRefreshAt.set(`${provider}:${account.id}`, Date.now());
+    }
     void saveAccountCache();
   });
+  accountRefreshInFlight.set(cacheKey, request);
+  try {
+    await request;
+  } finally {
+    if (accountRefreshInFlight.get(cacheKey) === request) accountRefreshInFlight.delete(cacheKey);
+  }
 }
 
-export async function refreshAgyQuota(duringSwitch = false) {
+export async function refreshAccount(provider: AccountProvider, accountId: string) {
+  await refreshAccounts(provider, true, false, accountId);
+}
+
+let agyQuotaRefresh: Promise<boolean> | undefined;
+
+export async function refreshAgyQuota(duringSwitch = false, force = false) {
   if (!duringSwitch && credentialBusy('agy')) await waitForCredential('agy');
   if (!inTauri()) return;
   await accountCacheReady;
+  if (!force && !duringSwitch && fresh(accountCacheAt.agy)) return;
+  if (agyQuotaRefresh) return agyQuotaRefresh;
+  const run = task('quota:agy', 'Refreshing Antigravity quota', async () => {
   // The local status-line cache is immediate; do not leave the Usage cards blank while the live API request waits.
   if (!connectors.agyQuota) {
     try {
@@ -373,18 +437,28 @@ export async function refreshAgyQuota(duringSwitch = false) {
     // Preserve saved figures when the live quota endpoint is unavailable.
   }
   try {
-    connectors.agyAccountQuotas = await call<AgyAccountQuota[]>('antigravity_quotas');
+    connectors.agyAccountQuotas = await call<AgyAccountQuota[]>('antigravity_quotas', { force: force || duringSwitch });
+    accountCacheAt.agy = Date.now();
+    void saveAccountCache();
   } catch {
     // Keep the last figures of each account.
+  }
+  });
+  agyQuotaRefresh = run;
+  try {
+    await run;
+  } finally {
+    if (agyQuotaRefresh === run) agyQuotaRefresh = undefined;
   }
 }
 
 let agyAccountsRefresh: Promise<boolean> | undefined;
 
-export async function refreshAgyAccounts(duringSwitch = false) {
+export async function refreshAgyAccounts(duringSwitch = false, force = false) {
   if (!duringSwitch && credentialBusy('agy')) await waitForCredential('agy');
   if (!inTauri()) return;
   await accountCacheReady;
+  if (!force && !duringSwitch && fresh(accountCacheAt.agy)) return;
   if (agyAccountsRefresh) return agyAccountsRefresh;
   const refresh = task('accounts:agy', 'Reading Antigravity accounts', async () => {
     connectors.accounts.agy = await call<AgyAccount[]>('antigravity_accounts_list');
@@ -396,6 +470,28 @@ export async function refreshAgyAccounts(duringSwitch = false) {
     await refresh;
   } finally {
     if (agyAccountsRefresh === refresh) agyAccountsRefresh = undefined;
+  }
+}
+
+export async function refreshAgyAccount(accountId: string) {
+  await task(`quota:agy:${accountId}`, 'Refreshing Antigravity account', async () => {
+    const rows = await call<AgyAccountQuota[]>('antigravity_quotas', { force: true, accountId });
+    const updated = rows.find((item) => item.id === accountId);
+    if (updated) {
+      connectors.agyAccountQuotas = connectors.agyAccountQuotas.some((item) => item.id === accountId)
+        ? connectors.agyAccountQuotas.map((item) => item.id === accountId ? updated : item)
+        : [...connectors.agyAccountQuotas, updated];
+    }
+  });
+}
+
+export async function removeAgyAccount(account: AgyAccount) {
+  const ok = await task(`remove:agy:${account.id}`, 'Removing', () => call('antigravity_account_remove', { id: account.id }));
+  if (ok) {
+    connectors.accounts.agy = connectors.accounts.agy.filter((item) => item.id !== account.id);
+    connectors.agyAccountQuotas = connectors.agyAccountQuotas.filter((item) => item.id !== account.id);
+    void saveAccountCache();
+    toast.success(`${account.email} removed`);
   }
 }
 
@@ -419,7 +515,7 @@ export async function switchAgyAccount(account: AgyAccount): Promise<boolean> {
   if (ok) {
     accountSwitched('antigravity');
     toast.success(`Now using ${account.email}`);
-    await Promise.all([refreshAgyAccounts(), refreshDetect(), refreshAgyQuota()]);
+    await Promise.all([refreshAgyAccounts(), refreshDetect(), refreshAgyQuota(false, true)]);
     await refreshAccountModels('antigravity');
   }
   return ok;
@@ -432,12 +528,35 @@ export async function refreshAll(refresh = false) {
   try {
     // Keep Claude detection first because account adoption depends on its signed-in state.
     // Codex and Antigravity account reads can proceed while CLI detection runs.
-    void refreshAgyQuota();
-    await Promise.all([refreshDetect(), refreshAccounts('codex', refresh), refreshAccounts('copilot'), refreshAgyAccounts()]);
+    await Promise.all([refreshDetect(), refreshAccounts('codex', refresh), refreshAccounts('copilot', refresh), refreshAgyAccounts(false, refresh), refreshAgyQuota(false, refresh), refreshOpenCodeQuota(refresh)]);
     await refreshAccounts('claude', refresh);
+    // A WorkBuddy OAuth token can already exist while its provider catalogue is missing from the picker.
+    // Refreshing connector settings must rebuild that native-backed provider as well.
+    if (inTauri() && connectors.detected?.workbuddy.logged_in) await syncWorkbuddyProvider();
+    if (inTauri() && connectors.detected?.muse_code.logged_in) await syncMuseCodeProvider();
   } finally {
     if (refresh) connectors.manualRefreshing = false;
   }
+}
+
+let openCodeQuotaAt = 0;
+let openCodeQuotaRefresh: Promise<void> | undefined;
+
+export async function refreshOpenCodeQuota(force = false) {
+  if (!inTauri()) return;
+  if (!force && fresh(openCodeQuotaAt)) return;
+  if (openCodeQuotaRefresh) return openCodeQuotaRefresh;
+  openCodeQuotaRefresh = (async () => {
+    try {
+      connectors.opencodeQuota = await call<OpenCodeQuota>('opencode_quota');
+      openCodeQuotaAt = Date.now();
+    } catch (error) {
+      connectors.opencodeQuota = { windows: [], observed_at: null, error: message(error) };
+    } finally {
+      openCodeQuotaRefresh = undefined;
+    }
+  })();
+  return openCodeQuotaRefresh;
 }
 
 export async function install(id: string, label: string) {
@@ -470,8 +589,10 @@ export async function login(id: ConnectorId, label: string): Promise<boolean> {
     if (id === 'claude') adopted = false; // a fresh sign-in may fix what stopped the account being saved
     // Login completion is independent from slow usage/account reads. Refresh those in the background.
     void refreshAll();
+    if (id === 'opencode') void refreshOpenCodeQuota(true);
     if (id === 'copilot') refreshCopilotModels();
     if (id === 'workbuddy') await syncWorkbuddyProvider();
+    if (id === 'muse-code') await syncMuseCodeProvider();
     if (id !== 'agy') toast.success(`${label} signed in`);
   }
   return ok;
@@ -512,9 +633,15 @@ export async function saveApiConnectorKey(id: ApiConnectorId, value: string): Pr
 }
 
 async function syncWorkbuddyProvider(): Promise<void> {
-  const token = await loadSecret('workbuddy');
-  if (!token) return;
-  const models = await call<string[]>('workbuddy_models').catch(() => []);
+  // WorkBuddy stores its OAuth token in chunked native credentials and the Rust command owns refresh/auth.
+  // Do not read the old single-secret key here: it is absent after a successful current login, which used to make
+  // this function return before model discovery and left WorkBuddy out of the picker.
+  const models = await call<string[]>('workbuddy_models').catch((error) => {
+    connectors.errors['login:workbuddy'] = `Signed in, but WorkBuddy model discovery failed: ${message(error)}`;
+    return null;
+  });
+  if (models === null) return;
+  delete connectors.errors['login:workbuddy'];
   const existing = connectors.custom.find((item) => item.id === 'workbuddy');
   const next = normalizeCustomProvider({
     ...(existing ?? {}),
@@ -523,16 +650,64 @@ async function syncWorkbuddyProvider(): Promise<void> {
     kind: 'openai',
     baseUrl: 'https://www.workbuddy.ai/v2',
     keyEnv: '',
-    keys: [{ id: 'workbuddy-account', label: 'WorkBuddy account', apiKey: token }],
+    // Chat requests use the native WorkBuddy credential when `workbuddy` is true; the picker provider does not need
+    // the access token in its custom-provider record.
+    keys: [{ id: 'workbuddy-account', label: 'WorkBuddy account', apiKey: existing?.keys[0]?.apiKey ?? '' }],
     activeKeyId: 'workbuddy-account',
     autoSwitch: false,
     models: models.length ? models : existing?.models ?? [],
     defaultModel: models[0] ?? existing?.defaultModel ?? '',
     enabled: true,
     workbuddy: true,
+    nativeAuth: 'workbuddy',
   });
   saveProvider(next, true);
   await persistCustom(connectors.custom);
+}
+
+async function syncMuseCodeProvider(): Promise<void> {
+  const models = await call<string[]>('muse_code_models').catch((error) => {
+    connectors.errors['login:muse-code'] = `Signed in, but Muse Code model discovery failed: ${message(error)}`;
+    return null;
+  });
+  if (models === null) return;
+  delete connectors.errors['login:muse-code'];
+  const existing = connectors.custom.find((item) => item.id === 'muse-code');
+  const next = normalizeCustomProvider({
+    ...(existing ?? {}),
+    id: 'muse-code',
+    name: 'Muse Code',
+    kind: 'openai',
+    baseUrl: 'https://api.meta.ai/v1',
+    keyEnv: '',
+    keys: [{ id: 'muse-code-account', label: 'Muse Code account', apiKey: '' }],
+    activeKeyId: 'muse-code-account',
+    autoSwitch: false,
+    models: models.length ? models : existing?.models ?? [],
+    defaultModel: models[0] ?? existing?.defaultModel ?? 'muse-spark-1.3-contributor',
+    enabled: true,
+    nativeAuth: 'muse-code',
+  });
+  saveProvider(next, true);
+  await persistCustom(connectors.custom);
+}
+
+/** Refreshes WorkBuddy's native-backed model provider without re-reading every connector account. */
+export async function refreshWorkbuddyModels(): Promise<void> {
+  if (inTauri()) await syncWorkbuddyProvider();
+}
+
+export async function refreshMuseCodeModels(): Promise<void> {
+  if (inTauri()) await syncMuseCodeProvider();
+}
+
+export async function logoutNativeConnector(id: 'workbuddy' | 'muse-code'): Promise<boolean> {
+  const ok = await task(`logout:${id}`, `Signing out of ${id === 'muse-code' ? 'Muse Code' : 'WorkBuddy'}`, () => call('connector_logout', { id }));
+  if (!ok) return false;
+  removeProvider(id);
+  delete connectors.errors[`login:${id}`];
+  await refreshDetect();
+  return true;
 }
 
 /** Cancels a connector sign-in started from an account confirmation dialog. */
@@ -828,13 +1003,17 @@ export function roomLine(agent: string, now = Date.now()): string {
 /**
  * The highest live usage window (5h or weekly) of the signed-in account, in percent; null when unknown.
  * Antigravity: the quota group of the model's family (`gemini` or `3p`), or every group when no model is given.
- * Other agents (OpenCode, Copilot, …) expose no usage figures, so they read as unknown.
+ * OpenCode Go exposes rolling, weekly and monthly windows when its Go key is present; Copilot still relies on its account list.
  */
 export function usagePct(agent: string, model?: string, now = Date.now()): number | null {
   if (agent === 'antigravity') {
     const groups = connectors.agyQuota?.groups ?? [];
     const family = model ? (model.startsWith('gemini-') ? 'gemini' : '3p') : null;
     const live = groups.filter((group) => !family || group.id === family).flatMap((group) => group.windows).filter((window) => liveWindow(window, now));
+    return live.length ? Math.max(...live.map((window) => window.pct)) : null;
+  }
+  if (agent === 'opencode') {
+    const live = connectors.opencodeQuota?.windows.filter((window) => liveWindow(window, now)) ?? [];
     return live.length ? Math.max(...live.map((window) => window.pct)) : null;
   }
   if (agent !== 'claude' && agent !== 'codex') return null;
@@ -893,25 +1072,55 @@ export function startWatching() {
 // --- Custom and local providers ----------------------------------------------------------------------------
 
 /** What a provider says about the spending left on a key (OpenRouter), by provider id. */
-export type ProviderQuota = { used: number; limit: number | null; remaining: number | null; free_tier: boolean; at: number };
+export type ProviderQuota = {
+  used: number;
+  limit: number | null;
+  remaining: number | null;
+  free_tier: boolean;
+  windows?: UsageWindow[];
+  source?: 'api' | 'balance' | 'headers';
+  currency?: string;
+  at: number;
+};
 export const providerQuotas = $state<Record<string, ProviderQuota>>({});
 const providerQuotaCacheReady = getPref<Record<string, ProviderQuota>>('providers.quota-cache').then((saved) => {
   if (saved) Object.assign(providerQuotas, saved);
 }).catch(() => undefined);
+const providerQuotaRefreshes = new Map<string, Promise<void>>();
 
 /** Reads the spending left on a custom provider's key, when the provider tells it; leaves it unset otherwise. */
-export async function refreshProviderQuota(provider: CustomProvider) {
+export async function refreshProviderQuota(provider: CustomProvider, force = false, keyId?: string) {
   if (!inTauri()) return;
   await providerQuotaCacheReady;
-  const key = activeProviderKey(provider);
+  const key = provider.keys.find((item) => item.id === keyId) ?? activeProviderKey(provider);
+  const cacheKey = `${provider.id}:${key?.id ?? 'default'}`;
+  const cached = providerQuotas[cacheKey];
+  if (!force && cached && Date.now() / 1000 - cached.at < ACCOUNT_REFRESH_TTL_MS / 1000) return;
+  const existing = providerQuotaRefreshes.get(cacheKey);
+  if (existing) return existing;
+  const request = (async () => {
   try {
     const found = await call<Omit<ProviderQuota, 'at'> | null>('provider_quota', { baseUrl: provider.baseUrl, apiKey: key?.apiKey || null, keyEnv: providerKeyEnv(provider, key) || null });
-    const cacheKey = `${provider.id}:${key?.id ?? 'default'}`;
     if (found) providerQuotas[cacheKey] = { ...found, at: Date.now() / 1000 };
-    else delete providerQuotas[cacheKey];
+    else if (!cached) delete providerQuotas[cacheKey];
     void setPref('providers.quota-cache', { ...providerQuotas });
   } catch {
     // No reading: the footer then shows what the app counted itself.
+  }
+  })();
+  providerQuotaRefreshes.set(cacheKey, request);
+  try {
+    await request;
+  } finally {
+    if (providerQuotaRefreshes.get(cacheKey) === request) providerQuotaRefreshes.delete(cacheKey);
+  }
+}
+
+/** Refreshes every saved key through the same 60-second cache, with a small gap between provider requests. */
+export async function refreshProviderQuotas(provider: CustomProvider, force = false) {
+  for (const [index, key] of provider.keys.entries()) {
+    await refreshProviderQuota(provider, force, key.id);
+    if (index < provider.keys.length - 1) await new Promise((resolve) => setTimeout(resolve, 250 + Math.round(Math.random() * 120)));
   }
 }
 
@@ -921,19 +1130,22 @@ export const claudeCreditOn = () => connectors.claudeCredit.enabled && connector
 /** What the Console says is left of the API credit (USD), or why it could not tell. */
 export type ConsoleCredit = { balance: number; granted: number | null; expires_at: string | null; at: number };
 export const claudeCreditState = $state<{ reading: ConsoleCredit | null; error: string | null; busy: boolean; top: number }>({ reading: null, error: null, busy: false, top: 0 });
+let claudeCreditReadAt = 0;
 void getPref<number>('providers.claudeCreditTop').then((top) => {
   if (top) claudeCreditState.top = Math.max(claudeCreditState.top, top);
 });
 
 /** Reads the credit left from the Console (the sign-in cookie pasted in Settings). The bar's full width is the
  * credit granted when the Console lists it, else the most this credit was ever seen at. */
-export async function refreshClaudeCredit() {
+export async function refreshClaudeCredit(force = false) {
   const key = connectors.claudeCredit.sessionKey.trim();
   if (!inTauri() || !key || claudeCreditState.busy) return;
+  if (!force && Date.now() - claudeCreditReadAt < ACCOUNT_REFRESH_TTL_MS) return;
   claudeCreditState.busy = true;
   try {
     const found = await call<Omit<ConsoleCredit, 'at'>>('claude_console_credit', { sessionKey: key });
     claudeCreditState.reading = { ...found, at: Date.now() / 1000 };
+    claudeCreditReadAt = Date.now();
     claudeCreditState.error = null;
     const top = Math.max(claudeCreditState.top, found.granted ?? 0, found.balance);
     if (top !== claudeCreditState.top) {
@@ -1144,6 +1356,11 @@ Promise.all([getPref<StoredCustomProvider[]>('providers.custom'), getPref<typeof
   // now; a saved "off" from before the user ever chose (no `systemChosen`) is turned on once.
   if (!connectors.alerts.systemChosen) connectors.alerts = { ...connectors.alerts, system: true, systemChosen: true };
   hydrated = true;
+  // Rebuild native-backed providers after restart when detection has already confirmed a saved login.
+  if (inTauri()) {
+    if (connectors.detected?.workbuddy.logged_in) void syncWorkbuddyProvider();
+    if (connectors.detected?.muse_code.logged_in) void syncMuseCodeProvider();
+  }
   // On by default, and kept on: asked again at every start (the system forgets it when the app ends).
   void setKeepAwake(connectors.alerts.keepAwake !== false);
   // macOS asks once; Windows and Linux grant it. Without it a notification is dropped silently.

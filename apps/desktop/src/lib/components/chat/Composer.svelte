@@ -809,6 +809,7 @@
   async function toggleVoice() {
     const originId = sessionId;
     const capture = voiceOf(originId);
+    if (capture.phase === 'transcribing') return;
     try {
       if (capture.phase === 'recording') {
         const source = drafts[originId] ?? '';
@@ -1094,49 +1095,57 @@
       />
     </div>
     <!-- Composer and workers share a control whose icons never enter the flex layout. -->
-    <ZButton
-      zWave={false}
-      type="button"
-      zType="ghost"
-      zSize="sm"
-      class="h-7! w-fit! min-w-7! shrink-0 gap-2 rounded-full {voice.phase ===
+    <span
+      class="inline-grid h-7 shrink-0 place-items-center {voice.phase ===
       'recording'
-        ? 'bg-muted/80 px-2.5! text-foreground hover:bg-muted ring-1 ring-border/50'
-        : 'px-0! text-muted-foreground'}"
-      zDisabled={voice.phase === 'transcribing'}
-      aria-label={voice.phase === 'recording'
-        ? 'Stop dictation'
-        : voice.phase === 'transcribing'
-          ? voiceTooltip
-          : 'Start voice input'}
-      aria-pressed={voice.phase === 'recording'}
-      aria-busy={voice.phase === 'transcribing'}
+        ? 'w-fit'
+        : 'w-7'}"
       {@attach zTooltip({ content: voiceTooltip, position: 'top' })}
-      onclick={() => void toggleVoice()}
     >
-      {#if voice.phase === 'recording'}
-        <span class="voice-wave" aria-hidden="true">
-          {#each voice.levels as lvl}
-            <span style:height="{Math.max(3, 3 + lvl * 11)}px"></span>
-          {/each}
-        </span>
-        <span
-          class="size-2.5 rounded-[1.5px] bg-foreground shrink-0"
-          aria-hidden="true"
-        ></span>
-      {:else if voice.phase === 'transcribing'}
-        <span
-          class="size-4 animate-spin rounded-full border-[1.5px] border-muted-foreground/30 border-t-muted-foreground"
-          aria-hidden="true"
-        ></span>
-      {:else}
-        <ZIcon
-          zType={'lucideAudioLines' as ZIconName}
-          zSize="14"
-          class="size-[14px]!"
-        />
-      {/if}
-    </ZButton>
+      <ZButton
+        zWave={false}
+        type="button"
+        zType="ghost"
+        zSize="sm"
+        class="h-7! shrink-0 gap-2 rounded-full {voice.phase === 'recording'
+          ? 'w-fit! bg-muted/80 px-2.5! text-foreground hover:bg-muted ring-1 ring-border/50'
+          : voice.phase === 'transcribing'
+            ? 'size-7! p-0! cursor-wait text-muted-foreground bg-muted/80 ring-1 ring-border/50'
+            : 'size-7! p-0! text-muted-foreground hover:bg-accent/50'}"
+        aria-label={voice.phase === 'recording'
+          ? 'Stop dictation'
+          : voice.phase === 'transcribing'
+            ? voiceTooltip
+            : 'Start voice input'}
+        aria-pressed={voice.phase === 'recording'}
+        aria-busy={voice.phase === 'transcribing'}
+        onclick={() => void toggleVoice()}
+      >
+        {#if voice.phase === 'recording'}
+          <span class="voice-wave" aria-hidden="true">
+            {#each voice.levels as lvl}
+              <span style:height="{Math.max(3, 3 + lvl * 11)}px"></span>
+            {/each}
+          </span>
+          <span
+            class="size-2.5 rounded-[1.5px] bg-foreground shrink-0"
+            aria-hidden="true"
+          ></span>
+        {:else if voice.phase === 'transcribing'}
+          <ZIcon
+            zType={'lucideLoaderCircle' as ZIconName}
+            zSize="14"
+            class="size-[14px]! animate-spin"
+          />
+        {:else}
+          <ZIcon
+            zType={'lucideAudioLines' as ZIconName}
+            zSize="14"
+            class="size-[14px]!"
+          />
+        {/if}
+      </ZButton>
+    </span>
     {#if running && hasInput}
       <ZButton
         zWave={false}

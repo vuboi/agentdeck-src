@@ -40,12 +40,11 @@ export type PageComment = { id: string; selector: string; html: string; box: Pic
 export type PageSnapshot = { url: string; title: string; viewport: { w: number; h: number; dpr: number }; html: string };
 
 /** One browser tab. `opened` is true once its webview exists; `url` follows the page as it navigates. */
-export type BrowserTab = { id: string; url: string; title: string; favicon: string; loading: boolean; opened: boolean };
+export type BrowserTab = { id: string; url: string; title: string; favicon: string; loading: boolean; opened: boolean; /** Chat that owns this tab when it was opened by an agent. */ chatId?: string };
 
 const LIMIT = 300;
-let counter = 0;
-const newTabId = () => `t${++counter}${Date.now().toString(36)}`;
-const blankTab = (url = ''): BrowserTab => ({ id: newTabId(), url, title: '', favicon: '', loading: false, opened: false });
+const newTabId = () => `tab-${crypto.randomUUID()}`;
+const blankTab = (url = '', chatId?: string): BrowserTab => ({ id: newTabId(), url, title: '', favicon: '', loading: false, opened: false, ...(chatId ? { chatId } : {}) });
 
 export type AnnotateTool = 'pick' | 'arrow' | 'box' | 'note' | 'region';
 /** One mark on the page: where it is (page pixels), what was written, and for an element which one. */
@@ -113,7 +112,7 @@ export async function listenToPage() {
   const { listen } = await import('../app/platform/tauri-event');
   void listenToNetwork();
   // The agent asked to open an address (browser_open): the same as a link opened in AgentDeck.
-  await listen<{ url: string; newTab?: boolean; tab?: string | null }>('agent-open', ({ payload }) => openForAgent(payload.url, payload.newTab === true, payload.tab ?? undefined));
+  await listen<{ url: string; newTab?: boolean; tab?: string | null; chat?: string }>('agent-open', ({ payload }) => openForAgent(payload.url, payload.newTab === true, payload.tab ?? undefined, payload.chat ?? undefined));
   // The agent switched the device (browser_device): pages are created again with that device's user agent.
   await listen<{ device: Device; landscape: boolean }>('agent-device', ({ payload }) => {
     if (!(payload.device in DEVICES)) return;
@@ -210,17 +209,18 @@ export type Rect = { x: number; y: number; w: number; h: number };
 export const MAX_TABS = 8;
 export const tabsFull = () => browser.tabs.length >= MAX_TABS;
 
-export function newTab(url = '') {
+export function newTab(url = '', chatId?: string) {
   // At the limit the front tab is used instead: a link or the agent still gets its page.
   if (tabsFull()) {
     const front = activeTab();
     if (url) front.url = url;
+    if (chatId) front.chatId = chatId;
     return front;
   }
   if (browser.annotating) void stopAnnotating();
   browser.error = '';
   browser.navError = '';
-  const tab = blankTab(url);
+  const tab = blankTab(url, chatId);
   browser.tabs.push(tab);
   browser.activeId = tab.id;
   return tab;
@@ -239,6 +239,28 @@ export async function closeTab(id: string) {
   if (tab.opened && inTauri()) await call('browser_close', { tab: id }).catch(() => {});
   if (browser.tabs.length === 0) browser.tabs.push(blankTab());
   if (browser.activeId === id) browser.activeId = browser.tabs[Math.max(0, index - 1)].id;
+}
+
+/** Closes every tab except the exact tab id selected by the context menu. */
+export async function closeOtherTabs(keepId: string) {
+  const keepIndex = browser.tabs.findIndex((tab) => tab.id === keepId);
+  if (keepIndex < 0) return;
+  const keep = browser.tabs[keepIndex];
+  const closing = browser.tabs.filter((_, index) => index !== keepIndex);
+  const nativeIds = [...new Set(
+    closing
+      .filter((tab) => tab.id !== keepId && tab.opened && inTauri())
+      .map((tab) => tab.id),
+  )];
+  if (browser.annotating && browser.activeId !== keepId) {
+    browser.annotating = false;
+    browser.annotateCount = 0;
+  }
+  browser.error = '';
+  browser.navError = '';
+  browser.tabs.splice(0, browser.tabs.length, keep);
+  browser.activeId = keepId;
+  await Promise.all(nativeIds.map((id) => call('browser_close', { tab: id }).catch(() => {})));
 }
 
 export function selectTab(id: string) {
@@ -650,18 +672,23 @@ export function openInPreview(address: string, mode: 'auto' | 'current' | 'new' 
  * Otherwise the Preview panel is left alone: the page is created off-screen, where it keeps drawing, so the agent can
  * still look at it, click, read the console and take screenshots; the user finds it in the Preview when they open it.
  */
-function openForAgent(address: string, inNewTab: boolean, ownTab?: string) {
+function openForAgent(address: string, inNewTab: boolean, ownTab?: string, chatId?: string) {
   const url = cleanAddress(address);
   // A chat that drives a tab of its own opens the page there and leaves the tab in front as it is.
   const own = ownTab ? browser.tabs.find((tab) => tab.id === ownTab) : undefined;
   if (own) {
+    own.chatId = chatId ?? own.chatId;
+    browser.activeId = own.id;
     own.url = url;
     if (own.opened) void call('browser_navigate', { tab: own.id, url }).catch(() => {});
+    layout.activeTool = 'Preview';
+    setToolsOpen(true);
     return;
   }
   if (!inTauri() || (layout.toolsOpen && layout.activeTool === 'Preview')) return openInPreview(url, inNewTab ? 'new' : 'current');
   const front = activeTab();
-  const tab = inNewTab && front.url ? newTab(url) : front;
+  const tab = inNewTab && front.url ? newTab(url, chatId) : front;
+  if (chatId) tab.chatId = chatId;
   tab.url = url;
   if (tab.opened) void call('browser_navigate', { tab: tab.id, url }).catch(() => {});
   else void showBrowser({ x: -20000, y: -20000, w: 1100, h: 760 }).catch(() => {});

@@ -503,15 +503,24 @@ fn tail(lines: Vec<Value>, limit: usize) -> Value {
 
 /// Opens `url` in the Preview panel (a tab of its own when another page is open there) and waits until the page
 /// answers the injected script: then it is ready to act on.
-async fn open_page(app: &AppHandle, url: &str, requested: Option<bool>, chat: &str) -> Result<Value, String> {
+async fn open_page(
+    app: &AppHandle,
+    url: &str,
+    requested: Option<bool>,
+    chat: &str,
+) -> Result<Value, String> {
     // Reuse a tab that already shows this server before opening another; an explicit `new_tab` decides for itself.
-    let own = if requested == Some(true) { None } else { reusable_tab(app, chat, url) };
+    let own = if requested == Some(true) {
+        None
+    } else {
+        reusable_tab(app, chat, url)
+    };
     // Nothing to reuse: a new tab, unless the tab in front is free and blank (then the page goes there).
     let new_tab = requested.unwrap_or_else(|| own.is_none() && front_taken(chat));
     app.emit_to(
         "main",
         "agent-open",
-        json!({ "url": url, "newTab": new_tab, "tab": own }),
+        json!({ "url": url, "newTab": new_tab, "tab": own, "chat": chat }),
     )
     .map_err(|error| error.to_string())?;
     let wanted = url.trim_end_matches('/').to_string();
@@ -545,7 +554,9 @@ async fn open_page(app: &AppHandle, url: &str, requested: Option<bool>, chat: &s
 /// Whether a page the agent opens goes to a tab of its own: `Some` when the request says so, `None` to let
 /// `open_page` reuse a tab first.
 fn wants_new_tab(params: &HashMap<String, String>) -> Option<bool> {
-    params.get("new_tab").map(|value| value == "1" || value == "true")
+    params
+        .get("new_tab")
+        .map(|value| value == "1" || value == "true")
 }
 
 /// The address of a server: scheme, host and port (`http://127.0.0.1:1432`).
@@ -560,7 +571,11 @@ fn server_of(url: &str) -> String {
 fn reusable_tab(app: &AppHandle, chat: &str, url: &str) -> Option<String> {
     let alive = |tab: &str| !tab.is_empty() && app.get_webview(&format!("browser-{tab}")).is_some();
     let state = STATE.lock().ok()?;
-    if let Some(tab) = state.current.get(chat).filter(|tab| alive(tab)) {
+    if let Some(tab) = state
+        .current
+        .get(chat)
+        .filter(|tab| alive(tab) && !tab_busy(tab))
+    {
         return Some(tab.clone());
     }
     let server = server_of(url);
@@ -571,12 +586,22 @@ fn reusable_tab(app: &AppHandle, chat: &str, url: &str) -> Option<String> {
             !tab.url.is_empty()
                 && server_of(&tab.url) == server
                 && alive(id)
+                && !tab_busy(id)
                 && state.owners.get(*id).is_none_or(|owner| owner == chat)
         })
         .map(|(id, _)| id)
         .collect();
     tabs.sort_by_key(|id| (**id != state.active, (*id).clone()));
     tabs.first().map(|id| (*id).clone())
+}
+
+/// A browser action is already using this tab. Opening a project into it would race the page operation and steal its
+/// current state, so the caller gets a fresh tab and the existing owner keeps its tab.
+fn tab_busy(tab: &str) -> bool {
+    let Ok(locks) = TAB_LOCKS.lock() else {
+        return true;
+    };
+    locks.get(tab).is_some_and(|lock| lock.try_lock().is_err())
 }
 
 /// Whether the tab in front is taken: it shows a page, or another chat opened and drives it. Such a tab is left alone.
@@ -798,7 +823,10 @@ pub(crate) async fn answer(
         }
         "/hover" => {
             let (x, y) = point(params)?;
-            if crate::cdp::hover(&page(app, &active)?, x, y, &who).await.is_err() {
+            if crate::cdp::hover(&page(app, &active)?, x, y, &who)
+                .await
+                .is_err()
+            {
                 act_via_page(app, &active, "hover", json!({ "x": x, "y": y })).await?;
             }
             Ok(json!({ "hovered": true, "x": x, "y": y, "tab": active, "background": true }))
@@ -852,7 +880,9 @@ pub(crate) async fn answer(
             if crate::cdp::click(&view, x, y, &who).await.is_err() {
                 act_via_page(app, &active, "click", json!({ "x": x, "y": y })).await?;
             }
-            Ok(json!({ "pressed": true, "x": x, "y": y, "tab": active, "driver": "cdp", "background": true }))
+            Ok(
+                json!({ "pressed": true, "x": x, "y": y, "tab": active, "driver": "cdp", "background": true }),
+            )
         }
         "/fill" => {
             let selector = params
@@ -994,11 +1024,21 @@ pub(crate) async fn answer(
             let answers: Vec<String> = params
                 .get("answers")
                 .filter(|text| !text.is_empty())
-                .map(|text| text.split('|').map(|answer| answer.trim().to_string()).collect())
+                .map(|text| {
+                    text.split('|')
+                        .map(|answer| answer.trim().to_string())
+                        .collect()
+                })
                 .unwrap_or_default();
             let (target, log) = crate::detect::bring_up(&command, &cwd, Some(guess), &answers)
                 .await
-                .map_err(|failure| format!("`{command}` did not start a server at {url}. {}", failure.text()))?;
+                .map_err(|failure| {
+                    format!(
+                        "`{command}` did not start a server at {url}. {}",
+                        failure.text()
+                    )
+                })?;
+            let reused = log.is_none();
             let new_tab = wants_new_tab(params);
             let mut opened = open_page(
                 app,
@@ -1007,7 +1047,12 @@ pub(crate) async fn answer(
                 params.get("chat").map_or("", String::as_str),
             )
             .await?;
-            opened["server"] = json!({ "command": command, "log": log.map(|path| path.to_string_lossy().into_owned()) });
+            opened["server"] = json!({
+                "command": command,
+                "cwd": cwd,
+                "reused": reused,
+                "log": log.map(|path| path.to_string_lossy().into_owned()),
+            });
             Ok(opened)
         }
         "/eval" => {

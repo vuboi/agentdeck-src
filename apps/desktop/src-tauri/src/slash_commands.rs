@@ -40,7 +40,9 @@ fn split_front_matter(text: &str) -> (BTreeMap<String, String>, &str) {
             // A YAML block (`description: >` or `|`, then indented lines): the value is those lines, not the marker.
             if matches!(value.trim_end_matches(['-', '+']), ">" | "|") {
                 let mut parts: Vec<&str> = Vec::new();
-                while let Some(next) = lines.next_if(|next| next.is_empty() || next.starts_with([' ', '\t'])) {
+                while let Some(next) =
+                    lines.next_if(|next| next.is_empty() || next.starts_with([' ', '\t']))
+                {
                     if !next.trim().is_empty() {
                         parts.push(next.trim());
                     }
@@ -248,7 +250,12 @@ pub fn list(agent: &str, home: &Path, project: Option<&Path>) -> Vec<ProviderCom
                     skills_in(&project.join(folder), "project", "", &mut found);
                 }
             }
-            for folder in [".config/opencode/skills", ".config/opencode/skill", ".claude/skills", ".agents/skills"] {
+            for folder in [
+                ".config/opencode/skills",
+                ".config/opencode/skill",
+                ".claude/skills",
+                ".agents/skills",
+            ] {
                 skills_in(&home.join(folder), "user", "", &mut found);
             }
         }
@@ -271,9 +278,19 @@ pub fn list(agent: &str, home: &Path, project: Option<&Path>) -> Vec<ProviderCom
         }
         "copilot" => {
             if let Some(project) = project {
-                skills_in(&project.join(".github").join("skills"), "project", "", &mut found);
+                skills_in(
+                    &project.join(".github").join("skills"),
+                    "project",
+                    "",
+                    &mut found,
+                );
             }
-            skills_in(&home.join(".copilot").join("skills"), "user", "", &mut found);
+            skills_in(
+                &home.join(".copilot").join("skills"),
+                "user",
+                "",
+                &mut found,
+            );
         }
         _ => {}
     }
@@ -374,8 +391,13 @@ mod tests {
 
     #[test]
     fn a_block_description_is_read_whole_not_as_its_marker() {
-        let (fields, _) = split_front_matter("---\nname: x\ndescription: >\n  First part\n  second part\nother: y\n---\nBody");
-        assert_eq!(fields.get("description").map(String::as_str), Some("First part second part"));
+        let (fields, _) = split_front_matter(
+            "---\nname: x\ndescription: >\n  First part\n  second part\nother: y\n---\nBody",
+        );
+        assert_eq!(
+            fields.get("description").map(String::as_str),
+            Some("First part second part")
+        );
         assert_eq!(fields.get("other").map(String::as_str), Some("y"));
         let (fields, _) = split_front_matter("---\ndescription: >\n---\nBody");
         assert_eq!(fields.get("description"), None);

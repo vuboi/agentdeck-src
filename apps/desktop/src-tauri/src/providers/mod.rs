@@ -2,3 +2,4 @@
 
 pub(crate) mod custom;
 pub(crate) mod workbuddy;
+pub(crate) mod muse_code;

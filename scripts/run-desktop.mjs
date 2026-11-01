@@ -3,7 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,6 +58,7 @@ if (process.platform === 'linux') {
   env.WEBKIT_DISABLE_COMPOSITING_MODE ??= '1';
 }
 if (process.argv.includes('--fake-update')) env.VITE_FAKE_UPDATE = '1';
+if (process.argv.includes('--fake-data')) env.VITE_FAKE_DATA = '1';
 
 /** Probe without taking over or terminating the process already listening on a port. */
 function available(port) {
@@ -69,7 +70,15 @@ function available(port) {
 }
 
 let config;
+let temporary;
 if (mode !== 'build') {
+  // Each dev server gets its own SvelteKit generated tree. Multiple Preview tabs can
+  // run at once, and SvelteKit briefly removes route metadata while syncing routes.
+  temporary = mkdtempSync(join(root, 'apps', 'desktop', '.svelte-kit-dev-'));
+  // SvelteKit emits Vite imports relative to the generated tree. Keep this path relative on Windows so
+  // a drive letter is not treated as part of a relative module specifier such as `./E:/...`.
+  env.AGENTDECK_SVELTEKIT_OUT_DIR = relative(join(root, 'apps', 'desktop'), temporary) || '.svelte-kit';
+
   const defaults = JSON.parse(readFileSync(join(root, 'apps/desktop/src-tauri/tauri.dev.conf.json'), 'utf8'));
   const preferred = Number(process.env.VITE_DEV_PORT || new URL(defaults.build.devUrl).port);
   if (!Number.isInteger(preferred) || preferred < 1024 || preferred > 65515) throw new Error('VITE_DEV_PORT must be an integer between 1024 and 65515');
@@ -112,7 +121,6 @@ const runPnpm = (args) => new Promise((accept, reject) => {
   child.once('exit', (code) => accept(code ?? 1));
 });
 
-let temporary;
 try {
   let args;
   if (mode === 'web') {

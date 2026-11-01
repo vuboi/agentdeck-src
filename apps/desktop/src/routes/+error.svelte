@@ -14,7 +14,7 @@
 
 <main class="grid h-screen place-items-center bg-background text-foreground">
   <div class="flex flex-col items-center gap-2">
-    <DevEmpty icon={notFound ? 'lucideUnplug' : 'lucideTriangleAlert'} {title} {hint} tone={notFound ? 'muted' : 'error'} />
+    <DevEmpty icon={notFound ? 'lucideUnplug' : 'lucideServerOff'} {title} {hint} tone={notFound ? 'muted' : 'error'} variant="plain" />
     <ZButton zWave={false} zType="default" zSize="sm" onclick={() => void goto('/')}>Back to AgentDeck</ZButton>
   </div>
 </main>

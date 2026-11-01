@@ -15,14 +15,26 @@ use super::stage;
 async fn install_path(agent: &str, id: &str) -> Result<PathBuf, String> {
     let text = run(agent, &["plugin", "list", "--json"]).await?;
     let value: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
-    let rows = if agent == "codex" { value["installed"].as_array() } else { value.as_array() };
+    let rows = if agent == "codex" {
+        value["installed"].as_array()
+    } else {
+        value.as_array()
+    };
     rows.and_then(|rows| {
         rows.iter().find_map(|row| {
-            let row_id = if agent == "codex" { row["pluginId"].as_str() } else { row["id"].as_str() }?;
+            let row_id = if agent == "codex" {
+                row["pluginId"].as_str()
+            } else {
+                row["id"].as_str()
+            }?;
             if row_id != id {
                 return None;
             }
-            let path = if agent == "codex" { row["source"]["path"].as_str() } else { row["installPath"].as_str() }?;
+            let path = if agent == "codex" {
+                row["source"]["path"].as_str()
+            } else {
+                row["installPath"].as_str()
+            }?;
             Some(PathBuf::from(path))
         })
     })
@@ -30,7 +42,13 @@ async fn install_path(agent: &str, id: &str) -> Result<PathBuf, String> {
 }
 
 /// Shares one installed plugin. Returns one line per skill or server.
-pub async fn share(home: &Path, agent: &str, id: &str, agents: &[String], acknowledged: bool) -> Result<Vec<String>, String> {
+pub async fn share(
+    home: &Path,
+    agent: &str,
+    id: &str,
+    agents: &[String],
+    acknowledged: bool,
+) -> Result<Vec<String>, String> {
     let folder = install_path(agent, id).await?;
     if !folder.is_dir() {
         return Err(format!("the folder of {id} is no longer on this computer"));
@@ -43,7 +61,14 @@ pub async fn share(home: &Path, agent: &str, id: &str, agents: &[String], acknow
             lines.push(format!("{name}: already in the library"));
             continue;
         }
-        library::add(home, &name, &path, &format!("plugin:{id}"), &subpath_within(&folder, &path), agents)?;
+        library::add(
+            home,
+            &name,
+            &path,
+            &format!("plugin:{id}"),
+            &subpath_within(&folder, &path),
+            agents,
+        )?;
         lines.push(format!("{name}: skill added"));
     }
     if let Some(file) = mcp_config(&folder) {
