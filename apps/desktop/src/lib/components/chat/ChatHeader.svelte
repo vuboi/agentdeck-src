@@ -10,7 +10,7 @@
   import { revealTab } from '../../app/ui/tab-strip';
   import { toast } from '../../app/platform/toast';
   import { layout, leavePeek, peekSidebar, pinSidebar } from '../../app/ui/layout.svelte';
-  import { activateTab, closeAllTabs, closeOtherTabs, closeTab, contentTabs, openNewChatTab, saveTab, type ContentTab } from '../../app/ui/content-tabs.svelte';
+  import { activateTab, closeAllTabs, closeOtherTabs, closeTab, contentTabs, openNewChatTab, saveTab, togglePinTab, type ContentTab } from '../../app/ui/content-tabs.svelte';
   import { openWithItem, openWithOptions, type OpenWithOption } from '../../files/open-with';
   import { openInViewer } from '../../files/file-viewer.svelte';
   import { displayPath } from '../../files/paths';
@@ -122,6 +122,7 @@
       : []),
     ...(menuTab?.kind === 'chat'
       ? [
+          { label: menuTab.pinned ? 'Unpin tab' : 'Pin tab', icon: menuTab.pinned ? 'lucidePinOff' : 'lucidePin', iconSize: '12', class: 'text-sm! py-1', onClick: () => tabMenu && togglePinTab(tabMenu.id) } as ZDropdownMenuItem,
           { label: 'Copy conversation', icon: 'lucideCopy', iconSize: '12', class: 'text-sm! py-1', onClick: () => void copyConversation(menuTab.sessionId) } as ZDropdownMenuItem,
           { label: inTauri() ? 'Copy conversation file path' : 'Download conversation file', icon: 'lucideFileText', iconSize: '12', class: 'text-sm! py-1', onClick: () => void exportConversationPath(menuTab.sessionId) } as ZDropdownMenuItem,
           ...(workspace.sessions.find((session) => session.id === menuTab.sessionId)?.path
@@ -198,6 +199,7 @@
             oncontextmenu={(event) => openTabMenu(event, tab.id)}
             onkeydown={(event) => event.key === 'Enter' && activateTab(tab.id)}
           >
+            {#if tab.kind === 'chat' && tab.pinned}<ZIcon zType="lucidePin" class="size-3 shrink-0 rotate-45 {active ? 'text-primary' : 'text-muted-foreground'}" aria-hidden="true" />{/if}
             <span class="truncate">{label}</span>
             {#if tab.kind === 'file' && tab.dirty}<span class="size-1.5 shrink-0 rounded-full bg-current" title="Unsaved changes" aria-label="Unsaved changes"></span>{/if}
             <button type="button" class="grid size-4.5 shrink-0 cursor-pointer place-items-center rounded-full outline-none focus-visible:ring-0 hover:bg-primary/20" aria-label="Close {label}" onclick={(event) => { event.stopPropagation(); closeTab(tab.id); }}>

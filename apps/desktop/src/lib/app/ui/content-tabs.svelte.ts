@@ -11,7 +11,7 @@ import { toast } from '../platform/toast';
 // Browser-style tabs over the conversation area. A tab is either a chat (one session) or a file.
 // Chats and files share one list; `active` is a tab id, or '' when every tab is closed.
 export type ContentTab =
-  | { id: string; kind: 'chat'; sessionId: string }
+  | { id: string; kind: 'chat'; sessionId: string; pinned?: boolean }
   | { id: string; kind: 'file'; name: string; path: string; root: string; /** The file as it is, or what changed in it. */ view?: 'file' | 'changes'; /** Edited in the viewer and not saved yet. Never persisted. */ dirty?: boolean };
 
 export const contentTabs = $state({
@@ -38,6 +38,7 @@ $effect.root(() => {
 });
 
 const chatId = (sessionId: string) => `chat:${sessionId}`;
+const isPinnedTab = (tab: ContentTab) => tab.kind === 'chat' && tab.pinned === true;
 
 // A chat tab whose session is gone (an unsent new session that was dropped, a deleted chat) is closed, once the
 // real chat list is known: before that every saved tab would look orphaned.
@@ -73,7 +74,7 @@ $effect.root(() => {
       if (current?.kind === 'file' || contentTabs.active === chatId(id)) return;
       if (!contentTabs.tabs.some((tab) => tab.id === chatId(id))) {
         const index = contentTabs.tabs.findIndex((tab) => tab.id === contentTabs.active);
-        if (index !== -1) contentTabs.tabs[index] = { id: chatId(id), kind: 'chat', sessionId: id };
+        if (index !== -1 && !isPinnedTab(contentTabs.tabs[index])) contentTabs.tabs[index] = { id: chatId(id), kind: 'chat', sessionId: id };
         else contentTabs.tabs.push({ id: chatId(id), kind: 'chat', sessionId: id });
       }
       contentTabs.active = chatId(id);
@@ -113,7 +114,7 @@ export function showSession(sessionId: string) {
   const id = chatId(sessionId);
   if (!contentTabs.tabs.some((tab) => tab.id === id)) {
     const index = contentTabs.tabs.findIndex((tab) => tab.id === contentTabs.active && tab.kind === 'chat');
-    if (index !== -1) contentTabs.tabs[index] = { id, kind: 'chat', sessionId };
+    if (index !== -1 && !isPinnedTab(contentTabs.tabs[index])) contentTabs.tabs[index] = { id, kind: 'chat', sessionId };
     else contentTabs.tabs.push({ id, kind: 'chat', sessionId });
   }
   contentTabs.active = id;
@@ -127,6 +128,13 @@ export function openFileTab(path: string, root: string, view?: 'file' | 'changes
   if (!open) contentTabs.tabs.push({ id: path, kind: 'file', name, path, root, view });
   else if (view && open.kind === 'file') open.view = view;
   contentTabs.active = path;
+}
+
+/** Pins or unpins a chat tab. Pinned tabs are protected from bulk close actions, but can still be closed directly. */
+export function togglePinTab(id: string) {
+  const tab = contentTabs.tabs.find((item) => item.id === id);
+  if (!tab || tab.kind !== 'chat') return;
+  tab.pinned = !tab.pinned;
 }
 
 export function activateTab(id: string) {
@@ -228,19 +236,27 @@ export function closeTab(id: string) {
 
 /** Closes every open tab. The chats themselves stay in the sidebar. */
 export function closeAllTabs() {
-  if (!confirmDiscard(contentTabs.tabs)) return;
-  remember(contentTabs.tabs);
-  contentTabs.tabs.splice(0, contentTabs.tabs.length);
-  contentTabs.active = '';
+  const closing = contentTabs.tabs.filter((tab) => !isPinnedTab(tab));
+  if (closing.length === 0 || !confirmDiscard(closing)) return;
+  const keep = contentTabs.tabs.filter(isPinnedTab);
+  remember(closing);
+  contentTabs.tabs.splice(0, contentTabs.tabs.length, ...keep);
+  if (!keep.some((tab) => tab.id === contentTabs.active)) {
+    const next = keep[0];
+    contentTabs.active = next?.id ?? '';
+    if (next?.kind === 'chat') workspace.activeId = next.sessionId;
+  }
 }
 
 /** Closes every tab except `id`, which becomes the active one. */
 export function closeOtherTabs(id: string) {
   const keep = contentTabs.tabs.find((tab) => tab.id === id);
   if (!keep) return;
-  if (!confirmDiscard(contentTabs.tabs.filter((tab) => tab.id !== id))) return;
-  remember(contentTabs.tabs.filter((tab) => tab.id !== id));
-  contentTabs.tabs.splice(0, contentTabs.tabs.length, keep);
+  const closing = contentTabs.tabs.filter((tab) => tab.id !== id && !isPinnedTab(tab));
+  if (!confirmDiscard(closing)) return;
+  const kept = contentTabs.tabs.filter((tab) => tab.id === id || isPinnedTab(tab));
+  remember(closing);
+  contentTabs.tabs.splice(0, contentTabs.tabs.length, ...kept);
   activateTab(id);
 }
 
