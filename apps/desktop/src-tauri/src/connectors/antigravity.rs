@@ -1,21 +1,27 @@
 //! Antigravity account, quota and mode connector.
 
 use std::path::PathBuf;
+#[cfg(windows)]
 use std::process::Stdio;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
+#[cfg(windows)]
 use tokio::process::Command;
 
 use crate::endpoints::ENDPOINTS;
 
 use super::{
-    antigravity_email_since, antigravity_login, capture, delete_secret, parse_iso,
-    refresh_antigravity_cli_email, safe_arg, stored_secret, version_of, which, write_secret,
-    CancellableChild, UsageWindow,
+    antigravity_login, capture, parse_iso, version_of, which, UsageWindow,
+};
+#[cfg(windows)]
+use super::{
+    antigravity_email_since, delete_secret, refresh_antigravity_cli_email, safe_arg, stored_secret,
+    write_secret, CancellableChild,
 };
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
