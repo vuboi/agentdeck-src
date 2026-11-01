@@ -1,13 +1,15 @@
 <script lang="ts">
-  import { slide } from 'svelte/transition';
+  import { fade, slide } from 'svelte/transition';
 import { MorphIcon, type IconInput } from 'morphicons/svelte';
 import { svgToIcon } from 'morphicons/adapters';
 import { lucideBan, lucideCheck, lucideCircleDot, lucideLoaderCircle, lucideShieldAlert, lucideX } from '@ng-icons/lucide';
-import { ZIcon } from '@shival99/z-ui-svelte';
+  import { ZIcon, ZLoading, ZShimmerText } from '@shival99/z-ui-svelte';
   import AgentLogo from '../ui/AgentLogo.svelte';
+  import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
   import StatusRoller from '../ui/StatusRoller.svelte';
   import { elapsed, type CommandBlock } from '../../chat/content/blocks';
   import { ticker } from '../../app/platform/clock.svelte';
+  import { LOADER, LOADER_SIZE } from '../../app/platform/loaders';
   import { showSession } from '../../app/ui/content-tabs.svelte';
   import { connectors } from '../../agents/connectors.svelte';
   import { cardOf, MAX_WORKERS, parseTaskResult, type CardState } from '../../tasks/delegate-task';
@@ -31,21 +33,25 @@ import { ZIcon } from '@shival99/z-ui-svelte';
     return card.model ? `${name} · ${modelLabel(card.model) || card.model}` : name;
   }
   const kindOf = (card: ReturnType<typeof cardOf>, record: ReturnType<typeof recordOf>) => (record?.agent ?? card.agent ?? '').toLowerCase();
-  const STATUS: Record<CardState, string> = { queued: 'Queued', running: 'Working', background: 'Background', approval: 'Needs approval', done: 'Answered', failed: 'Failed', stopped: 'Stopped' };
-  const TONE: Record<CardState, string> = { queued: 'text-muted-foreground', running: 'text-primary', background: 'text-primary', approval: 'text-warning', done: 'text-emerald-500', failed: 'text-destructive', stopped: 'text-muted-foreground' };
-  const STATUS_RING: Record<CardState, string> = { queued: 'bg-gray-500/10', running: 'bg-blue-500/10', background: 'bg-blue-500/10', approval: 'bg-amber-500/10', done: 'bg-emerald-500/10', failed: 'bg-red-500/10', stopped: 'bg-gray-500/10' };
-  const STATUS_BG: Record<CardState, string> = { queued: 'bg-gray-500/15', running: 'bg-blue-500/15', background: 'bg-blue-500/15', approval: 'bg-amber-500/15', done: 'bg-emerald-500/15', failed: 'bg-red-500/15', stopped: 'bg-gray-500/15' };
-  const STATUS_ICON: Record<CardState, string> = { queued: 'text-gray-400', running: 'text-blue-400', background: 'text-blue-400', approval: 'text-amber-400', done: 'text-emerald-400', failed: 'text-red-400', stopped: 'text-gray-400' };
+  const STATUS: Record<CardState, string> = { queued: 'Queued', waiting: 'Waiting', running: 'Working', background: 'Working', paused: 'Paused', approval: 'Needs approval', done: 'Answered', failed: 'Failed', stopped: 'Stopped' };
+  const TONE: Record<CardState, string> = { queued: 'text-muted-foreground', waiting: 'text-muted-foreground', running: 'text-primary', background: 'text-primary', paused: 'text-muted-foreground', approval: 'text-warning', done: 'text-emerald-500', failed: 'text-destructive', stopped: 'text-muted-foreground' };
+  const STATUS_RING: Record<CardState, string> = { queued: 'bg-gray-500/10', waiting: 'bg-gray-500/10', running: 'bg-transparent', background: 'bg-transparent', paused: 'bg-gray-500/10', approval: 'bg-amber-500/10', done: 'bg-emerald-500/10', failed: 'bg-red-500/10', stopped: 'bg-gray-500/10' };
+  const STATUS_BG: Record<CardState, string> = { queued: 'bg-gray-500/15', waiting: 'bg-gray-500/15', running: 'bg-transparent', background: 'bg-transparent', paused: 'bg-gray-500/15', approval: 'bg-amber-500/15', done: 'bg-emerald-500/15', failed: 'bg-red-500/15', stopped: 'bg-gray-500/15' };
+  const STATUS_ICON: Record<CardState, string> = { queued: 'text-gray-400', waiting: 'text-muted-foreground', running: 'text-muted-foreground', background: 'text-muted-foreground', paused: 'text-muted-foreground', approval: 'text-amber-400', done: 'text-emerald-400', failed: 'text-red-400', stopped: 'text-gray-400' };
   const STATUS_MORPH: Record<CardState, IconInput> = {
     queued: svgToIcon(lucideCircleDot),
+    waiting: svgToIcon(lucideCircleDot),
     running: svgToIcon(lucideLoaderCircle),
     background: svgToIcon(lucideLoaderCircle),
+    paused: svgToIcon(lucideBan),
     approval: svgToIcon(lucideShieldAlert),
     done: svgToIcon(lucideCheck),
     failed: svgToIcon(lucideX),
     stopped: svgToIcon(lucideBan),
   };
-  const live = (state: CardState) => state === 'queued' || state === 'running' || state === 'background' || state === 'approval';
+  const live = (state: CardState) => state === 'queued' || state === 'waiting' || state === 'running' || state === 'background' || state === 'paused' || state === 'approval';
+  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const motion = (ms: number) => (reducedMotion ? 0 : ms);
   function took(card: ReturnType<typeof cardOf>): string {
     void ticker.sec;
     if (!card.startedAt) return card.duration ?? '';
@@ -58,60 +64,96 @@ import { ZIcon } from '@shival99/z-ui-svelte';
   }
   const firstLine = (text?: string) => (text ?? '').split('\n').find((line) => line.trim())?.trim() ?? '';
   const finished = $derived(items.filter((item) => !live(cardOf(item, recordOf(item)).state)).length);
+  const activeCount = $derived(items.filter((item) => {
+    const state = cardOf(item, recordOf(item)).state;
+    return state === 'running' || state === 'background';
+  }).length);
+  const queuedCount = $derived(items.filter((item) => cardOf(item, recordOf(item)).state === 'queued').length);
 </script>
 
 <div class="block-in w-full max-w-full overflow-hidden rounded-xl border border-border bg-background text-sm shadow-xs">
-  <div class="flex min-w-0 items-center gap-2 border-b border-border/70 bg-muted/30 px-3 py-2">
-    <span class="grid size-5 shrink-0 place-items-center rounded-md bg-primary/10 text-primary" aria-hidden="true"><ZIcon zType="lucideUsersRound" class="size-3.5" /></span>
-    <span class="min-w-0 truncate font-medium">Delegated work</span>
-    <span class="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">{finished}/{items.length} complete</span>
+  <div class="flex h-9 min-w-0 items-center gap-2 border-b border-border/70 bg-muted/30 px-3 text-xs">
+    <span class="grid size-5 shrink-0 place-items-center {activeCount > 0 ? 'text-muted-foreground' : 'rounded-md bg-primary/10 text-primary'}" aria-hidden="true">
+      {#if activeCount > 0}
+        <ZLoading zLoading zSpinner={LOADER.background} zSize={LOADER_SIZE} zColor="current" />
+      {:else}
+        <ZIcon zType="lucideUsersRound" class="size-3.5" />
+      {/if}
+    </span>
+    {#if activeCount > 0}
+      <ZShimmerText class="font-medium" zBase="var(--muted-foreground)" zPeak="var(--foreground)" zText="Delegated work" />
+    {:else}
+      <span class="font-medium">Delegated work</span>
+    {/if}
+    <span class="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+      {#if activeCount > 0}{activeCount} active · {/if}{#if queuedCount > 0}{queuedCount} queued · {/if}{finished}/{items.length} complete
+    </span>
   </div>
-  <div class="px-3 py-1">
+  <div class="py-1">
     {#each items as item, index (key(item, index))}
       {@const record = recordOf(item)}
       {@const card = cardOf(item, record)}
       {@const kind = kindOf(card, record)}
       {@const rowKey = key(item, index)}
       {@const expanded = open[rowKey] ?? false}
+      {@const activity = doing(card)}
+      {@const detail = firstLine(card.report) || activity || firstLine(card.task) || 'Waiting for the report…'}
       {@const jumpable = Boolean(card.childId) && workspace.sessions.some((chat) => chat.id === card.childId)}
-      <div class="group/row relative flex w-full items-start gap-2 py-2.5">
-        <div class="relative flex w-5 shrink-0 justify-center self-stretch" aria-hidden="true">
-          {#if index < items.length - 1}<span class="absolute top-5 bottom-[-0.625rem] w-px bg-border/80"></span>{/if}
-          <span class="relative z-10 flex size-5 items-center justify-center rounded-full {STATUS_RING[card.state]}">
-            <span class="relative flex size-3.5 items-center justify-center rounded-full {STATUS_BG[card.state]} {STATUS_ICON[card.state]}">
-              <MorphIcon
-                icon={STATUS_MORPH[card.state]}
-                size="10"
-                strokeWidth={2.3}
-                spring="snappy"
-                reducedMotion="user"
-                class="size-2.5 {card.state === 'running' || card.state === 'background' ? 'animate-spin' : ''}"
-              />
-            </span>
-          </span>
+      <div class="group/row relative flex w-full items-start gap-2 border-b border-border/60 px-3 py-2 last:border-b-0">
+        <div class="relative z-10 flex w-5 shrink-0 justify-center self-stretch" aria-hidden="true">
+          <div class="flex h-6 items-center justify-center">
+            {#if card.state === 'running' || card.state === 'background'}
+              <span class="relative z-10 flex size-5 items-center justify-center {STATUS_ICON[card.state]}">
+                  <PhyllotaxisLoader className="text-current" />
+              </span>
+            {:else}
+              <span class="relative z-10 flex size-5 items-center justify-center rounded-full {STATUS_RING[card.state]}">
+                <span class="relative flex size-3.5 items-center justify-center rounded-full {STATUS_BG[card.state]} {STATUS_ICON[card.state]}">
+                  <MorphIcon icon={STATUS_MORPH[card.state]} size="10" strokeWidth={2.3} spring="snappy" reducedMotion="user" class="size-2.5" />
+                </span>
+              </span>
+            {/if}
+          </div>
         </div>
         <div class="min-w-0 flex-1">
-          <div class="flex min-w-0 items-center gap-2">
+          <div class="flex h-6 min-w-0 items-center gap-2">
             <div class="flex min-w-0 flex-1 items-center gap-2">
               <AgentLogo agent={kind} model={card.model} class="size-3.5 shrink-0" />
-              <span class="min-w-0 truncate font-medium" title={nameOf(card, record)}>{nameOf(card, record)}</span>
+              <span class="min-w-0 flex-1 truncate text-[0.8125rem] font-medium" title={nameOf(card, record)}>{nameOf(card, record)}</span>
             </div>
             <div class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
-              <span class="inline-flex max-w-[8rem] items-center gap-1 overflow-hidden text-xs {TONE[card.state]}">
-                {#if card.state === 'running' || card.state === 'background' || card.state === 'queued'}<StatusRoller current={STATUS[card.state]} sizes={Object.values(STATUS)} />{:else}<span class="truncate">{STATUS[card.state]}</span>{/if}
+              <span class="inline-flex items-center text-[0.6875rem] {TONE[card.state]}">
+                {#if card.state === 'running' || card.state === 'background'}
+                  <span class="inline-flex items-center">Working<span class="loading-dots ml-0.5 inline-flex" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span></span>
+                {:else if card.state === 'queued'}
+                  <StatusRoller current={STATUS[card.state]} sizes={Object.values(STATUS)} />
+                {:else}
+                  <span class="truncate">{STATUS[card.state]}</span>
+                {/if}
               </span>
-              {#if took(card)}<span class="shrink-0 text-xs tabular-nums text-muted-foreground">{took(card)}</span>{/if}
+              {#if took(card)}<span class="shrink-0 text-[0.6875rem] tabular-nums text-muted-foreground">{took(card)}</span>{/if}
+              {#if live(card.state) && card.taskId}<button type="button" class="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground outline-none transition-colors hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring/60" aria-label="Stop the task for {nameOf(card, record)}" title="Stop this task" onclick={() => stopDelegateTask(card.taskId!)}><svg class="size-3.5" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" fill="currentColor" /></svg></button>{/if}
+              <button type="button" class="grid size-5 shrink-0 place-items-center rounded text-muted-foreground outline-none transition-colors hover:text-primary group-hover/row:text-foreground {jumpable ? 'cursor-pointer' : 'cursor-default opacity-40'}" disabled={!jumpable} aria-label="Open the chat of the agent for {nameOf(card, record)}" title="Open this agent's chat" onclick={() => jumpable && showSession(card.childId!)}><ZIcon zType="lucideChevronRight" class="size-3.5" /></button>
             </div>
-            {#if live(card.state) && card.taskId}<button type="button" class="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring/60" aria-label="Stop the task for {nameOf(card, record)}" title="Stop this task" onclick={() => stopDelegateTask(card.taskId!)}><ZIcon zType="lucideSquare" class="size-3 fill-current" /></button>{/if}
-            <button type="button" class="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:text-primary group-hover/row:text-foreground {jumpable ? 'cursor-pointer' : 'cursor-default opacity-40'}" disabled={!jumpable} aria-label="Open the chat of the agent for {nameOf(card, record)}" title="Open this agent's chat" onclick={() => jumpable && showSession(card.childId!)}><ZIcon zType="lucideChevronRight" class="size-3.5" /></button>
           </div>
           <button type="button" class="mt-1 flex min-w-0 max-w-full cursor-pointer items-center gap-2 rounded text-left text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60" aria-expanded={expanded} aria-label="Details of the task for {nameOf(card, record)}" onclick={() => (open[rowKey] = !expanded)}>
-            <span class="min-w-0 flex-1 truncate">{firstLine(card.report) || doing(card) || firstLine(card.task) || 'Waiting for the report…'}</span>
+            <ZIcon zType="lucideChevronRight" class="size-3 shrink-0 transition-transform duration-200 {expanded ? 'rotate-90' : ''}" />
+            <span class="min-w-0 flex-1 truncate">
+              {#key detail}
+                {#if live(card.state) && activity}
+                  <span class="block min-w-0 truncate" in:fade={{ duration: motion(140) }} out:fade={{ duration: motion(100) }}>
+                    <ZShimmerText class="block min-w-0 truncate" zBase="var(--muted-foreground)" zPeak="var(--foreground)" zText={detail} />
+                  </span>
+                {:else}
+                  <span class="block min-w-0 truncate" in:fade={{ duration: motion(140) }} out:fade={{ duration: motion(100) }}>{detail}</span>
+                {/if}
+              {/key}
+            </span>
             {#if card.childId && needsApproval(card.childId)}<span class="shrink-0 rounded-full bg-warning/15 px-1.5 py-px text-[10px] font-medium text-warning">Approval</span>{/if}
           </button>
           {#if expanded}<div transition:slide={{ duration: 240 }} class="mt-2 flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-[0.6875rem]">
             {#if card.task}<div><div class="mb-0.5 font-medium text-foreground">Task</div><p class="m-0 max-h-40 overflow-auto leading-snug break-words whitespace-pre-wrap text-muted-foreground">{card.task}</p></div>{/if}
-            <div><div class="mb-0.5 font-medium text-foreground">{card.state === 'done' ? 'Report' : 'Result'}</div>{#if card.report}<p class="m-0 max-h-72 overflow-auto leading-snug break-words whitespace-pre-wrap text-muted-foreground">{card.report}</p>{:else if live(card.state)}<p class="m-0 text-muted-foreground/70 italic">{card.state === 'queued' ? `Queued: at most ${MAX_WORKERS} workers run at once; it starts when one finishes.` : card.state === 'background' ? 'The report returns here when it is done.' : 'Waiting for the report…'}</p>{:else}<p class="m-0 text-muted-foreground/70 italic">No report</p>{/if}</div>
+            <div><div class="mb-0.5 font-medium text-foreground">{card.state === 'done' ? 'Report' : 'Result'}</div>{#if card.report}<p class="m-0 max-h-72 overflow-auto leading-snug break-words whitespace-pre-wrap text-muted-foreground">{card.report}</p>{:else if live(card.state)}<p class="m-0 text-muted-foreground/70 italic">{card.state === 'queued' ? `Queued: at most ${MAX_WORKERS} workers run at once; it starts when one finishes.` : card.state === 'waiting' ? 'Waiting for a dependency or another agent’s answer.' : card.state === 'paused' ? 'Paused by the user. Resume it from the Work tray.' : card.state === 'background' ? 'The report returns here when it is done.' : 'Waiting for the report…'}</p>{:else}<p class="m-0 text-muted-foreground/70 italic">No report</p>{/if}</div>
           </div>{/if}
         </div>
       </div>

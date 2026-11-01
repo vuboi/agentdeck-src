@@ -32,7 +32,7 @@ export type TaskStatus = 'started' | 'progress' | 'done' | 'failed';
 export type PermissionRequest = { id: string; tool: string; summary: string; allow: string };
 
 /** What a Write or Edit does to a file. */
-export type FileChange = { path: string; added: number; removed: number; before: string; after: string };
+export type FileChange = { path: string; added: number; removed: number; before: string; after: string; cumulative?: boolean };
 
 export type AgentEnvelope = { session: string; turn: string; message_id?: string; event: AgentEvent };
 
@@ -110,6 +110,7 @@ export async function prehandleAttachments(args: {
   baseUrl: string;
   apiKey: string | null;
   model: string;
+  effort?: string;
   prompt: string;
   images: string[];
   files: string[];
@@ -125,7 +126,7 @@ export async function prehandleOpencode(args: { model: string; prompt: string; i
 }
 
 /** The same memo read by an Antigravity model through its CLI, with the full options the user allowed for it. */
-export async function prehandleAntigravity(args: { model: string; prompt: string; images: string[]; files: string[] }): Promise<string> {
+export async function prehandleAntigravity(args: { model: string; effort?: string; prompt: string; images: string[]; files: string[] }): Promise<string> {
   const { invoke } = await import('@tauri-apps/api/core');
   return invoke<string>('prehandle_antigravity', args);
 }
@@ -242,7 +243,7 @@ export async function readFileBytes(path: string): Promise<ArrayBuffer> {
 /** The Gemini provider a `gemini` model is generated on (its address and key). */
 export type ImageProvider = { kind: string; base_url: string; api_key: string | null; key_env: string | null };
 /** `backend` names the generator that makes the image (image_backend.rs); a new one is added there and listed in the panel. */
-export type ImageModelChoice = { model: string; backend: 'responses' | 'images' | 'gemini' | 'pollinations' | 'custom-images'; custom?: ImageProvider };
+export type ImageModelChoice = { model: string; backend: 'responses' | 'images' | 'gemini' | 'pollinations' | 'custom-images' | 'workbuddy-images'; custom?: ImageProvider };
 export type GeneratedImage = { model: string; backend: string; path: string; variant: number };
 export type ImageGenerationFailure = { model: string; backend: string; variant: number; error: string };
 export type ImageGenerateResult = { run_id: string; images: GeneratedImage[]; failures: ImageGenerationFailure[] };
@@ -338,7 +339,7 @@ export async function injectAgentMessage(session: string, text: string): Promise
 /** A delegation tool called by an agent through the app's MCP server (src-tauri/src/delegate.rs). */
 export type DelegateCall = {
   callId: string;
-  tool: 'delegate_task' | 'list_agents' | 'task_status' | 'task_stop';
+  tool: 'delegate_task' | 'list_agents' | 'task_status' | 'task_stop' | 'task_ask' | 'task_answer';
   /** The chat whose agent called; empty when the agent's MCP link names none (Antigravity's stored link). */
   caller: string;
   args: Record<string, unknown>;

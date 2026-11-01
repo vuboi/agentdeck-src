@@ -384,6 +384,9 @@ pub fn start_with_identity(
         })
         .stdout(out)
         .stderr(err);
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        shell.env(key, path);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

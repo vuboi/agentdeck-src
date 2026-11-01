@@ -3,7 +3,7 @@ import { ticker } from '../../app/platform/clock.svelte';
 import { answerText } from '../../chat/content/blocks';
 import type { Segment } from '../../chat/content/blocks';
 
-export const agentText = { claude: 'text-orange-500', codex: 'text-emerald-500', antigravity: 'text-sky-500', opencode: 'text-foreground', copilot: 'text-foreground', custom: 'text-violet-500' } as const;
+export const agentText = { claude: 'text-orange-500', codex: 'text-emerald-500', antigravity: 'text-sky-500', opencode: 'text-foreground', workbuddy: 'text-blue-500', copilot: 'text-foreground', custom: 'text-violet-500' } as const;
 export const agentName = (agent: string) => AGENTS.find((item) => item.value === agent)?.label ?? agent;
 
 /** What the speaker button reads: the replies of the agent that run up to this one (no message of yours between). */

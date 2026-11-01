@@ -114,6 +114,7 @@ async fn list_models_now() -> Result<Vec<ag_adapters::models::ModelInfo>, String
                 efforts,
                 default_effort: None,
                 hidden: false,
+                free: None,
             })
         })
         .collect();

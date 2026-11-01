@@ -203,6 +203,9 @@ pub fn models_listing(binary: std::ffi::OsString) -> String {
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut command = std::process::Command::new(binary);
+        if let Some((key, path)) = super::resolve::augmented_path_env() {
+            command.env(key, path);
+        }
         command
             .arg("models")
             .stdin(std::process::Stdio::null())

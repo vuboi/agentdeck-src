@@ -308,6 +308,9 @@ fn open_shell(
     command.args(args);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        command.env(key, path);
+    }
     let folder = cwd
         .map(PathBuf::from)
         .filter(|path| path.is_dir())

@@ -14,8 +14,8 @@
   import { modelLabel } from '../../agents/models.svelte';
   import { agentDisplayName } from '../../agents/provider-registry';
   import { ticker } from '../../app/platform/clock.svelte';
-  import { stripAnsi } from '../../app/text/ansi';
   import { LOADER, LOADER_SIZE } from '../../app/platform/loaders';
+  import { stripAnsi } from '../../app/text/ansi';
   import { showSession } from '../../app/ui/content-tabs.svelte';
   import { elapsed } from '../../chat/content/blocks';
   import { requestFocusMessage } from '../../chat/content/focus-message.svelte';
@@ -24,6 +24,8 @@
   import { returnTaskResult, pauseDelegateTask, resumeDelegateTask, stopDelegateTask } from '../../chat/session/delegate-task.svelte';
   import { stopTurnForResume, resumeStoppedTurn } from '../../chat/session/events.svelte';
   import { stopTurn } from '../../chat/session/turns.svelte';
+  import AgentLogo from '../ui/AgentLogo.svelte';
+  import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
 
   /** Outside the virtual transcript: scrolling and loading old messages cannot unmount the work list.
    *  `title` names the list; `stateKey` keys its open state (the chat by default, so each card can have its own). */
@@ -40,10 +42,15 @@
   const paused = $derived(active.filter((item) => item.state === 'paused'));
   const finished = $derived(items.filter((item) => !isWorkActive(item) && item.state !== 'unknown'));
   const uncertain = $derived(items.filter((item) => item.state === 'unknown'));
-  // Every task is listed (live first, then the saved ones); the list scrolls inside its fixed height.
+  const MAX_VISIBLE_ITEMS = 20;
   // Running work first, then everything else that is still live, then the saved results. Rows move to their place.
   const rank = (item: ChatWork) => item.state === 'running' ? 0 : isWorkActive(item) ? 1 : item.state === 'unknown' ? 2 : 3;
-  const shown = $derived([...items].sort((a, b) => rank(a) - rank(b)));
+  // Keep every active row visible; only finished rows are trimmed to fill the remaining Work slots.
+  const shown = $derived.by(() => {
+    const activeItems = items.filter(isWorkActive).sort((a, b) => rank(a) - rank(b));
+    const finishedItems = items.filter((item) => !isWorkActive(item)).sort((a, b) => rank(a) - rank(b));
+    return [...activeItems, ...finishedItems.slice(0, Math.max(0, MAX_VISIBLE_ITEMS - activeItems.length))];
+  });
   const running = $derived(active.length - paused.length);
   // The counts glide to their new value over 700ms, one digit at a time, so the change is easy to follow.
   const COUNT = { duration: 700, easing: cubicOut };
@@ -51,7 +58,7 @@
   const countPaused = Tween.of(() => paused.length, COUNT);
   const countCheck = Tween.of(() => uncertain.length, COUNT);
   const countSaved = Tween.of(() => finished.length, COUNT);
-  const labels = { queued: 'Queued', running: 'Working', paused: 'Paused', waiting: 'Returning result', input: 'Needs you', done: 'Completed', failed: 'Failed', stopped: 'Stopped', unknown: 'Check status' } as const;
+  const labels = { queued: 'Queued', running: 'Working', paused: 'Paused', waiting: 'Waiting', input: 'Needs approval', done: 'Answered', failed: 'Failed', stopped: 'Stopped', unknown: 'Check status' } as const;
   // The icon that leads each row, by state. Pending and waiting read as a clock.
   const STATE_ICON: Record<ChatWork['state'], ZIconName> = {
     queued: 'lucideListOrdered' as ZIconName,
@@ -98,13 +105,15 @@
 </script>
 
 <section class="min-w-0 overflow-hidden text-xs {embedded ? '' : layer ? '-mb-4 mx-2 rounded-t-2xl border border-b-0 border-border bg-card pb-4 shadow-md' : 'mb-2 rounded-lg border border-border/70'}" aria-label="Chat tasks">
-  <div class="flex h-8 w-full min-w-0 items-center gap-1 pr-2">
-  <button type="button" class="flex h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 text-left text-muted-foreground outline-none hover:text-foreground" aria-label="Toggle {title}" aria-expanded={isOpen} onclick={() => (open[stateKey] = !isOpen)}>
-    {#if running > 0}
-      <ZLoading zLoading zSpinner={LOADER.working} zSize={LOADER_SIZE} zColor="current" />
-    {:else}
-      <ZIcon zType={'lucideListChecks' as ZIconName} class="size-3.5 shrink-0" />
-    {/if}
+  <div class="flex h-9 w-full min-w-0 items-center gap-1 pr-2">
+  <button type="button" class="flex h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 text-left text-muted-foreground outline-none hover:text-foreground" aria-label="Toggle {title}" aria-expanded={isOpen} onclick={() => (open[stateKey] = !isOpen)}>
+    <span class="grid size-5 shrink-0 place-items-center text-muted-foreground" aria-hidden="true">
+      {#if running > 0}
+        <ZLoading zLoading zSpinner={LOADER.background} zSize={LOADER_SIZE} zColor="current" />
+      {:else}
+        <ZIcon zType={'lucideListChecks' as ZIconName} class="size-3.5" />
+      {/if}
+    </span>
     {#if running > 0}
       <ZShimmerText class="font-medium" zBase="var(--muted-foreground)" zPeak="var(--foreground)" zText={title} />
     {:else}
@@ -131,26 +140,35 @@
   <!-- The list folds in place with a grid-row transition: 0fr closed, 1fr open. Closed, it is also inert. -->
   <div class="grid transition-[grid-template-rows] duration-300 ease-in-out motion-reduce:transition-none {isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}">
     <div class="min-h-0 overflow-hidden" inert={!isOpen}>
-      <div class="max-h-48 overflow-y-auto overscroll-contain border-t border-border/60" aria-label="Task list">
+      <div class="max-h-56 overflow-y-auto overscroll-contain border-t border-border/60 divide-y divide-border/50" aria-label="Task list">
         {#each shown as item (item.id)}
-          <div class="border-b border-border/50 last:border-b-0" data-work-id={item.id} animate:flip={{ duration: 300, easing: cubicOut }}>
-            <div class="sticky top-0 z-10 flex min-h-9 min-w-0 items-center gap-3 border-b border-border/50 bg-card/95 px-3 py-1.5 shadow-sm backdrop-blur-sm">
-              <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left outline-none" aria-label="Details: {item.title}" aria-expanded={Boolean(details[item.id])} onclick={() => (details[item.id] = !details[item.id])}>
+          {@const workAgent = item.agent ?? (item.kind === 'command' ? 'command' : 'agent')}
+          {@const workOwner = item.agent ? agentDisplayName(item.agent) : item.kind === 'command' ? 'Command' : 'Agent'}
+          {@const workModel = item.model ? modelLabel(item.model) || item.model : ''}
+          {@const statusLabel = item.kind === 'agent' && item.state === 'done' ? 'Answered' : labels[item.state]}
+          <div data-work-id={item.id} animate:flip={{ duration: 300, easing: cubicOut }}>
+            <div class="sticky top-0 z-10 flex min-h-12 min-w-0 items-center gap-3 bg-card/95 px-3 py-2 shadow-sm backdrop-blur-sm">
+              <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-start gap-2 text-left outline-none" aria-label="Details: {item.title}" aria-expanded={Boolean(details[item.id])} onclick={() => (details[item.id] = !details[item.id])}>
                 <!-- The state leads the row: the loader while it works, then a check, a cross, a clock while it waits. -->
-                <span class="grid size-4 shrink-0 place-items-center {tone(item)}" role="img" aria-label={labels[item.state]}>
-                  {#if item.state === 'running'}<ZLoading zLoading zSpinner={LOADER.working} zSize={LOADER_SIZE} zColor="current" />{:else}<ZIcon zType={STATE_ICON[item.state]} class="size-3.5" />{/if}
+                <span class="mt-0.5 grid size-5 shrink-0 place-items-center {tone(item)}" role="img" aria-label={labels[item.state]}>
+                  {#if item.state === 'running'}<PhyllotaxisLoader className="text-current" />{:else}<ZIcon zType={STATE_ICON[item.state]} class="size-3.5" />{/if}
                 </span>
-                <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-                  {#if item.state === 'running'}
-                    <ZShimmerText class="truncate text-[0.8125rem] font-medium" zBase="var(--primary)" zPeak="var(--foreground)" zText={item.title} />
-                  {:else}
-                    <span class="truncate text-[0.8125rem] font-medium text-foreground">{item.title}</span>
-                  {/if}
-                  <span class="truncate text-[0.6875rem] text-muted-foreground">{item.agent ? agentDisplayName(item.agent, item.model) : item.kind === 'command' ? 'Command' : 'Agent'}{item.model ? ` · ${modelLabel(item.model)}` : ''}{item.sourceTitle ? ` · ${item.sourceTitle}` : ''}</span>
-                </span>
-                <!-- The leading icon says the state; the time sits at the end of the row. -->
-                <span class="flex w-[3.75rem] shrink-0 items-center justify-end gap-1.5 whitespace-nowrap text-[0.6875rem] tabular-nums text-muted-foreground">
-                  {elapsed((item.state === 'paused' ? item.pausedAt ?? ticker.sec : isWorkActive(item) ? ticker.sec : item.endedAt ?? ticker.sec) - item.startedAt)}
+                <span class="flex min-w-0 flex-1 flex-col gap-1">
+                  <span class="flex h-6 min-w-0 items-center gap-2">
+                    <AgentLogo agent={workAgent} model={item.model} class="size-3.5 shrink-0" />
+                    <span class="min-w-0 flex-1 truncate text-[0.8125rem] font-medium text-foreground">{workOwner}{workModel ? ` · ${workModel}` : ''}</span>
+                    <span class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[0.6875rem] {tone(item)}">
+                      <span class="inline-flex items-center">
+                        {#if item.state === 'running'}
+                          <ZShimmerText class="font-medium" zBase="var(--primary)" zPeak="var(--foreground)" zText="Working" /><span class="loading-dots ml-0.5 inline-flex" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
+                        {:else}
+                          <span>{statusLabel}</span>
+                        {/if}
+                      </span>
+                      <span class="tabular-nums text-muted-foreground">{elapsed((item.state === 'paused' ? item.pausedAt ?? ticker.sec : isWorkActive(item) ? ticker.sec : item.endedAt ?? ticker.sec) - item.startedAt)}</span>
+                    </span>
+                  </span>
+               <span class="min-w-0 truncate text-xs text-muted-foreground">{item.title}</span>
                 </span>
               </button>
               {#if item.sourceMessageId}

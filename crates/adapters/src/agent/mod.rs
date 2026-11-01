@@ -10,6 +10,7 @@ pub mod guard;
 mod codex_server;
 pub mod interrupt;
 pub mod opencode;
+pub mod workbuddy;
 pub mod output;
 pub mod permission;
 pub mod resolve;
@@ -511,6 +512,8 @@ pub struct FileChange {
     pub path: String,
     pub added: usize,
     pub removed: usize,
+    /// `true` when the counts describe the whole file state since the turn began; `false` for one tool's delta.
+    pub cumulative: bool,
     /// Text that was replaced (empty for a new file), cut to a few thousand characters.
     pub before: String,
     /// Text that took its place, cut the same way.
@@ -562,7 +565,14 @@ pub fn finish_file_snapshot(snapshot: FileSnapshot) -> Option<FileChange> {
     let before = snapshot.before.as_deref().unwrap_or_default();
     let diff = line_diff(before, &after);
     if diff.added == 0 && diff.removed == 0 { return None; }
-    Some(FileChange { path: snapshot.path, added: diff.added, removed: diff.removed, before: diff.before, after: diff.after })
+    Some(FileChange {
+        path: snapshot.path,
+        added: diff.added,
+        removed: diff.removed,
+        cumulative: true,
+        before: diff.before,
+        after: diff.after,
+    })
 }
 
 fn read_change_text(path: &std::path::Path) -> Option<String> {
@@ -576,10 +586,6 @@ fn is_write_tool(name: &str) -> bool {
 }
 
 const DIFF_TEXT_MAX: usize = 3000;
-
-fn line_count(text: &str) -> usize {
-    text.lines().count()
-}
 
 fn cut(text: &str) -> String {
     if text.chars().count() > DIFF_TEXT_MAX {
@@ -678,7 +684,7 @@ mod line_diff_tests {
     fn antigravity_edit_file_target_and_replacement_make_a_change() {
         let input = serde_json::json!({ "Path": "E:/a.ts", "Target": "a\nb", "Replacement": "a\nB\nc" });
         let change = super::file_change("edit_file", &input).expect("a change");
-        assert_eq!((change.added, change.removed), (3, 2));
+        assert_eq!((change.added, change.removed), (2, 1));
     }
 }
 
@@ -710,12 +716,14 @@ pub fn file_change(name: &str, input: &serde_json::Value) -> Option<FileChange> 
     match name.to_ascii_lowercase().as_str() {
         "write" | "write_file" | "writefile" | "create_file" | "createfile" => {
             let content = string_arg(input, &["content", "Content", "text"])?.to_owned();
+            let diff = line_diff("", &content);
             Some(FileChange {
                 path,
-                added: line_count(&content),
-                removed: 0,
-                before: String::new(),
-                after: cut(&content),
+                added: diff.added,
+                removed: diff.removed,
+                cumulative: false,
+                before: diff.before,
+                after: diff.after,
             })
         }
         "edit" | "edit_file" | "editfile" | "replace_file_content" | "replacefilecontent" => {
@@ -726,12 +734,14 @@ pub fn file_change(name: &str, input: &serde_json::Value) -> Option<FileChange> 
                 return None;
             }
             let (old, new) = (text(input, OLD), text(input, NEW));
+            let diff = line_diff(&old, &new);
             Some(FileChange {
                 path,
-                added: line_count(&new),
-                removed: line_count(&old),
-                before: cut(&old),
-                after: cut(&new),
+                added: diff.added,
+                removed: diff.removed,
+                cumulative: false,
+                before: diff.before,
+                after: diff.after,
             })
         }
         "multiedit" | "notebookedit" => {
@@ -741,12 +751,18 @@ pub fn file_change(name: &str, input: &serde_json::Value) -> Option<FileChange> 
                 before.push(text(edit, &["old_string", "oldString", "oldText"]));
                 after.push(text(edit, &["new_string", "newString", "newText"]));
             }
+            let diffs: Vec<LineDiff> = before
+                .iter()
+                .zip(&after)
+                .map(|(old, new)| line_diff(old, new))
+                .collect();
             Some(FileChange {
                 path,
-                added: after.iter().map(|part| line_count(part)).sum(),
-                removed: before.iter().map(|part| line_count(part)).sum(),
-                before: cut(&before.join("\n…\n")),
-                after: cut(&after.join("\n…\n")),
+                added: diffs.iter().map(|diff| diff.added).sum(),
+                removed: diffs.iter().map(|diff| diff.removed).sum(),
+                cumulative: false,
+                before: cut(&diffs.iter().map(|diff| diff.before.as_str()).collect::<Vec<_>>().join("\n…\n")),
+                after: cut(&diffs.iter().map(|diff| diff.after.as_str()).collect::<Vec<_>>().join("\n…\n")),
             })
         }
         _ => None,

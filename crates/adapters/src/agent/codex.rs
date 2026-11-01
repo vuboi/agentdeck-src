@@ -3,7 +3,7 @@
 //! Context across turns comes from the thread id the first turn reports (`thread.started`); later turns run
 //! `codex exec resume <id>`. Options go through `-c key=value`, which both `exec` and `exec resume` accept.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -26,6 +26,9 @@ struct Turn {
     last_was_text: bool,
     /// Folder the turn runs in: a changed file is read from here.
     cwd: Option<PathBuf>,
+    /// Contents of files as they were when this Codex turn started. This includes pre-existing
+    /// worktree edits, so a later file_change is not mistaken for a new file.
+    baselines: HashMap<PathBuf, String>,
 }
 
 impl Turn {
@@ -157,33 +160,114 @@ fn version_key(path: &Path) -> Vec<u64> {
         .unwrap_or_default()
 }
 
-/// Codex reports a changed file after writing it, so the text before the change comes from git's HEAD copy
-/// (empty for a new file or outside a repository) and the text after from disk.
-fn snapshot(cwd: Option<&Path>, path: &str) -> (String, String) {
+/// Codex reports a changed file after writing it. Prefer the turn-start snapshot, which preserves
+/// edits already present in the worktree, then fall back to the repository's HEAD copy.
+fn snapshot(
+    cwd: Option<&Path>,
+    path: &str,
+    baselines: &HashMap<PathBuf, String>,
+) -> (String, String) {
     let file = Path::new(path);
-    let full = match cwd {
-        Some(cwd) if file.is_relative() => cwd.join(file),
-        _ => file.to_path_buf(),
+    let full = if file.is_relative() {
+        match cwd {
+            Some(cwd) => {
+                let root = repo_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
+                let from_cwd = cwd.join(file);
+                let from_root = root.join(file);
+                [from_cwd, from_root]
+                    .into_iter()
+                    .find(|candidate| baselines.contains_key(candidate) || candidate.exists())
+                    .unwrap_or_else(|| root.join(file))
+            }
+            None => file.to_path_buf(),
+        }
+    } else {
+        file.to_path_buf()
     };
     let after = std::fs::read_to_string(&full).unwrap_or_default();
-    let before = cwd
-        .and_then(|cwd| {
-            let rel = full.strip_prefix(cwd).ok()?;
-            Command::new("git")
-                .arg("-C")
-                .arg(cwd)
-                .arg("show")
-                .arg(format!(
-                    "HEAD:./{}",
-                    rel.to_string_lossy().replace('\\', "/")
-                ))
-                .output()
-                .ok()
-        })
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+    let before = baselines
+        .get(&full)
+        .cloned()
+        .or_else(|| head_snapshot(cwd, &full))
         .unwrap_or_default();
     (before, after)
+}
+
+fn repo_root(cwd: &Path) -> Option<PathBuf> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+}
+
+fn head_snapshot(cwd: Option<&Path>, full: &Path) -> Option<String> {
+    let cwd = cwd?;
+    let root = repo_root(cwd)?;
+    let relative = full.strip_prefix(&root).ok()?.to_string_lossy().replace('\\', "/");
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .arg("show")
+        .arg(format!("HEAD:{relative}"))
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn worktree_baselines(cwd: Option<&Path>) -> HashMap<PathBuf, String> {
+    let Some(cwd) = cwd else {
+        return HashMap::new();
+    };
+    let Some(root) = repo_root(cwd) else {
+        return HashMap::new();
+    };
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["diff", "HEAD", "--name-only", "-z", "--no-renames"])
+        .output()
+        .ok();
+    let mut paths = output
+        .filter(|value| value.status.success())
+        .map(|value| {
+            String::from_utf8_lossy(&value.stdout)
+                .split('\0')
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if let Ok(value) = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["ls-files", "--others", "--exclude-standard", "-z"])
+        .output()
+    {
+        if value.status.success() {
+            paths.extend(
+                String::from_utf8_lossy(&value.stdout)
+                    .split('\0')
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from),
+            );
+        }
+    }
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let full = root.join(path);
+            std::fs::read_to_string(&full).ok().map(|text| (full, text))
+        })
+        .collect()
 }
 
 impl Provider for Codex {
@@ -210,6 +294,7 @@ impl Provider for Codex {
         if let Ok(mut turn) = self.turn.lock() {
             *turn = Turn {
                 cwd: req.cwd.clone(),
+                baselines: worktree_baselines(req.cwd.as_deref()),
                 ..Turn::default()
             };
         }
@@ -358,7 +443,7 @@ impl Provider for Codex {
                         Some("delete") => "Delete",
                         _ => "Edit",
                     };
-                    let (before, after) = snapshot(cwd.as_deref(), &path);
+                    let (before, after) = snapshot(cwd.as_deref(), &path, &turn.baselines);
                     let diff = line_diff(&before, &after);
                     events.push(AgentEvent::ToolCall {
                         id: call.clone(),
@@ -368,6 +453,7 @@ impl Provider for Codex {
                             path,
                             added: diff.added,
                             removed: diff.removed,
+                            cumulative: true,
                             before: diff.before,
                             after: diff.after,
                         }),

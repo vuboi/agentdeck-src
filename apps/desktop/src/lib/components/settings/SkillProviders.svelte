@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { BUILT_IN_AGENTS } from '../../agents/provider-registry';
+  import { providerSources, SKILL_PROVIDER_IDS } from '../../agents/models.svelte';
   import { assignSkill, type SkillItem } from '../../store/store.svelte';
   import ProviderAccess from './ProviderAccess.svelte';
 
   let { skill }: { skill: SkillItem } = $props();
-  const options = $derived(BUILT_IN_AGENTS.map((agent) => {
-    const own = skill.agents.includes(agent.id) && !skill.linked.includes(agent.id);
-    return { id: agent.id, label: agent.label, disabled: own || skill.origin !== 'library', hint: own ? 'Own copy' : undefined };
+  const options = $derived(providerSources(SKILL_PROVIDER_IDS).map((source) => {
+    const own = skill.agents.includes(source.provider) && !skill.linked.includes(source.provider);
+    return { id: source.provider, label: source.label, disabled: own || skill.origin !== 'library', hint: own ? 'Own copy' : undefined };
   }));
 
   /** Save the latest queued selection, leaving independent provider copies untouched. */

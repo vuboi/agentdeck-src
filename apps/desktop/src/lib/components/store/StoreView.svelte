@@ -33,7 +33,7 @@
   import StoreSources from './StoreSources.svelte';
   import StoreUpdates from './StoreUpdates.svelte';
 
-  import { BUILT_IN_AGENTS } from '../../agents/provider-registry';
+  import { providerSources, SKILL_PROVIDER_IDS } from '../../agents/models.svelte';
   import SkillProviders from '../settings/SkillProviders.svelte';
   import StoreCategoryFilter from './StoreCategoryFilter.svelte';
   import { matchesStoreCategory } from '../../store/store-categories.svelte';
@@ -124,7 +124,7 @@
   }
 
   // Sharing a plugin copies its skills into the library and adds its MCP servers; a caution asks first.
-  const share = (plugin: PluginItem) => withAck((acknowledged) => sharePlugin(plugin, BUILT_IN_AGENTS.map((a) => a.id), acknowledged), plugin.name);
+  const share = (plugin: PluginItem) => withAck((acknowledged) => sharePlugin(plugin, providerSources(SKILL_PROVIDER_IDS).map((source) => source.provider), acknowledged), plugin.name);
 
   const refreshing = $derived(store.loading || mcp.loading);
 

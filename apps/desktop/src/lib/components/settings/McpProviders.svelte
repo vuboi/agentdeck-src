@@ -1,16 +1,15 @@
 <script lang="ts">
-  import { BUILT_IN_AGENTS } from '../../agents/provider-registry';
   import { mcp, setMcpProviders, type McpEntry } from '../../agents/mcp.svelte';
+  import { MCP_PROVIDER_IDS, providerSources } from '../../agents/models.svelte';
   import ProviderAccess from './ProviderAccess.svelte';
 
   let { entry }: { entry: McpEntry } = $props();
   const enabled = $derived(entry.builtin ? entry.agents.filter((a) => a !== 'antigravity').concat(mcp.overview?.agy_auto ? ['antigravity'] : []) : entry.enabled_agents ?? entry.agents);
-  const options = $derived(BUILT_IN_AGENTS.map((agent) => {
-    const supported = ['claude', 'codex', 'copilot', 'antigravity'].includes(agent.id);
-    const fixed = entry.builtin && agent.id !== 'antigravity';
-    const unsupportedScope = !entry.builtin && agent.id === 'antigravity' && entry.scope.startsWith('project: ');
-    return { id: agent.id, label: agent.label, disabled: fixed || !supported || unsupportedScope,
-      hint: fixed ? 'Built in' : !supported || unsupportedScope ? 'Not supported' : undefined };
+  const options = $derived(providerSources(MCP_PROVIDER_IDS).map((source) => {
+    const fixed = entry.builtin && source.provider !== 'antigravity';
+    const unsupportedScope = !entry.builtin && source.provider === 'antigravity' && entry.scope.startsWith('project: ');
+    return { id: source.provider, label: source.label, disabled: fixed || unsupportedScope,
+      hint: fixed ? 'Built in' : unsupportedScope ? 'Not supported' : undefined };
   }));
 </script>
 

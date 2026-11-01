@@ -6,12 +6,12 @@
 /** How many delegated workers run at once. The same number as `MAX_PARALLEL_WORKERS` in delegate.rs, which enforces it. */
 export const MAX_WORKERS = 4;
 
-export type ToolKind = 'delegate_task' | 'list_agents' | 'task_status' | 'task_stop';
+export type ToolKind = 'delegate_task' | 'list_agents' | 'task_status' | 'task_stop' | 'task_ask' | 'task_answer';
 
 /** Which of the delegation tools a tool-call name is, whatever the CLI calls it; null for any other tool. */
 export function toolKindOf(name: string): ToolKind | null {
   const bare = name.trim().replace(/^mcp__.*__/, '').replace(/^agentdeck[.:/]/, '');
-  return bare === 'delegate_task' || bare === 'list_agents' || bare === 'task_status' || bare === 'task_stop' ? bare : null;
+  return bare === 'delegate_task' || bare === 'list_agents' || bare === 'task_status' || bare === 'task_stop' || bare === 'task_ask' || bare === 'task_answer' ? bare : null;
 }
 
 /** The tool name of a `Name  argument` command line of a reply (see agent-reply.ts). */
@@ -25,7 +25,7 @@ export const MIN_TIMEOUT_S = 10;
 export const MAX_TIMEOUT_S = 7200;
 export const TASK_MAX_CHARS = 30_000;
 
-export type DelegateArgs = { agent: string; model?: string; task: string; wait: boolean; timeoutS: number; continueId?: string; role?: string };
+export type DelegateArgs = { agent: string; model?: string; task: string; wait: boolean; timeoutS: number; continueId?: string; role?: string; dependsOn: string[] };
 
 const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined);
 
@@ -34,6 +34,15 @@ export function parseDelegateArgs(raw: unknown): { ok: true; args: DelegateArgs 
   const input = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const continueId = text(input.continue);
   const role = text(input.role);
+  const dependsOn = input.depends_on === undefined || input.depends_on === null
+    ? []
+    : typeof input.depends_on === 'string'
+      ? [text(input.depends_on)].filter((item): item is string => Boolean(item))
+      : Array.isArray(input.depends_on) && input.depends_on.every((item) => typeof item === 'string' && Boolean(item.trim()))
+        ? input.depends_on.map((item) => item.trim())
+        : undefined;
+  if (!dependsOn) return { ok: false, error: 'depends_on must be a task_id or an array of task_ids' };
+  if (dependsOn.length > 8) return { ok: false, error: 'depends_on accepts at most 8 task ids' };
   const agent = text(input.agent) ?? (continueId || role ? '' : undefined);
   if (agent === undefined) return { ok: false, error: 'agent is required (unless continue or role is given): claude, codex, antigravity or an id from list_agents' };
   const task = text(input.task);
@@ -51,7 +60,7 @@ export function parseDelegateArgs(raw: unknown): { ok: true; args: DelegateArgs 
     if (!Number.isFinite(seconds)) return { ok: false, error: 'timeout_s must be a number of seconds' };
     timeoutS = Math.min(MAX_TIMEOUT_S, Math.max(MIN_TIMEOUT_S, Math.round(seconds)));
   }
-  return { ok: true, args: { agent, model: text(input.model), task, wait, timeoutS, continueId, role } };
+  return { ok: true, args: { agent, model: text(input.model), task, wait, timeoutS, continueId, role, dependsOn } };
 }
 
 /** A task id as the tools hand it out: `t-` and a few letters and digits. */
@@ -243,7 +252,7 @@ export function reportDigest(answer: string): string {
   return clean.length > DIGEST_MAX ? `…${clean.slice(-DIGEST_MAX)}` : clean;
 }
 
-export type TaskState = 'queued' | 'running' | 'approval' | 'done' | 'failed' | 'stopped';
+export type TaskState = 'queued' | 'waiting' | 'running' | 'approval' | 'done' | 'failed' | 'stopped';
 export type Verdict = 'done' | 'failed' | 'stopped' | 'timed out';
 
 const oneLine = (reason: string, max = 300) => {
@@ -351,6 +360,10 @@ export type TaskRecord = {
   state: TaskState;
   /** User pause keeps this task and its result destination alive. */
   pausedAt?: number;
+  /** A dependency or another agent's answer currently holds this task. */
+  waitingFor?: { label: string; taskId?: string; questionId?: string; question?: string };
+  /** Tasks that must finish successfully before this one can start. */
+  dependsOn?: string[];
   wait: boolean;
   label: string;
   /** The kind of agent (`claude`, `codex`, `antigravity`, `custom`) and the id the caller named it by (`list_agents`). */
@@ -364,7 +377,13 @@ export type TaskRecord = {
   endedAt?: number;
 };
 
-export type CardState = 'queued' | 'running' | 'background' | 'approval' | 'done' | 'failed' | 'stopped';
+export type CardState = 'queued' | 'waiting' | 'running' | 'background' | 'paused' | 'approval' | 'done' | 'failed' | 'stopped';
+
+/** The single UI state projection shared by the transcript card and the Work tray. */
+export function cardStateOf(record: Pick<TaskRecord, 'state' | 'wait' | 'pausedAt'>): CardState {
+  if (record.pausedAt !== undefined && (record.state === 'queued' || record.state === 'running')) return 'paused';
+  return record.state === 'running' && !record.wait ? 'background' : record.state;
+}
 export type TaskCard = {
   taskId?: string;
   childId?: string;
@@ -386,22 +405,22 @@ export type TaskCard = {
  * (task id, the worker's chat, how it ended) and the report.
  */
 export function cardOf(
-  call: { command: string; output: string; status: 'running' | 'ok' | 'fail'; task?: { startedAt?: number; endedAt?: number } },
+  call: { command: string; output: string; status: 'running' | 'ok' | 'fail'; taskId?: string; task?: { startedAt?: number; endedAt?: number } },
   record?: TaskRecord,
 ): TaskCard {
   const args = argsOfCall(call.command.replace(/^\S+\s*/, ''));
   const header = parseTaskResult(call.output);
   const wait = record?.wait ?? args.wait ?? true;
   if (record) {
-    const state: CardState = record.state === 'running' && !record.wait ? 'background' : record.state;
-    return { taskId: record.id, childId: record.childId, state, agent: record.agent, model: record.model, task: record.task, wait, report: record.digest ?? record.note ?? '', startedAt: record.startedAt, endedAt: record.endedAt };
+    const state = cardStateOf(record);
+    return { taskId: record.id, childId: record.childId, state, agent: record.agent, model: record.model, task: record.task, wait, report: record.digest ?? record.note ?? (record.waitingFor ? `Waiting for ${record.waitingFor.label}` : ''), startedAt: record.startedAt, endedAt: record.endedAt };
   }
   const verdict = header?.verdict;
   const state: CardState =
     verdict === 'done' ? 'done' : verdict === 'failed' || verdict === 'timed out' ? 'failed' : verdict === 'stopped' ? 'stopped' : verdict === 'running' ? 'stopped' : call.status === 'running' ? (wait ? 'running' : 'background') : call.status === 'fail' ? 'failed' : 'done';
   const body = header ? call.output.slice(call.output.indexOf(']') + 1).trim() : call.output.trim();
   return {
-    taskId: header?.taskId,
+    taskId: call.taskId ?? header?.taskId,
     childId: header?.childId,
     state,
     agent: args.agent,
@@ -422,7 +441,7 @@ export function cardOf(
  * tool descriptions say the same (src-tauri/src/delegate.rs). Kept short: it is sent with the first turn of every chat.
  */
 export const DELEGATE_HINT =
-  'Delegation (delegate_task, list_agents): do not wait for the user to ask for sub-agents. For each nontrivial request decide whether independent workstreams would materially improve speed, coverage or quality; if so, delegate those parts and keep ownership of the main task and its integration. Keep ordinary Q&A, a small or single-file edit, a quick command and a simple artifact action in this chat; do not invent work just to delegate. Implementing a larger plan (several files or steps) is delegated too: split it into independent work packages, one worker each on disjoint files, and keep the integration here. Use 1-4 workers for genuinely independent capabilities (investigation, implementation on disjoint files, verification, browser/artifact work); never give two workers overlapping write scopes. Start independent work together with wait:false, carry on with the main task, and do not poll or block unless the next step depends on a result; wait=true only for dependent work. Give each worker a self-contained goal, paths/resources, constraints and a compact evidence-first handoff. Reuse worker conversations for follow-up: to send a correction to a worker that already answered, call delegate_task with continue=<task_id>; replan only when evidence shows a gap. Never delegate the final answer or merely relay the user\'s message. Light public work (search, public info, chat, emails, prompts, scripts, small text edits) may go to a FREE TIER agent in list_agents to save paid usage; it may train on what it receives, so send no project source, private or personal data, keys, passwords, tokens, environment variables, internal IPs/host names or secret files (.env, keys, credentials): AgentDeck refuses those, so keep sensitive work with a trusted agent or do it here.';
+  'Delegation (delegate_task, list_agents, task_ask, task_answer): do not wait for the user to ask for sub-agents. For each nontrivial request decide whether independent workstreams would materially improve speed, coverage or quality; if so, delegate those parts and keep ownership of the main task and its integration. Keep ordinary Q&A, a small or single-file edit, a quick command and a simple artifact action in this chat; do not invent work just to delegate. Implementing a larger plan (several files or steps) is delegated too: split it into independent work packages, one worker each on disjoint files, and keep the integration here. Use 1-4 workers for genuinely independent capabilities (investigation, implementation on disjoint files, verification, browser/artifact work); never give two workers overlapping write scopes. Start independent work together with wait:false, carry on with the main task, and use depends_on=[task_id] when a worker must wait for an earlier result. Use wait=true when the caller itself needs the report before continuing. Nested workers may delegate another bounded step. A worker can ask its parent with task_ask and resumes after task_answer; use wait:false for a parent that must answer a child during a longer workflow, because a synchronous parent waiting for that child would deadlock. Give each worker a self-contained goal, paths/resources, constraints and a compact evidence-first handoff. Reuse worker conversations for follow-up: to send a correction to a worker that already answered, call delegate_task with continue=<task_id>; replan only when evidence shows a gap. Never delegate the final answer or merely relay the user\'s message. Light public work (search, public info, chat, emails, prompts, scripts, small text edits) may go to a FREE TIER agent in list_agents to save paid usage; it may train on what it receives, so send no project source, private or personal data, keys, passwords, tokens, environment variables, internal IPs/host names or secret files (.env, keys, credentials): AgentDeck refuses those, so keep sensitive work with a trusted agent or do it here.';
 
 /** The line the app puts before a prompt: its parts joined into one paragraph that starts with `[AgentDeck] `. */
 export function agentdeckLead(...parts: string[]): string {

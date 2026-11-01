@@ -9,15 +9,15 @@ import { mimeOfPath } from '../agent';
 import { enqueue, enqueueNext } from '../runs/queue';
 import { getPref, setPref } from '../../app/platform/prefs';
 import { presetById, presetOf, type WorkflowPreset } from '../../tasks/workflows.svelte';
-import { automation, COMPRESS_TOKENS } from '../../app/platform/automation.svelte';
+import { automation } from '../../app/platform/automation.svelte';
 import { needsContext } from '../recovery/context-need';
-import { activeSession, localMessages, nextId, persistLocal, workspace, type Attachment, type Effort, type FileAttachment, type Mention, type PageElement, type SessionItem } from './state.svelte';
+import { activeSession, contextLimitOf, DEFAULT_CONTEXT_LIMIT, localMessages, nextId, persistLocal, workspace, type Attachment, type Effort, type FileAttachment, type Mention, type PageElement, type SessionItem } from './state.svelte';
 import { afterSwitch, beginSessionWork, continuationGroups, forgetUnstartedConversation, hasTurnWork, hiddenPrompt, isRunning, modelFor, queuePaused, queued, stopTurn, switchingAgent, turnOptions, withElements, type Queued } from './turns.svelte';
 import { SKIPPED_PERMISSION, SKIPPED_QUESTIONS, SKIPPED_REQUIRED, canListenToSession, closePendingPermissions, continueCurrentRun, liveReplies, messagesOf, needsUserInput, openQuestions, pendingInput, pendingNew, replies, sendNextQueued, startTurn } from './run.svelte';
 import { cancelAutoSwitch, recoveries, resumeAutoChoice, resumeSince, resumes } from './events.svelte';
 import { beginWorkflowIntegration, beginWorkflowRun, delegateRuns, mentionContext, statsOf, type DelegateReports } from './delegation.svelte';
-import { LANGUAGE_RULE } from './orchestration.svelte';
-import { otherTurns, transcripts } from './history.svelte';
+import { LANGUAGE_RULE, hasCoordinationPrompt, queueCoordinationPrompt, startCoordinationPrompt, takeCoordinationPrompt, type SilentCoordinationPrompt } from './orchestration.svelte';
+import { otherTurns, releaseCli, transcripts } from './history.svelte';
 
 /** The main agent finished the turn that got the answers: the run is over. */
 /** Puts the answers into the chat that asked, and runs its agent on them as soon as it is free. */
@@ -259,7 +259,11 @@ export function editMessage(messageId: string, text: string, inlinedFilePaths: s
   }
   session.forkContext = (session.forkContext ?? '') + handoffDigest(list, EDIT_LEAD);
   pendingNew.add(session.id);
-  send(session.id, text, images, elements, [], { files });
+  // F5 may have prewarmed the old provider conversation. Release it before the edited turn starts a new one, or a
+  // provider can receive the first edited message on the stale thread and only recover after that error.
+  void releaseCli(session.id).then(() =>
+    send(session.id, text, images, elements, [], { files }),
+  );
 }
 
 /** What a message of yours carried besides its words, as composer attachments again (edit, copy all). */
@@ -382,6 +386,7 @@ export function send(
     messageId?: string;
     listener?: boolean;
     report?: Pick<Message, 'triggeredByMessageId' | 'taskTitle' | 'taskIds' | 'workflowRunId'>;
+    coordination?: boolean;
     /** A silent send is not queued when a reply already runs: this tells its caller, who puts the work back in line. */
     onDropped?: () => void;
   } = {},
@@ -402,6 +407,7 @@ export function send(
   // Account-switch waiters can wake together. Once one owns the reply, retain later user messages in FIFO order.
   if (replies[sessionId] && !extra.listener) {
     if (!extra.silent) enqueue(queued, sessionId, { text, images, elements, mentions, files, runGroup: extra.runGroup, messageId: extra.messageId ?? nextId() });
+    else if (extra.coordination && extra.prompt && extra.silent) queueCoordinationPrompt(sessionId, { prompt: extra.prompt, silent: extra.silent, preface: extra.preface, report: extra.report });
     else extra.onDropped?.();
     return;
   }
@@ -420,7 +426,7 @@ export function send(
     delete resumeSince[sessionId];
   }
   const messages = messagesOf(sessionId);
-  if (extra.silent && extra.prompt && inTauri() && (session.agent === 'claude' || session.agent === 'codex' || session.agent === 'antigravity' || session.agent === 'opencode' || session.agent === 'copilot' || session.agent === 'custom')) {
+  if (extra.silent && extra.prompt && inTauri() && (session.agent === 'claude' || session.agent === 'codex' || session.agent === 'antigravity' || session.agent === 'opencode' || session.agent === 'workbuddy' || session.agent === 'copilot' || session.agent === 'custom')) {
     if (!extra.report || extra.report.workflowRunId) beginWorkflowIntegration(sessionId, extra.report?.workflowRunId);
     startTurn(session, extra.prompt, [], [], extra.preface ?? '', [], extra.silent, extra.runGroup, false, extra.report);
     if (!session.path) localMessages[session.id] = messages;
@@ -434,7 +440,7 @@ export function send(
   const workflow = inTauri() && preset && preset.agents.length && !extra.listener && !extra.prompt ? preset : undefined;
   const preface = (extra.preface ?? '') + mentionContext(mentions) + (workflow ? workflowInstructions(workflow) : '');
   if (workflow) beginWorkflowRun(session.id, body, workflow);
-  if (inTauri() && (session.agent === 'claude' || session.agent === 'codex' || session.agent === 'antigravity' || session.agent === 'opencode' || session.agent === 'copilot' || session.agent === 'custom')) startTurn(session, withElements(extra.prompt ?? body, elements), images, [], preface, files, undefined, extra.runGroup, Boolean(extra.listener));
+  if (inTauri() && (session.agent === 'claude' || session.agent === 'codex' || session.agent === 'antigravity' || session.agent === 'opencode' || session.agent === 'workbuddy' || session.agent === 'copilot' || session.agent === 'custom')) startTurn(session, withElements(extra.prompt ?? body, elements), images, [], preface, files, undefined, extra.runGroup, Boolean(extra.listener));
   else if (inTauri()) {
     messages.push({
       id: nextId(),
@@ -456,6 +462,22 @@ export function send(
     const firstLine = body.split('\n')[0] || files[0]?.name || images[0]?.name || elements[0]?.title || (elements.length ? 'Selected web content' : 'New chat');
     session.title = firstLine.length > 60 ? `${firstLine.slice(0, 57)}…` : firstLine;
   }
+}
+
+/** Starts one hidden agent-to-agent question after the target chat becomes idle. */
+export function flushCoordinationPrompt(sessionId: string): boolean {
+  if (!hasCoordinationPrompt(sessionId) || hasTurnWork(sessionId) || queuePaused[sessionId]) return false;
+  const item: SilentCoordinationPrompt | undefined = takeCoordinationPrompt(sessionId);
+  if (!item) return false;
+  startCoordinationPrompt(sessionId, item);
+  send(sessionId, '', [], [], [], {
+    prompt: item.prompt,
+    silent: item.silent,
+    preface: item.preface,
+    report: item.report,
+    coordination: true,
+  });
+  return true;
 }
 
 /** Turns a saved flow into instructions for the main model; it is a roster and coordination policy, not a step runner. */
@@ -484,13 +506,13 @@ function workflowInstructions(preset: WorkflowPreset): string {
 
 export const COMPACT_COMMAND = '/compact';
 
-/** The context of `session` is big enough to compact: the last model call read COMPRESS_TOKENS. Tokens, not characters:
- *  a short chat is never compacted. */
+/** The context of `session` is big enough to compact: the last model call reached that chat's token limit. Tokens, not
+ *  characters: a short chat is never compacted. */
 function needsCompress(session: SessionItem, messages: Message[]): boolean {
   if (!automation.compress || !session.agentStarted) return false;
   const last = [...messages].reverse().find((message) => message.role === 'assistant' && message.agent === session.agent);
   if (!last?.context || last.compressed) return false;
-  return last.context >= COMPRESS_TOKENS;
+  return last.context >= contextLimitOf(session);
 }
 
 /** Runs `/compact` in the chat's model conversation, shown as one "Compressing context" line. */
@@ -520,17 +542,20 @@ if (typeof window !== 'undefined') {
 /** The conversation so far for a new session, but only when the message it is about to get cannot stand without it:
  *  one that names its subject goes as it is (see context-need.ts), so a session is not loaded with history for nothing. */
 export function handoffFor(sessionId: string, prompt: string): string {
-  return needsContext(prompt) ? handoffDigest(messagesOf(sessionId)) : '';
+  const session = workspace.sessions.find((item) => item.id === sessionId);
+  return needsContext(prompt)
+    ? handoffDigest(messagesOf(sessionId), undefined, contextLimitOf(session))
+    : '';
 }
 
 /** What an agent is told after an account switch: the conversation so far, without the message it is about to get.
  *  The new session has no history of its own, so this is how the work in progress carries over. */
-export function handoffDigest(list: Message[], lead = 'The account was switched, so this is a new session of the same conversation. Continue the work in progress; do not redo what is already done.'): string {
+export function handoffDigest(list: Message[], lead = 'The account was switched, so this is a new session of the same conversation. Continue the work in progress; do not redo what is already done.', limit = DEFAULT_CONTEXT_LIMIT): string {
   // Not the message about to be answered (the last one of the user), and not a reply that only holds an error line.
   const last = list.at(-1);
   const onlyError = last?.role === 'assistant' && last.blocks.every((block) => block.kind === 'response' && (!block.text.trim() || block.text.trim().startsWith('⚠')));
   const before = last?.role === 'user' || onlyError ? list.slice(0, -1) : list;
-  return forkDigest(before, lead);
+  return forkDigest(before, lead, limit);
 }
 
 /** Whether a chat's CLI switches its model in the same conversation (Claude's `set_model`, see warm.rs): a model change
@@ -555,11 +580,11 @@ function chatTokens(list: Message[]): number {
   return Math.ceil(chars / 4);
 }
 
-/** What a fork is told of the conversation it came from: the whole turns so far. Only a chat as big as COMPRESS_TOKENS
- *  (with "Compress context" on) is compressed: older turns keep their start and the digest is capped. */
-function forkDigest(list: Message[], lead = 'This chat is a fork of an earlier conversation.'): string {
+/** What a fork is told of the conversation it came from: the whole turns so far. The chat's own context limit decides
+ *  whether compression is used when "Compress context" is on. */
+function forkDigest(list: Message[], lead = 'This chat is a fork of an earlier conversation.', limit = DEFAULT_CONTEXT_LIMIT): string {
   const shown = list.filter((message) => !hiddenPrompt(message));
-  const compressing = automation.compress && chatTokens(shown) >= COMPRESS_TOKENS;
+  const compressing = automation.compress && chatTokens(shown) >= limit;
   const whole = compressing ? Math.max(0, shown.length - DIGEST_WHOLE) : 0;
   const lines = shown
     .map((message, index) => {
@@ -603,7 +628,7 @@ export function forkSession(sourceId: string, fromMessageId?: string) {
     draft: false,
     messageCount: copy.length,
     updatedAt: new Date().toISOString(),
-    forkContext: forkDigest(copy) || undefined,
+    forkContext: forkDigest(copy, undefined, contextLimitOf(source)) || undefined,
   });
   workspace.activeId = id;
   persistLocal();

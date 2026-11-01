@@ -23,7 +23,7 @@ export type HistorySession = {
 export type HistoryBlock =
   | { kind: 'thinking'; text: string }
   | { kind: 'response'; text: string }
-  | { kind: 'command'; command: string; output: string; status: string; change?: { path: string; added: number; removed: number; before: string; after: string } };
+  | { kind: 'command'; command: string; output: string; status: string; change?: { path: string; added: number; removed: number; before: string; after: string; cumulative?: boolean } };
 
 export type HistoryUsage = { input: number; output: number; cache_read: number; cache_write: number };
 export type HistoryMessage = { id: string; role: 'user' | 'assistant'; time: string; blocks: HistoryBlock[]; usage?: HistoryUsage; model?: string };

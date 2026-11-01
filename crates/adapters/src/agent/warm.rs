@@ -24,7 +24,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use super::interrupt::{self, InterruptMode, Interrupter, Signal, StopToken};
 use super::stall::Watchdog;
-use super::resolve::augmented_path;
+use super::resolve::augmented_path_env;
 use super::runner::{command_for, drain_stderr, kill_tree};
 use super::{AgentEvent, Provider, TurnRequest};
 
@@ -294,8 +294,8 @@ pub(super) fn start(binary: OsString, provider: &dyn Provider, args: &[String], 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    if let Some(path) = augmented_path() {
-        command.env("PATH", path);
+    if let Some((key, path)) = augmented_path_env() {
+        command.env(key, path);
     }
     if let Some(dir) = req.cwd.as_deref().filter(|dir| dir.is_dir()) {
         command.current_dir(dir);

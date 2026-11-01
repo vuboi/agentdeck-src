@@ -21,6 +21,9 @@ pub struct ModelInfo {
     pub default_effort: Option<String>,
     /// The CLI keeps it out of its own picker; it still runs with `--model`. The pickers list it last, under "Hide".
     pub hidden: bool,
+    /// Whether the provider explicitly marks this model as free to use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free: Option<bool>,
 }
 
 const CLAUDE_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
@@ -36,6 +39,7 @@ fn claude_model(value: &str, label: &str, description: &str, default_effort: &st
             .collect(),
         default_effort: Some(default_effort.into()),
         hidden: false,
+        free: None,
     }
 }
 
@@ -128,6 +132,7 @@ pub fn codex(codex_home: &Path) -> Vec<ModelInfo> {
                     .collect(),
                 default_effort: model["default_reasoning_level"].as_str().map(str::to_owned),
                 hidden,
+                free: None,
             })
         })
         .collect()
@@ -156,6 +161,7 @@ pub fn opencode(listing: &str, catalogue: Option<&str>) -> Vec<ModelInfo> {
             efforts: Vec::new(),
             default_effort: None,
             hidden: false,
+            free: None,
         });
     }
     let Some(catalogue) = catalogue.and_then(|text| serde_json::from_str::<Value>(text).ok()) else {
@@ -187,6 +193,7 @@ pub fn opencode(listing: &str, catalogue: Option<&str>) -> Vec<ModelInfo> {
                 efforts: Vec::new(),
                 default_effort: None,
                 hidden: true,
+                free: None,
             });
         }
     }
@@ -282,6 +289,7 @@ pub fn antigravity(listing: &str) -> Vec<ModelInfo> {
             efforts,
             default_effort,
             hidden: false,
+            free: None,
         });
         folded.push(base);
     }
@@ -296,6 +304,7 @@ fn plain(id: &str, label: &str) -> ModelInfo {
         efforts: Vec::new(),
         default_effort: None,
         hidden: false,
+        free: None,
     }
 }
 

@@ -308,14 +308,88 @@ fn is_model_id(value: &str) -> bool {
         })
 }
 
-fn collect_models(value: &Value, models: &mut Vec<String>) {
+fn classify_text(value: &str) -> Option<bool> {
+    let value = value.trim().to_ascii_lowercase();
+    if value == "free" || value.ends_with("_free") || value.ends_with("-free") || value.contains("free tier") {
+        return Some(true);
+    }
+    if ["paid", "premium", "pro", "enterprise", "subscription", "credit"]
+        .iter()
+        .any(|word| value == *word || value.contains(&format!("_{word}")) || value.contains(&format!("-{word}")))
+    {
+        return Some(false);
+    }
+    None
+}
+
+fn classify_credits(value: &Value) -> Option<bool> {
+    match value {
+        Value::Number(value) => value.as_f64().map(|value| value == 0.0),
+        Value::String(value) => value
+            .trim()
+            .trim_start_matches('x')
+            .split_whitespace()
+            .next()
+            .and_then(|value| value.parse::<f64>().ok())
+            .map(|value| value == 0.0),
+        _ => None,
+    }
+}
+
+fn model_free(object: &serde_json::Map<String, Value>) -> Option<bool> {
+    for key in ["credits", "credit", "creditRate", "credit_rate", "creditMultiplier", "credit_multiplier"] {
+        if let Some(value) = object.get(key).and_then(classify_credits) {
+            return Some(value);
+        }
+    }
+    for key in ["free", "isFree", "is_free", "freeTier", "free_tier", "isFreeModel"] {
+        let Some(value) = object.get(key) else { continue };
+        if let Some(value) = value.as_bool() {
+            return Some(value);
+        }
+        if let Some(value) = value.as_i64() {
+            return Some(value != 0);
+        }
+        if let Some(value) = value.as_str().and_then(classify_text) {
+            return Some(value);
+        }
+    }
+    for key in ["tier", "plan", "pricing", "billing", "billingType", "billing_type", "priceType", "price_type"] {
+        if let Some(value) = object.get(key).and_then(Value::as_str).and_then(classify_text) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn add_model(models: &mut Vec<ag_adapters::models::ModelInfo>, value: &str, free: Option<bool>) {
+    if let Some(existing) = models.iter_mut().find(|known| known.value == value) {
+        if existing.free.is_none() {
+            existing.free = free;
+        }
+        return;
+    }
+    models.push(ag_adapters::models::ModelInfo {
+        label: value.to_string(),
+        value: value.to_string(),
+        description: "WorkBuddy model".to_string(),
+        efforts: Vec::new(),
+        default_effort: None,
+        hidden: false,
+        free,
+    });
+}
+
+fn collect_models(value: &Value, models: &mut Vec<ag_adapters::models::ModelInfo>) {
     match value {
         Value::Object(object) => {
             for key in ["id", "model", "modelId", "model_id"] {
-                if let Some(model) = object[key].as_str().filter(|model| is_model_id(model)) {
-                    if !models.iter().any(|known| known == model) {
-                        models.push(model.to_string());
-                    }
+                if let Some(model) = object
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|model| is_model_id(model))
+                {
+                    add_model(models, model, model_free(object));
                 }
             }
             for child in object.values() {
@@ -325,8 +399,8 @@ fn collect_models(value: &Value, models: &mut Vec<String>) {
         Value::Array(items) => {
             for item in items {
                 if let Value::String(model) = item {
-                    if is_model_id(model) && !models.iter().any(|known| known == model) {
-                        models.push(model.clone());
+                    if is_model_id(model) {
+                        add_model(models, model, None);
                     }
                 } else {
                     collect_models(item, models);
@@ -337,7 +411,52 @@ fn collect_models(value: &Value, models: &mut Vec<String>) {
     }
 }
 
+fn collect_image_models(value: &Value, models: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            let is_image_model = object
+                .get("tags")
+                .and_then(Value::as_array)
+                .is_some_and(|tags| {
+                    tags.iter().any(|tag| {
+                        matches!(tag.as_str(), Some("text-to-image" | "image-to-image"))
+                    })
+                });
+            if is_image_model {
+                for key in ["id", "model", "modelId", "model_id"] {
+                    if let Some(model) = object
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .filter(|model| is_model_id(model))
+                    {
+                        if !models.iter().any(|known| known == model) {
+                            models.push(model.to_string());
+                        }
+                    }
+                }
+            }
+            for child in object.values() {
+                collect_image_models(child, models);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_image_models(item, models);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(crate) async fn models() -> Result<Vec<String>, String> {
+    Ok(model_infos()
+        .await?
+        .into_iter()
+        .map(|model| model.value)
+        .collect())
+}
+
+pub(crate) async fn model_infos() -> Result<Vec<ag_adapters::models::ModelInfo>, String> {
     let token = access_token().await?;
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -371,14 +490,115 @@ pub(crate) async fn models() -> Result<Vec<String>, String> {
     };
     let mut models = Vec::new();
     collect_models(&payload, &mut models);
-    models.retain(|model| !model.contains('/') && is_model_id(model));
+    models.retain(|model| !model.value.contains('/') && is_model_id(&model.value));
     if models.is_empty() {
         return Ok(static_models());
     }
     Ok(models)
 }
 
-fn static_models() -> Vec<String> {
+pub(crate) async fn image_models() -> Result<Vec<String>, String> {
+    let token = access_token().await?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent("WorkBuddy/5.5.6")
+        .build()
+        .map_err(|error| error.to_string())?
+        .get(format!("{BASE}/v3/config"))
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .header("X-Product", "SaaS")
+        .header("X-Domain", "www.workbuddy.ai")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("X-User-Id", user_id().unwrap_or_default())
+        .header("X-Enterprise-Id", enterprise_id().unwrap_or_default())
+        .header("User-Agent", "WorkBuddy/5.5.6")
+        .header("X-IDE-Type", "WorkBuddy")
+        .header("X-IDE-Name", "WorkBuddy")
+        .header("X-IDE-Version", "5.5.6")
+        .header("X-Agent-Intent", "craft")
+        .header("X-Agent-Purpose", "conversation")
+        .header("X-Agent-Type", "main")
+        .send()
+        .await
+        .map_err(|error| format!("WorkBuddy image model catalog failed: {error}"))?;
+    if !response.status().is_success() {
+        return Ok(static_image_models());
+    }
+    let payload: Value = match response.json().await {
+        Ok(payload) => payload,
+        Err(_) => return Ok(static_image_models()),
+    };
+    let mut models = Vec::new();
+    collect_image_models(&payload, &mut models);
+    if models.is_empty() {
+        return Ok(static_image_models());
+    }
+    Ok(models)
+}
+
+pub(crate) async fn image_generate(
+    model: &str,
+    prompt: &str,
+    references: Vec<String>,
+) -> Result<Value, String> {
+    let token = access_token().await?;
+    let editing = !references.is_empty();
+    let path = if editing {
+        "/v2/images/edits"
+    } else {
+        "/v2/images/generations"
+    };
+    let mut body = serde_json::json!({
+        "model": model,
+        "prompt": prompt,
+        "size": "1024x1024",
+        "response_format": "b64_json",
+        "n": 1,
+    });
+    if editing {
+        body["image"] = serde_json::json!(references);
+        body["input_fidelity"] = serde_json::json!("high");
+    }
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .user_agent("WorkBuddy/5.5.6")
+        .build()
+        .map_err(|error| error.to_string())?
+        .post(format!("{BASE}{path}"))
+        .bearer_auth(token)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json")
+        .header("X-Product", "SaaS")
+        .header("X-Domain", "www.workbuddy.ai")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .header("X-User-Id", user_id().unwrap_or_default())
+        .header("X-Enterprise-Id", enterprise_id().unwrap_or_default())
+        .header("User-Agent", "WorkBuddy/5.5.6")
+        .header("X-IDE-Type", "WorkBuddy")
+        .header("X-IDE-Name", "WorkBuddy")
+        .header("X-IDE-Version", "5.5.6")
+        .header("X-Agent-Intent", "craft")
+        .header("X-Agent-Purpose", "conversation")
+        .header("X-Agent-Type", "main")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("could not reach WorkBuddy image service: {error}"))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|error| error.to_string())?;
+    let payload: Value = serde_json::from_str(&text)
+        .map_err(|_| format!("WorkBuddy image service answered {status}: {text}"))?;
+    if !status.is_success() || payload["code"].as_i64().is_some_and(|code| code != 0) {
+        return Err(format!(
+            "WorkBuddy image service answered {status}: {}",
+            payload["msg"].as_str().unwrap_or("request failed")
+        ));
+    }
+    Ok(payload)
+}
+
+fn static_models() -> Vec<ag_adapters::models::ModelInfo> {
     [
         "gpt-6-astra",
         "gpt-5.6-sol",
@@ -394,6 +614,18 @@ fn static_models() -> Vec<String> {
         "hy3",
     ]
     .into_iter()
-    .map(str::to_string)
+    .map(|value| ag_adapters::models::ModelInfo {
+        label: value.to_string(),
+        value: value.to_string(),
+        description: "WorkBuddy model".to_string(),
+        efforts: Vec::new(),
+        default_effort: None,
+        hidden: false,
+        free: matches!(value, "deepseek-v4.1-flash" | "hy3").then_some(true),
+    })
     .collect()
+}
+
+fn static_image_models() -> Vec<String> {
+    ["hy-image-3.5"].into_iter().map(str::to_string).collect()
 }

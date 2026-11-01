@@ -47,7 +47,11 @@ fn common_dirs(
                 .fold(base.to_path_buf(), |path, part| path.join(part))
         })
     };
-    let mut push = |path: Option<PathBuf>| dirs.extend(path);
+    let mut push = |path: Option<PathBuf>| {
+        if let Some(path) = path.filter(|path| !dirs.contains(path)) {
+            dirs.push(path);
+        }
+    };
     // Node version managers keep one `bin` folder per installed Node: newest first.
     let versions = |parent: Option<PathBuf>, tail: &[&str]| -> Vec<PathBuf> {
         let mut found: Vec<PathBuf> = parent
@@ -66,8 +70,17 @@ fn common_dirs(
             push(under(appdata, &["npm"]));
             push(under(local, &["pnpm"]));
             push(std::env::var_os("PNPM_HOME").map(PathBuf::from));
+            push(std::env::var_os("NVM_BIN").map(PathBuf::from));
+            push(std::env::var_os("FNM_MULTISHELL_PATH").map(PathBuf::from));
+            push(std::env::var_os("BUN_INSTALL").map(|path| PathBuf::from(path).join("bin")));
+            push(std::env::var_os("VOLTA_HOME").map(|path| PathBuf::from(path).join("bin")));
+            push(std::env::var_os("MISE_DATA_DIR").map(|path| PathBuf::from(path).join("shims")));
+            push(std::env::var_os("ASDF_DATA_DIR").map(|path| PathBuf::from(path).join("shims")));
             push(under(local, &["Volta", "bin"]));
             push(under(local, &["Microsoft", "WinGet", "Links"]));
+            push(std::env::var_os("ProgramFiles").map(|path| PathBuf::from(path).join("nodejs")));
+            push(std::env::var_os("ProgramFiles(x86)").map(|path| PathBuf::from(path).join("nodejs")));
+            push(Some(PathBuf::from(r"C:\ProgramData\chocolatey\bin")));
             push(under(home, &[".volta", "bin"]));
             push(under(home, &[".bun", "bin"]));
             push(under(home, &["scoop", "shims"]));
@@ -82,19 +95,37 @@ fn common_dirs(
             for dir in versions(under(local, &["mise", "installs", "node"]), &[]) {
                 push(Some(dir));
             }
+            if let Some(mise_data) = std::env::var_os("MISE_DATA_DIR").map(PathBuf::from) {
+                for dir in versions(Some(mise_data.join("installs").join("node")), &[]) {
+                    push(Some(dir));
+                }
+            }
         }
         _ => {
             push(under(home, &[".local", "bin"]));
+            push(std::env::var_os("NVM_BIN").map(PathBuf::from));
+            push(std::env::var_os("FNM_MULTISHELL_PATH").map(PathBuf::from));
+            push(std::env::var_os("BUN_INSTALL").map(|path| PathBuf::from(path).join("bin")));
+            push(std::env::var_os("VOLTA_HOME").map(|path| PathBuf::from(path).join("bin")));
+            push(std::env::var_os("MISE_DATA_DIR").map(|path| PathBuf::from(path).join("shims")));
+            push(std::env::var_os("ASDF_DATA_DIR").map(|path| PathBuf::from(path).join("shims")));
+            push(std::env::var_os("HOMEBREW_PREFIX").map(|path| PathBuf::from(path).join("bin")));
+            push(std::env::var_os("BREW_PREFIX").map(|path| PathBuf::from(path).join("bin")));
             if os == "macos" {
                 push(Some(PathBuf::from("/opt/homebrew/bin")));
+                push(Some(PathBuf::from("/opt/homebrew/sbin")));
+                push(Some(PathBuf::from("/usr/local/sbin")));
                 push(under(home, &["Library", "pnpm"]));
+                push(under(home, &["Library", "Application Support", "mise", "shims"]));
             } else {
                 push(Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin")));
+                push(under(home, &[".linuxbrew", "bin"]));
                 push(Some(PathBuf::from("/snap/bin")));
                 push(under(home, &[".local", "share", "pnpm"]));
             }
             push(Some(PathBuf::from("/usr/local/bin")));
             push(Some(PathBuf::from("/usr/bin")));
+            push(Some(PathBuf::from("/bin")));
             push(under(home, &[".npm-global", "bin"]));
             push(under(home, &[".volta", "bin"]));
             push(under(home, &[".bun", "bin"]));
@@ -122,7 +153,7 @@ fn common_dirs(
 
 /// Adds the same well-known CLI folders used for resolution to the child process PATH. This matters
 /// for npm shims such as `opencode.cmd`: the shim may need its matching `node` executable on PATH.
-pub(super) fn augmented_path() -> Option<OsString> {
+pub fn augmented_path() -> Option<OsString> {
     let current = std::env::var_os("PATH");
     let mut cache = PATH_CACHE.lock().ok()?;
     if let Some((key, at, value)) = cache.as_ref() {
@@ -133,6 +164,17 @@ pub(super) fn augmented_path() -> Option<OsString> {
     let value = build_augmented_path();
     *cache = Some((current, Instant::now(), value.clone()));
     value
+}
+
+/// Returns the augmented PATH together with the spelling used by the parent process. Windows commonly exposes this
+/// variable as `Path`; preserving that spelling avoids creating a second environment entry for a `.cmd` child.
+pub fn augmented_path_env() -> Option<(OsString, OsString)> {
+    let path = augmented_path()?;
+    let key = std::env::vars_os()
+        .find(|(key, _)| key.to_string_lossy().eq_ignore_ascii_case("PATH"))
+        .map(|(key, _)| key)
+        .unwrap_or_else(|| OsString::from("PATH"));
+    Some((key, path))
 }
 
 /// How long a computed PATH or binary location is reused. The folders it was built from change only when the user
@@ -148,20 +190,31 @@ type BinaryCache = Mutex<Vec<(String, Option<OsString>, Instant, PathBuf)>>;
 static BINARY_CACHE: BinaryCache = Mutex::new(Vec::new());
 
 fn build_augmented_path() -> Option<OsString> {
-    let mut dirs = std::env::var_os("PATH")
+    let current = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
         .unwrap_or_default();
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
-    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-    let appdata = std::env::var_os("APPDATA").map(PathBuf::from);
-    dirs.extend(common_dirs(
+    let local = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Local")));
+    let appdata = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Roaming")));
+    let common = common_dirs(
         std::env::consts::OS,
         home.as_deref(),
         local.as_deref(),
         appdata.as_deref(),
-    ));
+    );
+    let mut dirs: Vec<PathBuf> = common
+        .iter()
+        .filter(|dir| dir.join(if cfg!(windows) { "node.exe" } else { "node" }).is_file())
+        .cloned()
+        .collect();
+    dirs.extend(common);
+    dirs.extend(current);
     std::env::join_paths(dirs).ok()
 }
 
@@ -218,8 +271,12 @@ pub fn resolve_binary(provider: &dyn Provider) -> OsString {
         let dirs = common_dirs(
             os,
             home.as_deref(),
-            env_path("LOCALAPPDATA").as_deref(),
-            env_path("APPDATA").as_deref(),
+            env_path("LOCALAPPDATA")
+                .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Local")))
+                .as_deref(),
+            env_path("APPDATA")
+                .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Roaming")))
+                .as_deref(),
         );
         find_in(dirs.into_iter(), provider.binary(), os)
     };

@@ -8,26 +8,107 @@ use tokio::process::Command;
 
 fn extra_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Ok(home) = crate::home_folder() {
-        dirs.push(home.join(".local").join("bin"));
-        dirs.push(home.join(".cargo").join("bin"));
-    }
-    if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
-        dirs.push(local.join("pnpm"));
-        dirs.push(local.join("agy").join("bin"));
-        if let Ok(versions) = std::fs::read_dir(local.join("mise").join("installs").join("node")) {
-            dirs.extend(versions.flatten().map(|entry| entry.path()));
+    let mut push = |path: Option<PathBuf>| {
+        if let Some(path) = path.filter(|path| !dirs.contains(path)) {
+            dirs.push(path);
+        }
+    };
+    let home = crate::home_folder().ok().or_else(|| {
+        std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+    });
+    let local = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Local")));
+    let roaming = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Roaming")));
+    push(home.as_ref().map(|path| path.join(".local").join("bin")));
+    push(home.as_ref().map(|path| path.join(".cargo").join("bin")));
+    push(home.as_ref().map(|path| path.join(".volta").join("bin")));
+    push(home.as_ref().map(|path| path.join(".bun").join("bin")));
+    push(home.as_ref().map(|path| path.join(".local").join("share").join("pnpm")));
+    push(home.as_ref().map(|path| path.join(".local").join("share").join("mise").join("shims")));
+    push(home.as_ref().map(|path| path.join(".asdf").join("shims")));
+    push(std::env::var_os("PNPM_HOME").map(PathBuf::from));
+    push(std::env::var_os("NVM_BIN").map(PathBuf::from));
+    push(std::env::var_os("FNM_MULTISHELL_PATH").map(PathBuf::from));
+    push(std::env::var_os("BUN_INSTALL").map(|path| PathBuf::from(path).join("bin")));
+    push(std::env::var_os("VOLTA_HOME").map(|path| PathBuf::from(path).join("bin")));
+    push(std::env::var_os("MISE_DATA_DIR").map(|path| PathBuf::from(path).join("shims")));
+    push(std::env::var_os("ASDF_DATA_DIR").map(|path| PathBuf::from(path).join("shims")));
+    push(roaming.as_ref().map(|path| path.join("npm")));
+    push(local.as_ref().map(|path| path.join("pnpm")));
+    push(local.as_ref().map(|path| path.join("agy").join("bin")));
+    push(local.as_ref().map(|path| path.join("Volta").join("bin")));
+    push(local.as_ref().map(|path| path.join("Microsoft").join("WinGet").join("Links")));
+    push(local.as_ref().map(|path| path.join("mise").join("shims")));
+    push(local.as_ref().map(|path| path.join("mise").join("installs").join("node")));
+    if let Some(local) = local.as_ref() {
+        for parent in [
+            local.join("mise").join("installs").join("node"),
+            local.join("nvm"),
+        ] {
+            if let Ok(entries) = std::fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    push(Some(entry.path()));
+                }
+            }
         }
     }
-    if let Some(roaming) = std::env::var_os("APPDATA").map(PathBuf::from) {
-        dirs.push(roaming.join("npm"));
+    if let Some(home) = home.as_ref() {
+        for parent in [
+            home.join(".nvm").join("versions").join("node"),
+            home.join(".local").join("share").join("mise").join("installs").join("node"),
+        ] {
+            if let Ok(entries) = std::fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    push(Some(entry.path().join(if cfg!(windows) { "" } else { "bin" })));
+                }
+            }
+        }
+    }
+    if let Some(mise_data) = std::env::var_os("MISE_DATA_DIR").map(PathBuf::from) {
+        if let Ok(entries) = std::fs::read_dir(mise_data.join("installs").join("node")) {
+            for entry in entries.flatten() {
+                push(Some(entry.path()));
+            }
+        }
+    }
+    push(std::env::var_os("HOMEBREW_PREFIX").map(|path| PathBuf::from(path).join("bin")));
+    push(std::env::var_os("BREW_PREFIX").map(|path| PathBuf::from(path).join("bin")));
+    if cfg!(windows) {
+        push(std::env::var_os("ProgramFiles").map(|path| PathBuf::from(path).join("nodejs")));
+        push(std::env::var_os("ProgramFiles(x86)").map(|path| PathBuf::from(path).join("nodejs")));
+        push(Some(PathBuf::from(r"C:\ProgramData\chocolatey\bin")));
+    } else if cfg!(target_os = "macos") {
+        push(Some(PathBuf::from("/opt/homebrew/bin")));
+        push(Some(PathBuf::from("/opt/homebrew/sbin")));
+        push(Some(PathBuf::from("/usr/local/bin")));
+        push(Some(PathBuf::from("/usr/local/sbin")));
+        push(home.as_ref().map(|path| path.join("Library").join("pnpm")));
+    } else {
+        push(Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin")));
+        push(home.as_ref().map(|path| path.join(".linuxbrew").join("bin")));
+        push(Some(PathBuf::from("/usr/local/bin")));
+        push(Some(PathBuf::from("/usr/bin")));
+        push(Some(PathBuf::from("/bin")));
+        push(Some(PathBuf::from("/snap/bin")));
     }
     dirs
 }
 
 fn search_path() -> Vec<PathBuf> {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path).chain(extra_dirs()).collect()
+    ag_adapters::agent::runner::augmented_path()
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_else(|| {
+            let path = std::env::var_os("PATH").unwrap_or_default();
+            extra_dirs()
+                .into_iter()
+                .chain(std::env::split_paths(&path))
+                .collect()
+        })
 }
 
 pub(crate) fn which(name: &str) -> Option<PathBuf> {
@@ -68,8 +149,8 @@ pub(crate) fn command(program: &Path) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    if let Ok(path) = std::env::join_paths(search_path()) {
-        command.env("PATH", path);
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        command.env(key, path);
     }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);

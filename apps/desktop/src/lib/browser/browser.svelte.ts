@@ -648,6 +648,21 @@ export const removeBrowserExtension = (tab: string, id: string) => call('browser
 /** A local address (a dev server) is opened in the AgentDeck browser instead of leaving the app. */
 export const isLocalUrl = (url: string) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(url);
 
+/** Compares browser destinations, so a server root with or without a trailing slash is one page. */
+function samePreviewAddress(left: string, right: string): boolean {
+  const clean = (address: string) => {
+    const value = cleanAddress(address);
+    try {
+      const parsed = new URL(value);
+      if (parsed.pathname === '') parsed.pathname = '/';
+      return parsed.href;
+    } catch {
+      return value;
+    }
+  };
+  return clean(left) === clean(right);
+}
+
 /** Shows `url` in the browser: in the front tab when that is blank, in a new tab otherwise. */
 /**
  * `auto` (a link): a page already open in a tab is shown as it is; any other address gets a tab of its own, never the
@@ -655,14 +670,20 @@ export const isLocalUrl = (url: string) => /^https?:\/\/(localhost|127\.0\.0\.1|
  */
 export function openInPreview(address: string, mode: 'auto' | 'current' | 'new' = 'auto') {
   const url = cleanAddress(address);
-  if (mode === 'new') newTab(url);
-  else if (mode === 'auto') {
-    const shown = browser.tabs.find((tab) => tab.url === url);
-    if (shown) browser.activeId = shown.id;
-    else if (activeTab().url) newTab(url);
-    else activeTab().url = url;
+  if (mode === 'new') {
+    newTab(url);
+  } else if (mode === 'auto') {
+    const shown = browser.tabs.find((tab) => samePreviewAddress(tab.url, url));
+    if (shown) {
+      selectTab(shown.id);
+    } else if (activeTab().url) {
+      newTab(url);
+    } else {
+      activeTab().url = url;
+    }
   }
-  browser.autostart = url;
+  // The selected tab already has this destination when only `/` differs; do not navigate it again.
+  browser.autostart = mode === 'auto' && samePreviewAddress(activeTab().url, url) ? '' : url;
   layout.activeTool = 'Preview';
   setToolsOpen(true);
 }

@@ -5,7 +5,7 @@ import { inTauri } from '../app/platform/history';
 // message is sent, `expandSlash` swaps the command for its text, so the chat shows what was typed and the agent gets
 // the full instructions. That works the same for every agent: nothing depends on the CLI knowing the command.
 
-export type SlashAgent = 'claude' | 'codex' | 'antigravity' | 'opencode' | 'copilot' | 'custom';
+export type SlashAgent = 'claude' | 'codex' | 'antigravity' | 'opencode' | 'workbuddy' | 'copilot' | 'custom';
 export type SlashItem = {
   name: string;
   description: string;
@@ -74,6 +74,14 @@ export const BUILTIN: SlashItem[] = [
     origin: 'AgentDeck',
     template:
       'Debug this: $ARGUMENTS\n\nUse the AgentDeck browser (the agentdeck tools: browser_serve or browser_open to open the page, browser_screenshot, browser_console, browser_network, browser_dom). Start the dev server with browser_serve if it is not running. Reproduce the problem on the page, then read the console errors and the failed network requests (with bodies) and work out the root cause. Fix it, reload, and check again that the console is clean and the requests succeed.',
+  },
+  {
+    name: 'agentdev',
+    description: 'Run the native AgentDeck desktop development app',
+    kind: 'builtin',
+    origin: 'AgentDeck',
+    template:
+      'Run the native AgentDeck desktop development app for this project. If target/debug/agentdeck-desktop.exe is already running, reuse that native window and do not start a second build. Otherwise, on Windows set `$env:CMAKE_GENERATOR = \'Visual Studio 17 2022\'` and run `pnpm dev` from the repository root. Verify the Tauri window title is `AgentDeck Dev`. Do not use `pnpm dev:web`, `pnpm --filter desktop dev`, browser_serve, or the Preview browser for this task.',
   },
   {
     name: 'review',

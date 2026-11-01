@@ -156,14 +156,10 @@
 </div>
 
 {#if selected}
-  <ZModal bind:open={modalOpen} zTitle={selected.title} zWidth="min(900px, calc(100vw - 24px))" zBodyClass="max-h-[70vh] overflow-y-auto py-3" zOkText="Close" zCancelText={null} onOk={() => (modalOpen = false)} onCancel={() => (modalOpen = false)}>
+  <ZModal bind:open={modalOpen} zTitle={`${selected.title} · ${selected.model || selected.agent}`} zWidth="min(900px, calc(100vw - 24px))" zBodyClass="max-h-[70vh] overflow-y-auto py-3" zOkText="Close" zCancelText="Download .md" onOk={() => (modalOpen = false)} onCancel={() => downloadEntry(selected!)}>
     <div class="flex flex-col gap-3">
-      <div class="flex items-center gap-2 border-b border-border pb-2 text-[0.6875rem] text-muted-foreground">
-        <span class="flex-1">{selected.projectName} · {new Date(selected.at).toLocaleString()}</span>
-        <ZButton zWave={false} zType="ghost" zSize="sm" class="h-7 gap-1.5 text-xs" onclick={() => downloadEntry(selected!)}><ZIcon zType="lucideDownload" class="size-3.5" /> Download .md</ZButton>
-      </div>
+      <div class="border-b border-border pb-2 text-[0.6875rem] text-muted-foreground">{selected.projectName} · {new Date(selected.at).toLocaleString()}</div>
       <Markdown text={selected.markdown} />
     </div>
   </ZModal>
 {/if}
-

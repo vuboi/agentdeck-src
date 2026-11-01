@@ -11,7 +11,10 @@ const mode = process.argv[2];
 const dryRun = process.argv.includes('--dry-run');
 if (!['dev', 'web', 'build'].includes(mode)) throw new Error('Usage: pnpm dev | pnpm dev:web | pnpm run:build');
 const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
-const env = { ...process.env, [pathKey]: [join(homedir(), '.cargo', 'bin'), process.env[pathKey]].filter(Boolean).join(process.platform === 'win32' ? ';' : ':') };
+const env = {
+  ...process.env,
+  [pathKey]: [dirname(process.execPath), join(homedir(), '.cargo', 'bin'), process.env[pathKey]].filter(Boolean).join(process.platform === 'win32' ? ';' : ':'),
+};
 if (process.platform === 'win32' && mode !== 'web') {
   // whisper-rs uses bindgen + CMake. Discover the standard Windows installs so pnpm dev/build works from an ordinary
   // terminal; explicit variables still win for custom LLVM or Visual Studio installations.
@@ -78,6 +81,10 @@ if (mode !== 'build') {
   // SvelteKit emits Vite imports relative to the generated tree. Keep this path relative on Windows so
   // a drive letter is not treated as part of a relative module specifier such as `./E:/...`.
   env.AGENTDECK_SVELTEKIT_OUT_DIR = relative(join(root, 'apps', 'desktop'), temporary) || '.svelte-kit';
+  // Vite's default optimize cache is shared by every server in the workspace. A
+  // concurrent server can remove a chunk while another server is still loading it,
+  // leaving a Preview tab with a mixed Svelte runtime and `effect_orphan` at root.svelte.
+  env.AGENTDECK_VITE_CACHE_DIR = join(temporary, 'vite-cache');
 
   const defaults = JSON.parse(readFileSync(join(root, 'apps/desktop/src-tauri/tauri.dev.conf.json'), 'utf8'));
   const preferred = Number(process.env.VITE_DEV_PORT || new URL(defaults.build.devUrl).port);
@@ -95,6 +102,8 @@ if (mode !== 'build') {
     build: { ...defaults.build, devUrl: env.AGENTDECK_DEV_ORIGIN },
     app: { security: { devCsp: base.app.security.devCsp.replace(/(https?:|wss?:)\/\/127\.0\.0\.1:\d+/g, (_, scheme) => `${scheme}//127.0.0.1:${port}`) } },
   };
+  const vite = join(root, 'apps', 'desktop', 'node_modules', 'vite', 'bin', 'vite.js');
+  config.build.beforeDevCommand = `${process.execPath} ${vite} --host 127.0.0.1`;
   console.log(`AgentDeck ${mode === 'web' ? 'browser dev' : 'Dev'}: ${env.AGENTDECK_DEV_ORIGIN}${port !== preferred ? ` (${preferred} is busy)` : ''}`);
 } else {
   config = JSON.parse(readFileSync(join(root, 'apps/desktop/src-tauri/tauri.local.conf.json'), 'utf8'));
@@ -129,7 +138,8 @@ try {
     temporary = mkdtempSync(join(tmpdir(), 'agentdeck-run-'));
     const file = join(temporary, 'tauri.json');
     writeFileSync(file, JSON.stringify(config));
-    args = ['--filter', 'desktop', 'tauri', mode === 'dev' ? 'dev' : 'build', '--config', file];
+    const tauri = join(root, 'apps', 'desktop', 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
+    args = ['--filter', 'desktop', 'exec', '--', process.execPath, tauri, mode === 'dev' ? 'dev' : 'build', '--config', file];
     if (mode === 'build') args.push('--no-bundle');
   }
   const code = await runPnpm(args);

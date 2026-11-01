@@ -3,7 +3,7 @@
   import { ZIcon, ZSelect, ZSwitch, ZTabs, zSortable } from '@shival99/z-ui-svelte';
   import type { ZIconName, ZTab } from '@shival99/z-ui-svelte';
   import AgentLogo from '../../ui/AgentLogo.svelte';
-  import { customModelId, modelSources, parseCustomModel } from '../../../agents/models.svelte';
+  import { customModelId, effortLabel, modelSources, parseCustomModel, supportedEffortValues, type ProviderId } from '../../../agents/models.svelte';
   import { agentDisplayName } from '../../../agents/provider-registry';
   import { TASK_ROLES, routesOf, type TaskRoleId } from '../../../agents/task-roles';
   import { roleOpen, setRoleOpen, taskRoles, tasksTab } from '../../../agents/task-roles.svelte';
@@ -19,11 +19,11 @@
   /** Reading pictures: the Console-credit Claude models, Copilot, OpenCode, Antigravity and the connectors. */
   const READING = ['claude', 'copilot', 'opencode', 'antigravity', 'custom'];
   /** Hand-offs with delegate_task: the plan Claude models, Codex, Antigravity and the connectors. */
-  const ROUTING = ['claude', 'codex', 'antigravity', 'custom'];
+  const ROUTING = ['claude', 'codex', 'antigravity', 'workbuddy', 'custom'];
 
-  type Node = { value: string; label: string; agent: string; model?: string; children?: Node[] };
+  type Node = { value: string; label: string; agent: string; model?: string; modelLabel?: string; children?: Node[] };
 
-  /** The tree a row's select draws: one branch per provider, its models as leaves. A leaf's value is the route. */
+  /** The tree a row's select draws: provider, model, then the model's supported effort values. */
   function treeFor(id: TaskRoleId): Node[] {
     // The read role reads pictures, so its agents are the ones that can (the pre-handle's list).
     const reading = id === 'read';
@@ -33,11 +33,27 @@
       const children = source.models().flatMap((item): Node[] => {
         if (source.provider === 'custom') {
           const target = parseCustomModel(item.value);
-          return target ? [{ value: `${target.providerId}|${target.model}`, label: item.label, agent: 'custom', model: customModelId(target.providerId, target.model) }] : [];
+          if (!target) return [];
+          const model = customModelId(target.providerId, target.model);
+          const efforts = supportedEffortValues('custom', model);
+          return [{
+            value: `${target.providerId}|${target.model}`,
+            label: item.label,
+            agent: 'custom',
+            model,
+            ...(efforts.length ? { children: efforts.map((effort) => ({ value: `${target.providerId}|${target.model}|${effort}`, label: effortLabel(effort), agent: 'custom', model, modelLabel: item.label })) } : {}),
+          }];
         }
         // The pre-handle reads with the Console-credit Claude models; hand-offs take the plan models.
         if (source.provider === 'claude' && reading !== item.value.startsWith('credit:')) return [];
-        return [{ value: `${source.provider}|${item.value}`, label: item.label, agent: source.provider, model: item.value }];
+        const efforts = supportedEffortValues(source.provider as ProviderId, item.value);
+        return [{
+          value: `${source.provider}|${item.value}`,
+          label: item.label,
+          agent: source.provider,
+          model: item.value,
+          ...(efforts.length ? { children: efforts.map((effort) => ({ value: `${source.provider}|${item.value}|${effort}`, label: effortLabel(effort), agent: source.provider, model: item.value, modelLabel: item.label })) } : {}),
+        }];
       });
       return children.length ? [{ value: `source:${source.key}`, label: source.label, agent: source.provider, children }] : [];
     });
@@ -147,10 +163,10 @@
                       onValueChange={(value) => setRow(role.id, index, value === null ? null : String(value))}
                     >
                       {#snippet option(item)}
-                        <span class="flex min-w-0 flex-1 items-center gap-2"><AgentLogo agent={item.agent} model={item.children ? undefined : item.model} class="size-4 shrink-0" /><span class="truncate">{item.label}</span>{#if !item.children}<span class="ml-auto shrink-0 text-[0.6875rem] text-muted-foreground">{agentDisplayName(item.agent, item.model)}</span>{/if}</span>
+                        <span class="flex min-w-0 flex-1 items-center gap-2"><AgentLogo agent={item.agent} model={item.model} class="size-4 shrink-0" /><span class="truncate">{item.modelLabel ? `${item.modelLabel} · ${item.label}` : item.label}</span>{#if !item.children}<span class="ml-auto shrink-0 text-[0.6875rem] text-muted-foreground">{agentDisplayName(item.agent, item.model)}</span>{/if}</span>
                       {/snippet}
                       {#snippet selection(item)}
-                        <span class="flex min-w-0 items-center gap-2"><AgentLogo agent={item.agent} model={item.model} class="size-4 shrink-0" /><span class="truncate font-medium">{item.label}</span><span class="shrink-0 truncate text-[0.6875rem] text-muted-foreground">{agentDisplayName(item.agent, item.model)}</span></span>
+                        <span class="flex min-w-0 items-center gap-2"><AgentLogo agent={item.agent} model={item.model} class="size-4 shrink-0" /><span class="truncate font-medium">{item.modelLabel ? `${item.modelLabel} · ${item.label}` : item.label}</span><span class="shrink-0 truncate text-[0.6875rem] text-muted-foreground">{agentDisplayName(item.agent, item.model)}</span></span>
                       {/snippet}
                     </ZSelect>
                     <button

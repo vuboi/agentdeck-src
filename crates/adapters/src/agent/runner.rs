@@ -12,8 +12,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
-pub use super::resolve::resolve_binary;
-use super::resolve::augmented_path;
+pub use super::resolve::{augmented_path, augmented_path_env, resolve_binary};
 use super::stall::Watchdog;
 use super::{AgentEvent, Provider, TurnRequest};
 
@@ -192,8 +191,8 @@ pub async fn drive_turn(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    if let Some(path) = augmented_path() {
-        command.env("PATH", path);
+    if let Some((key, path)) = augmented_path_env() {
+        command.env(key, path);
     }
     // A folder that is gone (or an empty path, for chats without a project) would make the spawn itself fail.
     if let Some(dir) = req.cwd.as_deref().filter(|dir| dir.is_dir()) {

@@ -10,22 +10,25 @@
   let open = $state(false);
   let selected = $state('');
 
-  // Keep the provider snapshots in the assistant message. The latest snapshot previews each file; counts add up
-  // across tool calls, matching the activity summaries above.
+  // Keep one entry per file. Cumulative provider snapshots replace earlier values; tool-level deltas are summed.
   const files = $derived.by(() => {
-    const grouped = new Map<string, { change: FileChange; added: number; removed: number; deleted: boolean }>();
+    const grouped = new Map<string, { change: FileChange; added: number; removed: number; deleted: boolean; cumulative: boolean }>();
     for (const block of blocks) {
       if (block.kind !== 'command') continue;
       const change = block.change;
       if (!change) continue;
       const current = grouped.get(change.path);
       const deleted = toolOf(block.command) === 'Delete';
-      grouped.set(change.path, {
-        change,
-        added: (current?.added ?? 0) + change.added,
-        removed: (current?.removed ?? 0) + change.removed,
-        deleted: deleted || (current?.deleted ?? false),
-      });
+      const cumulative = change.cumulative !== false;
+      grouped.set(change.path, cumulative
+        ? { change, added: change.added, removed: change.removed, deleted: deleted || (current?.deleted ?? false), cumulative: true }
+        : {
+            change,
+            added: (current?.added ?? 0) + change.added,
+            removed: (current?.removed ?? 0) + change.removed,
+            deleted: deleted || (current?.deleted ?? false),
+            cumulative: false,
+          });
     }
     return [...grouped.values()].sort((a, b) => a.change.path.localeCompare(b.change.path));
   });

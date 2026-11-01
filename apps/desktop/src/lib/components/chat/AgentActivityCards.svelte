@@ -55,4 +55,4 @@
   }));
 </script>
 
-<BackgroundTasks items={work} sessionId={sessionId ?? ''} title="Agent & background activity" stateKey={`activity:${items[0]?.id ?? 'none'}`} />
+<BackgroundTasks items={work} sessionId={sessionId ?? ''} title="Subagent & background activity" stateKey={`activity:${items[0]?.id ?? 'none'}`} />

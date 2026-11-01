@@ -122,6 +122,33 @@ export const folderName = (cwd: string) =>
     .filter(Boolean)
     .at(-1) ?? 'Unknown';
 
+/** Provider state kept beside history files: those files do not know AgentDeck's mixed-chat or edited-session mapping. */
+type SavedProviderState = Pick<
+  SessionItem,
+  | 'agent'
+  | 'agents'
+  | 'agentSession'
+  | 'agentStarted'
+  | 'agentEpoch'
+  | 'agentModels'
+  | 'agentIds'
+  | 'conversationModel'
+  | 'source'
+>;
+const mixed: Record<string, SavedProviderState> = {};
+let mixedHydrated = false;
+const pendingMixed = new Map<string, SavedProviderState>();
+const mixedReady = getPref<typeof mixed>('chat.mixed')
+  .then((saved) => {
+    if (saved) Object.assign(mixed, saved);
+    for (const [id, state] of pendingMixed) mixed[id] = state;
+    pendingMixed.clear();
+    mixedHydrated = true;
+  })
+  .catch(() => {
+    mixedHydrated = true;
+  });
+
 /** Replaces the mock workspace with what Claude Code and Codex already saved on this machine. */
 export async function importHistory({ refresh = false } = {}) {
   if (fakeData) {
@@ -133,7 +160,7 @@ export async function importHistory({ refresh = false } = {}) {
     history.loading = false;
     return;
   }
-  await Promise.all([restored, addedReady, sessionPlacementsReady]);
+  await Promise.all([restored, addedReady, sessionPlacementsReady, mixedReady]);
   // Show the last known index at once, then refresh it: indexing every file takes a moment.
   if (!refresh)
     try {
@@ -158,10 +185,18 @@ export async function importHistory({ refresh = false } = {}) {
   try {
     const found = await listHistory();
     const keep = workspace.activeId;
+    const keepSession = workspace.sessions.find((item) => item.id === keep);
     const keepIsLocal = localSessions().some((item) => item.id === keep);
     if (found.length === 0 && (!keep || keepIsLocal)) return;
     applyHistory(found);
     if (found.some((item) => item.id === keep)) workspace.activeId = keep;
+    else if (refresh && keep && keepSession?.made) {
+      // The provider can lag briefly after the first turn writes its transcript. Keep the AgentDeck-created chat
+      // visible during this refresh; creating a new draft here clears the active tab and makes the UI jump away.
+      if (!workspace.sessions.some((item) => item.id === keep))
+        workspace.sessions = [keepSession, ...workspace.sessions];
+      workspace.activeId = keep;
+    }
     else if (keep && !keepIsLocal) newSession(NO_PROJECT);
     history.imported = true;
     // Quietly warm the transcripts of the newest chats while the app is idle.
@@ -206,6 +241,13 @@ function applyHistory(all: HistorySession[]) {
   // has a session id of its own, while its history file is named by the agent's conversation id (`codex:<id>`,
   // `claude:<id>`). That file is the same chat: it is merged into the chat, not listed again on its own.
   const aliasOf = new Map<string, string>();
+  for (const [ownerId, saved] of Object.entries(mixed)) {
+    const first = saved.source ?? saved.agents?.[0] ?? saved.agent;
+    if (saved.agentSession && first)
+      aliasOf.set(`${first}:${saved.agentSession}`, ownerId);
+    for (const [agent, ids] of Object.entries(saved.agentIds ?? {}))
+      if (ids?.id) aliasOf.set(`${agent}:${ids.id}`, ownerId);
+  }
   for (const item of workspace.sessions) {
     if (item.agentSession)
       aliasOf.set(`${item.source ?? item.agent}:${item.agentSession}`, item.id);
@@ -278,7 +320,10 @@ function applyHistory(all: HistorySession[]) {
       NO_PROJECT,
     workingDirectory: item.cwd || undefined,
     title: item.title,
-    agent: mixed[item.id]?.agents?.at(-1) ?? item.source,
+    agent:
+      mixed[item.id]?.agents?.at(-1) ??
+      mixed[item.id]?.agent ??
+      item.source,
     // A chat already listed keeps the model the user picked (Claude transcripts record none, so a re-import used to reset it).
     // Sonnet otherwise, unless the chat was changed: the first model of the list is the biggest one.
     model:
@@ -384,18 +429,23 @@ const MAX_SAVED = 12;
 const PAGE_LIMIT = 20;
 const SAVED_TAIL = PAGE_LIMIT;
 
-/** Agents and per-agent ids of saved chats that switched agent (the chat files cannot hold them). */
-const mixed: Record<string, Pick<SessionItem, 'agents' | 'agentIds'>> = {};
-void getPref<typeof mixed>('chat.mixed').then((saved) => {
-  if (saved) Object.assign(mixed, saved);
-});
+/** Provider ids of saved chats, including edited sessions whose new history file has a different provider id. */
 export function rememberMixed(session: SessionItem) {
-  if (!session.path || !session.agents || session.agents.length < 2) return;
-  mixed[session.id] = $state.snapshot({
+  if (!session.path) return;
+  const saved = $state.snapshot({
+    agent: session.agent,
     agents: session.agents,
+    agentSession: session.agentSession,
+    agentStarted: session.agentStarted,
+    agentEpoch: session.agentEpoch,
+    agentModels: session.agentModels,
     agentIds: session.agentIds,
+    conversationModel: session.conversationModel,
+    source: session.source,
   });
-  setPref('chat.mixed', mixed);
+  mixed[session.id] = saved;
+  if (!mixedHydrated) pendingMixed.set(session.id, saved);
+  void mixedReady.then(() => setPref('chat.mixed', mixed));
 }
 
 /**
@@ -899,7 +949,7 @@ export async function renameSession(id: string, title: string) {
 
 /** Deletes the chat; Claude and Codex sessions are moved to ~/.agentdeck/trash, so they vanish there too. */
 /** An idle warm CLI can have touched the transcript recently without a visible turn. Release only this chat before the adapter moves its file; other chats keep running. */
-async function releaseCli(id: string) {
+export async function releaseCli(id: string) {
   if (!inTauri()) return;
   try {
     const { invoke } = await import('@tauri-apps/api/core');

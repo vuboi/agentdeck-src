@@ -4,18 +4,18 @@
   import type { ZIconName } from '@shival99/z-ui-svelte';
   import AgentLogo from '../../ui/AgentLogo.svelte';
   import { connectors } from '../../../agents/connectors.svelte';
-  import { customModelId, modelSources, parseCustomModel } from '../../../agents/models.svelte';
+  import { customModelId, effortLabel, modelSources, parseCustomModel, supportedEffortValues, type ProviderId } from '../../../agents/models.svelte';
   import { agentDisplayName } from '../../../agents/provider-registry';
   import { theme } from '../../../app/ui/theme.svelte';
 
   const icon = (name: string) => name as ZIconName;
 
   /** The agents a chat can move to: the ones with a CLI (events.svelte.ts CLI_OF). */
-  const CHAIN_AGENTS = ['claude', 'codex', 'antigravity', 'opencode', 'copilot', 'custom'];
+  const CHAIN_AGENTS = ['claude', 'codex', 'antigravity', 'opencode', 'workbuddy', 'copilot', 'custom'];
 
-  type Node = { value: string; label: string; agent: string; model?: string; children?: Node[] };
+  type Node = { value: string; label: string; agent: string; model?: string; modelLabel?: string; children?: Node[] };
 
-  /** The tree a row's select draws: one branch per agent, its models as leaves (a leaf's value is `agent|model`). */
+  /** The tree a row's select draws: provider, model, then the model's supported effort values. */
   const tree = $derived.by((): Node[] =>
     modelSources().flatMap((source): Node[] => {
       if (!CHAIN_AGENTS.includes(source.provider)) return [];
@@ -25,7 +25,16 @@
         const custom = source.provider === 'custom' ? parseCustomModel(item.value) : null;
         const routeAgent = custom?.providerId ?? source.provider;
         const routeModel = custom?.model ?? item.value;
-        return [{ value: `${routeAgent}|${routeModel}`, label: item.label, agent: custom ? 'custom' : source.provider, model: custom ? customModelId(custom.providerId, custom.model) : item.value }];
+        const lookupAgent = custom ? 'custom' : source.provider;
+        const lookupModel = custom ? customModelId(custom.providerId, custom.model) : item.value;
+        const efforts = supportedEffortValues(lookupAgent as ProviderId, lookupModel);
+        return [{
+          value: `${routeAgent}|${routeModel}`,
+          label: item.label,
+          agent: lookupAgent,
+          model: lookupModel,
+          ...(efforts.length ? { children: efforts.map((effort) => ({ value: `${routeAgent}|${routeModel}|${effort}`, label: effortLabel(effort), agent: lookupAgent, model: lookupModel, modelLabel: item.label })) } : {}),
+        }];
       });
       return children.length ? [{ value: `source:${source.key}`, label: source.label, agent: source.provider, children }] : [];
     }),
@@ -104,10 +113,10 @@
               onValueChange={(value) => setRow(index, value === null ? null : String(value))}
             >
               {#snippet option(item)}
-                <span class="flex min-w-0 flex-1 items-center gap-2"><AgentLogo agent={item.agent} model={item.children ? undefined : item.model} class="size-4 shrink-0" /><span class="truncate">{item.label}</span>{#if !item.children}<span class="ml-auto shrink-0 text-[0.6875rem] text-muted-foreground">{agentDisplayName(item.agent, item.model)}</span>{/if}</span>
+                <span class="flex min-w-0 flex-1 items-center gap-2"><AgentLogo agent={item.agent} model={item.model} class="size-4 shrink-0" /><span class="truncate">{item.modelLabel ? `${item.modelLabel} · ${item.label}` : item.label}</span>{#if !item.children}<span class="ml-auto shrink-0 text-[0.6875rem] text-muted-foreground">{agentDisplayName(item.agent, item.model)}</span>{/if}</span>
               {/snippet}
               {#snippet selection(item)}
-                <span class="flex min-w-0 items-center gap-2"><AgentLogo agent={item.agent} model={item.model} class="size-4 shrink-0" /><span class="truncate font-medium">{item.label}</span><span class="shrink-0 truncate text-[0.6875rem] text-muted-foreground">{agentDisplayName(item.agent, item.model)}</span></span>
+                <span class="flex min-w-0 items-center gap-2"><AgentLogo agent={item.agent} model={item.model} class="size-4 shrink-0" /><span class="truncate font-medium">{item.modelLabel ? `${item.modelLabel} · ${item.label}` : item.label}</span><span class="shrink-0 truncate text-[0.6875rem] text-muted-foreground">{agentDisplayName(item.agent, item.model)}</span></span>
               {/snippet}
             </ZSelect>
             <button

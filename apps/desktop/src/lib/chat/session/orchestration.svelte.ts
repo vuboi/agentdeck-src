@@ -15,4 +15,42 @@ export const clipText = (text: string, max: number) => {
 /** Resolves a delegate_task call when its child chat finishes. */
 export const taskWaiters = new Map<string, (text: string, error: string | null, reply: Message) => void>();
 
+/** A hidden coordination prompt waits for the target chat's current turn to finish. */
+export type SilentCoordinationPrompt = {
+  prompt: string;
+  silent: Message;
+  preface?: string;
+  report?: Pick<Message, 'triggeredByMessageId' | 'taskTitle' | 'taskIds' | 'workflowRunId'>;
+  questionId?: string;
+};
+const silentCoordination = new Map<string, SilentCoordinationPrompt[]>();
+const activeCoordination = new Map<string, SilentCoordinationPrompt>();
+
+export function queueCoordinationPrompt(sessionId: string, item: SilentCoordinationPrompt): void {
+  const list = silentCoordination.get(sessionId) ?? [];
+  list.push(item);
+  silentCoordination.set(sessionId, list);
+}
+
+export function takeCoordinationPrompt(sessionId: string): SilentCoordinationPrompt | undefined {
+  const list = silentCoordination.get(sessionId);
+  const item = list?.shift();
+  if (!list?.length) silentCoordination.delete(sessionId);
+  return item;
+}
+
+export function hasCoordinationPrompt(sessionId: string): boolean {
+  return (silentCoordination.get(sessionId)?.length ?? 0) > 0;
+}
+
+export function startCoordinationPrompt(sessionId: string, item: SilentCoordinationPrompt): void {
+  activeCoordination.set(sessionId, item);
+}
+
+export function finishCoordinationPrompt(sessionId: string): SilentCoordinationPrompt | undefined {
+  const item = activeCoordination.get(sessionId);
+  activeCoordination.delete(sessionId);
+  return item;
+}
+
 /** Sends an answer to a question asked by an agent in its chat. */

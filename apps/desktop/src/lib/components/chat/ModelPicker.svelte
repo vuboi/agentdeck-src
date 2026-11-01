@@ -7,7 +7,7 @@
   import { agyBlocks, agyModes } from '../../agents/agy-modes.svelte';
   import { AGENT_TEXT, turnOptions, workspace, type Agent, type Effort, type Permission } from '../../chat/sessions.svelte';
   import { allPresets, assignPreset, createFlow, presetOf } from '../../tasks/workflows.svelte';
-  import { findModel, freeFirst, modelSources, modelsReady } from '../../agents/models.svelte';
+  import { effortLabel as formatEffortLabel, effortValues, findModel, freeFirst, modelSources, modelsReady } from '../../agents/models.svelte';
   import { CREDIT_PREFIX } from '../../agents/credit-model';
   import { automation, fallbackOn, setFallback } from '../../app/platform/automation.svelte';
   import { accountEpoch } from '../../chat/runs/account-epoch.svelte';
@@ -144,11 +144,10 @@
   }
 
   // The reasoning levels the chosen model takes (from its CLI's catalogue).
-  const EFFORT_LABEL: Record<string, string> = { off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'X-High', max: 'Max', ultra: 'Ultra' };
   const efforts = $derived(
-    (findModel(agent, model)?.efforts?.length ? findModel(agent, model)!.efforts! : ['low', 'medium', 'high', 'max']).map((value) => ({
+    effortValues(agent, model).map((value) => ({
       value,
-      label: EFFORT_LABEL[value] ?? value,
+      label: formatEffortLabel(value),
     })),
   );
   // A model that does not take the chosen level falls back to its own default.
@@ -195,7 +194,7 @@
   zWave={false}
   zType="ghost"
   zSize="sm"
-  class="group h-7 w-fit min-w-0 max-w-full flex-none justify-start gap-1 px-1.5 text-left text-[0.6875rem] {open ? '!bg-primary/15 !text-primary hover:!bg-primary/20' : 'hover:!bg-primary/15 hover:!text-primary'}"
+  class="group h-7 w-fit min-w-0 max-w-full flex-none justify-start gap-1 px-1.5 text-left text-xs {open ? '!bg-primary/15 !text-primary hover:!bg-primary/20' : 'hover:!bg-primary/15 hover:!text-primary'}"
   aria-haspopup="dialog"
   aria-expanded={open}
   aria-label="Model and permissions"
@@ -216,12 +215,12 @@
     <span class="min-w-0 flex-1 truncate" {@attach zTooltip({ content: flow.name, position: 'top', autoDetect: true })}>{flow.name}</span>
   {:else}
     <AgentLogo agent={currentSource.provider} model={currentSource.provider === 'custom' ? model : undefined} class="size-3 shrink-0" />
-    <span class="min-w-0 flex-1 truncate" {@attach zTooltip({ content: modelLabel, position: 'top', autoDetect: true })}>{modelLabel}</span>
-    <span class="hidden shrink-0 text-muted-foreground min-[720px]:inline">· {effortLabel}</span>
+    <span class="min-w-0 flex-1 truncate text-sm" {@attach zTooltip({ content: modelLabel, position: 'top', autoDetect: true })}>{modelLabel}</span>
+    <span class="hidden shrink-0 text-[13px] text-muted-foreground min-[720px]:inline">· {effortLabel}</span>
   {/if}
   {#if fast}<ZIcon zType="lucideZap" class="size-3 shrink-0 text-warning" />{/if}
   {#if permission !== 'ask'}
-    <span class="hidden shrink-0 rounded px-1 text-[10px] min-[720px]:inline {currentPermission.danger ? 'bg-destructive/15 text-destructive' : open ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground group-hover:bg-primary/15 group-hover:text-primary'}">{currentPermission.label}</span>
+    <span class="hidden shrink-0 rounded px-1 text-[11px] min-[720px]:inline {currentPermission.danger ? 'bg-destructive/15 text-destructive' : open ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground group-hover:bg-primary/15 group-hover:text-primary'}">{currentPermission.label}</span>
   {/if}
   <ZIcon zType="lucideChevronDown" class="size-3 shrink-0 text-muted-foreground" />
 </ZButton>

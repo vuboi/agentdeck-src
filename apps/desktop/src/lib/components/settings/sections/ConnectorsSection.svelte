@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { fade, slide } from 'svelte/transition';
+  import { tick } from 'svelte';
+  import { fade, fly, slide } from 'svelte/transition';
   import { ZButton, ZIcon, ZSwitch, ZTabs, ZTextMorph } from '@shival99/z-ui-svelte';
   import type { ZIconName, ZTab } from '@shival99/z-ui-svelte';
   import { toast } from '../../../app/platform/toast';
@@ -20,11 +21,11 @@
     refreshAgyAccount,
     refreshAgyAccounts,
     refreshAgyQuota,
+    refreshConnector,
     refreshDetect,
     removeAccount,
     removeAgyAccount,
     retrySaveAgyAccount,
-    setCodexAutoSwitch,
     setConnectorAutoSwitch,
     switchAccount,
     switchAgyAccount,
@@ -32,6 +33,7 @@
     tool,
     type Account,
     type AccountProvider,
+    type AgyAccount,
     type ConnectorId,
     type Login,
     type UsageWindow,
@@ -113,7 +115,7 @@
     {
       id: 'workbuddy',
       label: 'WorkBuddy',
-      binary: 'workbuddy',
+      binary: 'codebuddy',
       brand: 'lucideBot',
       image: WORKBUDDY_LOGO,
       tone: 'bg-cyan-500/12 text-cyan-600 dark:text-cyan-400',
@@ -141,7 +143,11 @@
 
   /** Email of the account card whose Refresh button was clicked: only that card's icon spins. */
   let refreshing = $state('');
-  let refreshingCard = $state('');
+  /** Manual refresh state is scoped to each connector tab so one tab never disables another. */
+  let refreshingCards = $state<Partial<Record<ConnectorId, boolean>>>({});
+  /** Changes after a completed account refresh so the result cards replay their entrance animation. */
+  let refreshGeneration = $state<Partial<Record<ConnectorId, number>>>({});
+  const isRefreshingCard = (id: ConnectorId) => Boolean(refreshingCards[id]);
   const busyOf = (...keys: string[]) => keys.map((key) => connectors.busy[key]).find(Boolean);
   const lastLog = (id: string) => connectors.logs[id]?.slice(-4) ?? [];
   const urlIn = (lines: string[]) => lines.map((line) => line.match(/https?:\/\/\S+/)?.[0]).filter(Boolean).pop();
@@ -201,9 +207,39 @@
   const needsLogin = (account: Account) => account.expired || authFailure(account.status);
   const needsAgyLogin = (account: { expired: boolean; status: string | null }, error: string | null | undefined) => account.expired || authFailure(account.status) || authFailure(error);
 
+  type AgyAccountGroup = { key: string; accounts: AgyAccount[] };
+
+  /** Accounts with the same quota shape share a grid so their cards keep the same height. */
+  const agyAccountShape = (account: AgyAccount): string => {
+    const quota = connectors.agyAccountQuotas.find((item) => item.id === account.id)?.quota;
+    if (!quota?.groups.length) return 'no-quota';
+    return quota.groups.map((group) => `${group.id}:${group.windows.map((window) => window.label).join(',')}`).join('|');
+  };
+
+  const agyAccountGroups = $derived.by<AgyAccountGroup[]>(() => {
+    const grouped = new Map<string, AgyAccount[]>();
+    const accounts = [...connectors.accounts.agy].sort((a, b) => Number(b.active) - Number(a.active));
+    for (const account of accounts) {
+      const key = agyAccountShape(account);
+      const group = grouped.get(key);
+      if (group) group.push(account);
+      else grouped.set(key, [account]);
+    }
+
+    const groups = [...grouped.entries()].map(([key, accounts]) => ({ key, accounts }));
+    const activeGroup = groups.find((group) => group.accounts.some((account) => account.active));
+    return [
+      ...(activeGroup ? [activeGroup] : []),
+      ...groups.filter((group) => group !== activeGroup && group.accounts.length > 1),
+      ...groups.filter((group) => group !== activeGroup && group.accounts.length === 1),
+    ];
+  });
+
   async function refreshCardAccounts(card: Card) {
-    if (refreshingCard) return;
-    refreshingCard = card.id;
+    if (isRefreshingCard(card.id)) return;
+    refreshingCards[card.id] = true;
+    // Let the skeleton paint before the native command starts and updates the cached account state.
+    await tick();
     try {
       if (card.id === 'agy') {
         await Promise.all([refreshAgyAccounts(false, true), refreshAgyQuota(false, true)]);
@@ -211,8 +247,20 @@
         await refreshAccounts(card.accounts, true);
       }
     } finally {
-      refreshingCard = '';
+      refreshGeneration[card.id] = (refreshGeneration[card.id] ?? 0) + 1;
+      delete refreshingCards[card.id];
     }
+  }
+
+  async function onConnectorTabChange(value: string) {
+    const id = value as ConnectorId;
+    connectorTab = id;
+    const card = CARDS.find((item) => item.id === id);
+    if (card?.id === 'agy' && connectors.detected?.antigravity.logged_in === true) {
+      await refreshCardAccounts(card);
+      return;
+    }
+    void refreshConnector(id);
   }
 
   $effect(() => {
@@ -237,7 +285,7 @@
 <!-- The tab strip stays put; only the body below it scrolls, so nothing shifts and the body never runs under the strip. -->
 <div class="flex h-full min-h-0 min-w-0 flex-col">
   <div class="shrink-0 min-w-0 max-w-full border-b border-border px-3.5 pt-2 pb-2 [&_.z-tab-item]:items-center [&_.z-tab-item>span:first-child]:flex [&_.z-tab-item>span:first-child]:items-center">
-    <ZTabs zTabs={cardTabs} zType="bar" zSize="sm" zTabsOnly zShowNavWrapper zCache={false} activeTab={activeCard} onTabChange={(value) => (connectorTab = value)} />
+    <ZTabs zTabs={cardTabs} zType="bar" zSize="sm" zTabsOnly zShowNavWrapper zCache={false} activeTab={activeCard} onTabChange={(value) => void onConnectorTabChange(value)} />
   </div>
   <div class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-3.5 [scrollbar-gutter:stable]">
             {#if connectors.errors.detect && connectors.detected}
@@ -294,6 +342,7 @@
                 {@const info = loginOf(card.id)}
                 {@const native = card.id === 'workbuddy' || card.id === 'muse-code'}
                 {@const path = native ? card.id : tool(card.binary)?.path}
+                {@const cliInstalled = native ? Boolean(tool(card.binary)?.path) : Boolean(path)}
                 {@const version = native ? 'OAuth' : tool(card.binary)?.version}
                 {@const list = card.accounts ? connectors.accounts[card.accounts] : null}
                 {@const working = busyOf(`install:${card.id}`, `login:${card.id}`, `add:${card.id}`)}
@@ -327,14 +376,21 @@
                     </div>
                     <div class="flex shrink-0 items-center gap-1.5">
                       <!-- The buttons cross-fade when the state changes (install → installing → signed in) instead of cutting over. -->
-                      {#if connectors.detected && !path}
+                      {#if connectors.detected && !cliInstalled && !native}
                         <span class="inline-flex" in:fade={{ duration: 180, delay: 60 }} out:fade={{ duration: 120 }}>
-                          <ZButton zWave={false} zSize="sm" class="h-8 gap-1.5 px-3 text-sm" disabled={Boolean(working)} onclick={() => void install(card.id, card.label)}>
+                          <ZButton zWave={false} zType="outline" zSize="sm" class="h-8 gap-1.5 px-3 text-sm" disabled={Boolean(working)} onclick={() => void install(card.id, card.label)}>
                             <ZIcon zType={icon(working ? 'lucideLoaderCircle' : 'lucideDownload')} class="size-3.5 {working ? 'animate-spin' : ''}" /> <ZTextMorph zText={working ? 'Installing…' : 'Install'} />
                           </ZButton>
                         </span>
                       {:else if path && (card.id !== 'agy' || info?.logged_in !== true || connectors.busy[`login:${card.id}`])}
                         {@const waiting = Boolean(connectors.busy[`login:${card.id}`])}
+                        {#if card.id === 'workbuddy' && !cliInstalled}
+                          <span class="inline-flex" in:fade={{ duration: 180, delay: 60 }} out:fade={{ duration: 120 }}>
+                            <ZButton zWave={false} zType="outline" zSize="sm" class="h-8 gap-1.5 px-3 text-sm" disabled={Boolean(working)} onclick={() => void install(card.id, card.label)}>
+                              <ZIcon zType={icon(working ? 'lucideLoaderCircle' : 'lucideDownload')} class="size-3.5 {working ? 'animate-spin' : ''}" /> <ZTextMorph zText={working ? 'Installing…' : 'Install CLI'} />
+                            </ZButton>
+                          </span>
+                        {/if}
                         <span class="inline-flex items-center gap-1.5" in:fade={{ duration: 180, delay: 60 }} out:fade={{ duration: 120 }}>
                           {#if waiting}
                             <ZButton zWave={false} zType="outline" zSize="sm" class="h-8 gap-1.5 px-3 text-sm" onclick={() => void cancelLogin(card.id)}>
@@ -377,6 +433,7 @@
                   {/if}
 
                   {#if card.id === 'agy'}
+                    {@const accountsRefreshing = isRefreshingCard(card.id) || (Boolean(connectors.busy['accounts:agy']) && connectors.accounts.agy.length === 0)}
                     <div class="border-t border-border/70 px-4 py-3">
                       <div class="mb-2 flex items-center gap-2">
                         <h4 class="text-sm font-semibold tracking-wide text-muted-foreground uppercase">Antigravity accounts</h4>
@@ -391,85 +448,103 @@
                           <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2.5 text-sm" disabled={!path} title="Open Antigravity to add another Google account" onclick={() => void login('agy', card.label)}>
                             <ZIcon zType={icon('lucideLogIn')} class="size-3.5" /> Add account
                           </ZButton>
-                          <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2.5 text-sm" disabled={Boolean(refreshingCard)} aria-label="Refresh all accounts for {card.label}" onclick={() => void refreshCardAccounts(card)}>
-                            <ZIcon zType={icon(refreshingCard === card.id ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3.5 {refreshingCard === card.id ? 'animate-spin' : ''}" />
+                          <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2.5 text-sm" disabled={isRefreshingCard(card.id)} aria-label="Refresh all accounts for {card.label}" onclick={() => void refreshCardAccounts(card)}>
+                            <ZIcon zType={icon(isRefreshingCard(card.id) ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3.5 {isRefreshingCard(card.id) ? 'animate-spin' : ''}" />
                             Refresh all accounts
                           </ZButton>
                         {/if}
                       </div>
                       {#if !info?.logged_in || !info.email}
                         <p class="mb-3 rounded-lg border border-dashed border-border p-3 text-[0.75rem] text-muted-foreground">Sign in to Antigravity to save this account automatically.</p>
+                      {:else if accountsRefreshing}
+                        <div class="mb-3 grid gap-2 sm:grid-cols-2" aria-label="Loading Antigravity accounts" aria-busy="true">
+                          {#each [0, 1, 2, 3] as placeholder (placeholder)}
+                            <div class="animate-pulse rounded-lg border border-border p-3 min-h-[96px]">
+                              <div class="h-4 w-2/3 rounded bg-muted"></div>
+                              <div class="mt-3 h-2 w-full rounded bg-muted/70"></div>
+                              <div class="mt-2 h-2 w-4/5 rounded bg-muted/50"></div>
+                            </div>
+                          {/each}
+                        </div>
+                      {:else if connectors.errors['accounts:agy']}
+                        <p class="mb-3 rounded-lg bg-destructive/10 p-3 text-sm text-destructive" role="alert">{connectors.errors['accounts:agy']}</p>
                       {:else if connectors.accounts.agy.length === 0}
                         <p class="mb-3 rounded-lg border border-dashed border-border p-3 text-[0.75rem] text-muted-foreground">The signed-in account is being saved to Windows Credential Manager…</p>
                       {:else}
                         <!-- One card per saved account, as for Codex: its switch button and its own usage, read with its own sign-in. -->
-                        <ul class="mb-3 grid gap-2 sm:grid-cols-2">
-                          {#each connectors.accounts.agy as account (account.id)}
-                            {@const quota = connectors.agyAccountQuotas.find((item) => item.id === account.id)}
-                            {@const switching = Boolean(connectors.busy['switch:agy']?.endsWith(account.email))}
-                            {@const authRequired = needsAgyLogin(account, quota?.error)}
-                            {@const accountRefreshing = refreshing === account.id}
-                            <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}">
-                              <div class="flex items-center gap-2">
-                                <span class="min-w-0 flex-1 truncate text-sm font-medium" title={account.email}>{account.email}</span>
-                                {#if account.active}<span class="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">IN USE</span>{/if}
-                                {#if authRequired}
-                                  <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0 text-destructive" aria-label="Sign in again {account.email}" title={account.status ?? quota?.error ?? 'Sign in again'} disabled={Boolean(connectors.busy['login:agy'])} onclick={() => void login('agy', card.label)}>
-                                    <ZIcon zType={icon(connectors.busy['login:agy'] ? 'lucideLoaderCircle' : 'lucideLogIn')} class="size-3 {connectors.busy['login:agy'] ? 'animate-spin' : ''}" />
-                                  </ZButton>
-                                {/if}
-                                {#if !account.active && !authRequired}
-                                  <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Use {account.email}" title="Use this account" disabled={Boolean(connectors.busy['switch:agy'])} onclick={() => void switchAgyAccount(account)}>
-                                    <ZIcon zType={icon(switching ? 'lucideLoaderCircle' : 'lucideArrowLeftRight')} class="size-3 {switching ? 'animate-spin' : ''}" />
-                                  </ZButton>
-                                {/if}
-                                {#if !account.active}
-                                  {@const removing = Boolean(connectors.busy[`remove:agy:${account.id}`])}
-                                  <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0 text-muted-foreground hover:!border-destructive/60 hover:!bg-destructive/10 hover:!text-destructive" aria-label="Remove {account.email}" title="Remove account" disabled={removing} onclick={() => void removeAgyAccount(account)}>
-                                    <ZIcon zType={icon(removing ? 'lucideLoaderCircle' : 'lucideTrash2')} class="size-3 {removing ? 'animate-spin' : ''}" />
-                                  </ZButton>
-                                {/if}
-                                <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Refresh {account.email}" title="Refresh this account" disabled={Boolean(connectors.busy[`quota:agy:${account.id}`])} onclick={() => { refreshing = account.id; void refreshAgyAccount(account.id).finally(() => (refreshing = '')); }}>
-                                  <ZIcon zType={icon(accountRefreshing ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3 {accountRefreshing ? 'animate-spin' : ''}" />
-                                </ZButton>
-                              </div>
-                              {#if quota?.quota && quota.quota.groups.length > 0}
-                                <div class="mt-2.5 grid gap-2.5">
-                                  {#each quota.quota.groups as group (group.id)}
-                                    <div>
-                                      <div class="mb-1.5 flex items-center gap-1.5 text-[0.75rem] font-medium">
-                                        <ZIcon zType={icon(group.id === 'gemini' ? 'brandGemini' : 'lucideLayers')} class="size-3 shrink-0" />
-                                        <span class="truncate">{group.label}</span>
-                                      </div>
-                                      <div class="grid gap-y-2">
-                                        {#each group.windows as window (window.label)}
-                                          {@const pct = shown(window, ticker.sec)}
-                                          <div>
-                                            <div class="mb-1 flex items-baseline justify-between gap-2 text-[0.6875rem]">
-                                              <span class="text-muted-foreground">{window.label} window</span>
-                                              <span class="tabular-nums {pct >= 90 ? 'font-medium text-destructive' : ''}">{Math.round(pct)}%</span>
-                                            </div>
-                                            <div class="h-1.5 overflow-hidden rounded-full bg-muted-foreground/25" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin="0" aria-valuemax="100" aria-label="{account.email} {group.label} {window.label} usage">
-                                              <div class="h-full rounded-full transition-[width] duration-500 {barColor(pct)}" style:width="{pct}%"></div>
-                                            </div>
-                                            {#if countdown(window.resets_at, ticker.sec)}
-                                              <div class="mt-1 text-[0.75rem] text-muted-foreground tabular-nums">{countdown(window.resets_at, ticker.sec)}</div>
-                                            {/if}
+                        {#key refreshGeneration[card.id] ?? 0}
+                          <div class="mb-3 grid gap-2">
+                            {#each agyAccountGroups as group, groupIndex (group.key)}
+                              <ul class="grid gap-2 sm:grid-cols-2">
+                                {#each group.accounts as account, accountIndex (account.id)}
+                                  {@const quota = connectors.agyAccountQuotas.find((item) => item.id === account.id)}
+                                  {@const switching = Boolean(connectors.busy['switch:agy']?.endsWith(account.email))}
+                                  {@const authRequired = needsAgyLogin(account, quota?.error)}
+                                  {@const accountRefreshing = refreshing === account.id}
+                                  <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}" in:fly={{ y: 18, duration: 300, delay: groupIndex * 120 + accountIndex * 70 }}>
+                                  <div class="flex items-center gap-2">
+                                    <span class="min-w-0 flex-1 truncate text-sm font-medium" title={account.email}>{account.email}</span>
+                                    {#if account.active}<span class="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">IN USE</span>{/if}
+                                    {#if authRequired}
+                                      <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0 text-destructive" aria-label="Sign in again {account.email}" title={account.status ?? quota?.error ?? 'Sign in again'} disabled={Boolean(connectors.busy['login:agy'])} onclick={() => void login('agy', card.label)}>
+                                        <ZIcon zType={icon(connectors.busy['login:agy'] ? 'lucideLoaderCircle' : 'lucideLogIn')} class="size-3 {connectors.busy['login:agy'] ? 'animate-spin' : ''}" />
+                                      </ZButton>
+                                    {/if}
+                                    {#if !account.active && !authRequired}
+                                      <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Use {account.email}" title="Use this account" disabled={Boolean(connectors.busy['switch:agy'])} onclick={() => void switchAgyAccount(account)}>
+                                        <ZIcon zType={icon(switching ? 'lucideLoaderCircle' : 'lucideArrowLeftRight')} class="size-3 {switching ? 'animate-spin' : ''}" />
+                                      </ZButton>
+                                    {/if}
+                                    {#if !account.active}
+                                      {@const removing = Boolean(connectors.busy[`remove:agy:${account.id}`])}
+                                      <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0 text-muted-foreground hover:!border-destructive/60 hover:!bg-destructive/10 hover:!text-destructive" aria-label="Remove {account.email}" title="Remove account" disabled={removing} onclick={() => void removeAgyAccount(account)}>
+                                        <ZIcon zType={icon(removing ? 'lucideLoaderCircle' : 'lucideTrash2')} class="size-3 {removing ? 'animate-spin' : ''}" />
+                                      </ZButton>
+                                    {/if}
+                                    <ZButton zWave={false} zType="outline" zSize="sm" class="size-6! shrink-0 p-0" aria-label="Refresh {account.email}" title="Refresh this account" disabled={Boolean(connectors.busy[`quota:agy:${account.id}`])} onclick={() => { refreshing = account.id; void refreshAgyAccount(account.id).finally(() => (refreshing = '')); }}>
+                                      <ZIcon zType={icon(accountRefreshing ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3 {accountRefreshing ? 'animate-spin' : ''}" />
+                                    </ZButton>
+                                  </div>
+                                  {#if quota?.quota && quota.quota.groups.length > 0}
+                                    <div class="mt-2.5 grid gap-2.5">
+                                      {#each quota.quota.groups as group (group.id)}
+                                        <div>
+                                          <div class="mb-1.5 flex items-center gap-1.5 text-[0.75rem] font-medium">
+                                            <ZIcon zType={icon(group.id === 'gemini' ? 'brandGemini' : 'lucideLayers')} class="size-3 shrink-0" />
+                                            <span class="truncate">{group.label}</span>
                                           </div>
-                                        {/each}
-                                      </div>
+                                          <div class="grid gap-y-2">
+                                            {#each group.windows as window (window.label)}
+                                              {@const pct = shown(window, ticker.sec)}
+                                              <div>
+                                                <div class="mb-1 flex items-baseline justify-between gap-2 text-[0.6875rem]">
+                                                  <span class="text-muted-foreground">{window.label} window</span>
+                                                  <span class="tabular-nums {pct >= 90 ? 'font-medium text-destructive' : ''}">{Math.round(pct)}%</span>
+                                                </div>
+                                                <div class="h-1.5 overflow-hidden rounded-full bg-muted-foreground/25" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin="0" aria-valuemax="100" aria-label="{account.email} {group.label} {window.label} usage">
+                                                  <div class="h-full rounded-full transition-[width] duration-500 {barColor(pct)}" style:width="{pct}%"></div>
+                                                </div>
+                                                {#if countdown(window.resets_at, ticker.sec)}
+                                                  <div class="mt-1 text-[0.75rem] text-muted-foreground tabular-nums">{countdown(window.resets_at, ticker.sec)}</div>
+                                                {/if}
+                                              </div>
+                                            {/each}
+                                          </div>
+                                        </div>
+                                      {/each}
                                     </div>
-                                  {/each}
-                                </div>
-                                {#if quota.quota.observed_at}<p class="mt-2 text-[0.6875rem] text-muted-foreground">{observedAgo(quota.quota.observed_at, ticker.min)}</p>{/if}
-                              {/if}
-                            </li>
-                          {/each}
-                        </ul>
+                                    {#if quota.quota.observed_at}<p class="mt-2 text-[0.6875rem] text-muted-foreground">{observedAgo(quota.quota.observed_at, ticker.min)}</p>{/if}
+                                  {/if}
+                                  </li>
+                                {/each}
+                              </ul>
+                            {/each}
+                          </div>
+                        {/key}
                       {/if}
-                      {#if connectors.errors['accounts:agy'] || connectors.errors['switch:agy']}
+                      {#if connectors.errors['switch:agy']}
                         <div class="mb-3 flex items-center gap-2 text-sm text-destructive" role="alert">
-                          <p class="min-w-0 flex-1">{connectors.errors['accounts:agy'] ?? connectors.errors['switch:agy'] ?? ''}</p>
+                          <p class="min-w-0 flex-1">{connectors.errors['switch:agy']}</p>
                         </div>
                       {/if}
                     </div>
@@ -479,6 +554,7 @@
                     {@const provider = card.accounts}
                     {@const manager = card.manager}
                     {@const managerInstalled = installed(manager.id)}
+                    {@const accountsRefreshing = isRefreshingCard(card.id) || (Boolean(connectors.busy[`accounts:${provider}`]) && (!list || list.accounts.length === 0))}
                     <!-- Appears with the CLI: the accounts area slides in under the header rather than popping in. -->
                     <div class="border-t border-border/70 px-4 py-3" in:slide={{ duration: 220 }} out:slide={{ duration: 160 }}>
                       <div class="mb-2 flex flex-wrap items-center gap-2">
@@ -492,8 +568,8 @@
                             <ZIcon zType={icon(busyOf(`add:${provider}`) ? 'lucideX' : 'lucideUserPlus')} class="size-3.5" />
                             {busyOf(`add:${provider}`) ? 'Cancel' : 'Add account'}
                           </ZButton>
-                          <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2.5 text-sm" disabled={Boolean(refreshingCard)} aria-label="Refresh all accounts for {card.label}" onclick={() => void refreshCardAccounts(card)}>
-                            <ZIcon zType={icon(refreshingCard === card.id ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3.5 {refreshingCard === card.id ? 'animate-spin' : ''}" />
+                          <ZButton zWave={false} zType="outline" zSize="sm" class="h-7 gap-1.5 px-2.5 text-sm" disabled={isRefreshingCard(card.id)} aria-label="Refresh all accounts for {card.label}" onclick={() => void refreshCardAccounts(card)}>
+                            <ZIcon zType={icon(isRefreshingCard(card.id) ? 'lucideLoaderCircle' : 'lucideRefreshCw')} class="size-3.5 {isRefreshingCard(card.id) ? 'animate-spin' : ''}" />
                             Refresh all accounts
                           </ZButton>
                         {/if}
@@ -510,6 +586,16 @@
                             <ZIcon zType={icon(connectors.busy[`install:${manager.id}`] ? 'lucideLoaderCircle' : 'lucideDownload')} class="size-3.5 {connectors.busy[`install:${manager.id}`] ? 'animate-spin' : ''}" /> Install {manager.label}
                           </ZButton>
                         </div>
+                      {:else if accountsRefreshing}
+                        <div class="grid gap-2 sm:grid-cols-2" aria-label="Loading accounts" aria-busy="true">
+                          {#each [0, 1, 2, 3] as placeholder (placeholder)}
+                            <div class="animate-pulse rounded-lg border border-border p-3 min-h-[96px]">
+                              <div class="h-4 w-2/3 rounded bg-muted"></div>
+                              <div class="mt-3 h-2 w-full rounded bg-muted/70"></div>
+                              <div class="mt-2 h-2 w-4/5 rounded bg-muted/50"></div>
+                            </div>
+                          {/each}
+                        </div>
                       {:else if list?.error}
                         <p class="rounded-lg bg-destructive/10 p-3 text-sm text-destructive" role="alert">{list.error}</p>
                       {:else if connectors.errors[`accounts:${provider}`]}
@@ -519,11 +605,12 @@
                           {#if list}No saved accounts yet. Sign in above, then use “Add account” to save it, or add another one.{:else}Reading accounts<span class="loading-dots" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>{/if}
                         </p>
                       {:else}
-                        <ul class="grid gap-2 sm:grid-cols-2">
-                          {#each list.accounts as account (account.id)}
-                            {@const authRequired = needsLogin(account)}
-                            {@const accountRefreshing = refreshing === account.id}
-                            <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}">
+                        {#key refreshGeneration[card.id] ?? 0}
+                          <ul class="grid gap-2 sm:grid-cols-2">
+                            {#each list.accounts as account, accountIndex (account.id)}
+                              {@const authRequired = needsLogin(account)}
+                              {@const accountRefreshing = refreshing === account.id}
+                              <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}" in:fly={{ y: 18, duration: 300, delay: accountIndex * 70 }}>
                               <div class="flex items-center gap-2">
                                 <span class="min-w-0 flex-1">
                                   <span class="flex items-center gap-2">
@@ -594,26 +681,16 @@
                                 </div>
                                 {#if resetError}<p class="mt-1 text-[0.6875rem] text-destructive" role="alert">{resetError}</p>{/if}
                               {/if}
-                            </li>
-                          {/each}
-                        </ul>
+                              </li>
+                            {/each}
+                          </ul>
+                        {/key}
                         {@const removeError = Object.entries(connectors.errors).find(([key]) => key.startsWith(`remove:${provider}:`))?.[1]}
                         {#if connectors.errors[`switch:${provider}`] || removeError}
                           <p class="mt-2 text-sm text-destructive" role="alert">{connectors.errors[`switch:${provider}`] ?? removeError}</p>
                         {/if}
                         <p class="mt-2 text-[0.75rem] text-muted-foreground">A chat that is already running keeps its account; the next message uses the new one.</p>
 
-                        {#if provider === 'codex' && list.auto_switch}
-                          {@const auto = list.auto_switch}
-                          <div class="mt-3 mb-3 flex items-center gap-3 rounded-lg bg-muted/50 p-3">
-                            <div class="min-w-0 flex-1 text-sm">
-                              <div class="mb-1 font-medium">Switch automatically</div>
-                              <div class="text-muted-foreground">When the account in use has under {auto.five_hour}% (5h) or {auto.weekly}% (weekly) left, codex-auth moves to the next one in the background.</div>
-                            </div>
-                            <ZSwitch zVariant="dot" checked={auto.enabled} zSize="sm" zDisabled={Boolean(connectors.busy['auto:codex'])} onChange={(value) => void setCodexAutoSwitch(value, auto.five_hour, auto.weekly)} />
-                          </div>
-                          {#if connectors.errors['auto:codex']}<p class="mt-1 text-sm text-destructive" role="alert">{connectors.errors['auto:codex']}</p>{/if}
-                        {/if}
                       {/if}
                     </div>
                   {/if}

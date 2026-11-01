@@ -208,6 +208,69 @@ impl ImageBackend for OpenAiCompatibleImages {
     }
 }
 
+/// WorkBuddy's native image service. Its CLI uses the same authenticated gateway but requires the
+/// WorkBuddy identity headers and `/v2/images/*` routes, so it cannot use the generic custom provider backend.
+struct WorkBuddyImages;
+
+impl ImageBackend for WorkBuddyImages {
+    fn id(&self) -> &'static str {
+        "workbuddy-images"
+    }
+
+    fn generate(&self, job: &Job) -> Result<Vec<String>, String> {
+        use base64::Engine;
+        if CANCELLED.load(Ordering::SeqCst) {
+            return Err("stopped".to_string());
+        }
+        let references = job
+            .references
+            .iter()
+            .map(|path| {
+                let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+                let mime = match path.extension().and_then(|extension| extension.to_str()).map(str::to_lowercase).as_deref() {
+                    Some("jpg" | "jpeg") => "image/jpeg",
+                    Some("webp") => "image/webp",
+                    _ => "image/png",
+                };
+                Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let prompt = format!("{}\n\n{}", job.prompt, variation_hint(job.variant));
+        let answer = tauri::async_runtime::block_on(crate::connectors::workbuddy_image(
+            job.model,
+            &prompt,
+            references,
+        ))?;
+        let image = provider_image(&answer)?;
+        let bytes = match image {
+            ProviderImage::Base64(encoded) => base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|error| format!("WorkBuddy returned invalid base64: {error}"))?,
+            ProviderImage::Url(url) => tauri::async_runtime::block_on(async {
+                let response = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(300))
+                    .build()
+                    .map_err(|error| error.to_string())?
+                    .get(url)
+                    .send()
+                    .await
+                    .map_err(|error| format!("could not download WorkBuddy image: {error}"))?;
+                let status = response.status();
+                if !status.is_success() {
+                    return Err(format!("WorkBuddy image URL answered {status}"));
+                }
+                response
+                    .bytes()
+                    .await
+                    .map(|bytes| bytes.to_vec())
+                    .map_err(|error| format!("could not read WorkBuddy image: {error}"))
+            })?,
+        };
+        std::fs::write(job.output, bytes).map_err(|error| error.to_string())?;
+        Ok(vec![job.output.to_string_lossy().to_string()])
+    }
+}
+
 /// Pollinations' public image route. It needs no configured key and is kept as an explicit free/community option.
 struct Pollinations;
 
@@ -257,11 +320,12 @@ impl ImageBackend for Pollinations {
     }
 }
 
-static BACKENDS: [&dyn ImageBackend; 5] = [
+static BACKENDS: [&dyn ImageBackend; 6] = [
     &CodexScript("responses"),
     &CodexScript("images"),
     &Gemini,
     &OpenAiCompatibleImages,
+    &WorkBuddyImages,
     &Pollinations,
 ];
 
@@ -303,6 +367,7 @@ fn provider_image(answer: &serde_json::Value) -> Result<ProviderImage, String> {
     let item = answer["data"]
         .as_array()
         .and_then(|items| items.first())
+        .or_else(|| answer["data"]["data"].as_array().and_then(|items| items.first()))
         .or_else(|| answer["images"].as_array().and_then(|items| items.first()))
         .or_else(|| answer.as_array().and_then(|items| items.first()))
         .unwrap_or(answer);

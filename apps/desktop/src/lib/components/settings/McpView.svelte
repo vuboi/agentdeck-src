@@ -8,7 +8,7 @@
   import { fade, slide } from 'svelte/transition';
   import { ZButton, ZDivider, ZIcon, ZInput, ZModal, ZSwitch, ZTabs, zModalService } from '@shival99/z-ui-svelte';
   import type { ZIconName } from '@shival99/z-ui-svelte';
-  import { GITHUB_SVG, OPENAI_SVG } from '../../agents/brand-icons';
+  import { MCP_PROVIDER_IDS, providerSources } from '../../agents/models.svelte';
   import { ticker } from '../../app/platform/clock.svelte';
   import { inTauri } from '../../app/platform/history';
   import {
@@ -53,7 +53,7 @@
   function confirmRemove(entry: McpEntry) {
     zModalService.danger({
       zTitle: `Remove ${entry.name}?`,
-      zContent: `It is removed from ${entry.agents.map((agent) => AGENT[agent]?.label ?? agent).join(', ')} with their own mcp remove. The server itself is not touched.`,
+      zContent: `It is removed from ${entry.agents.map((agent) => mcpSources.find((source) => source.provider === agent)?.label ?? agent).join(', ')} with their own mcp remove. The server itself is not touched.`,
       zConfirmStyle: 'dialog',
       zOkText: 'Remove',
       zOkIcon: 'lucideTrash2',
@@ -71,14 +71,7 @@
     testing: { label: 'Testing', tone: 'bg-primary/15 text-primary', dot: 'bg-primary animate-pulse' },
     untested: { label: 'Not tested', tone: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground/50' },
   };
-  const AGENT: Record<string, { label: string; tone: string }> = {
-    claude: { label: 'Claude', tone: 'text-orange-500' },
-    codex: { label: 'Codex', tone: 'text-foreground' },
-    copilot: { label: 'GitHub Copilot', tone: 'text-foreground' },
-    antigravity: { label: 'Antigravity', tone: 'text-sky-500' },
-    opencode: { label: 'OpenCode', tone: 'text-foreground' },
-    custom: { label: 'Providers', tone: 'text-emerald-600 dark:text-emerald-400' },
-  };
+  const mcpSources = $derived(providerSources(MCP_PROVIDER_IDS));
 
   const compact = (count: number) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(count);
   function ago(at: number, now: number): string {
@@ -89,7 +82,7 @@
   }
 
   // --- Add form ------------------------------------------------------------------------------------------
-  const blank = () => ({ name: '', transport: 'stdio' as 'stdio' | 'http', target: '', args: '', env: '', headers: '', agents: { claude: true, codex: true, antigravity: false, copilot: false } as Record<McpAgent, boolean> });
+  const blank = () => ({ name: '', transport: 'stdio' as 'stdio' | 'http', target: '', args: '', env: '', headers: '', agents: Object.fromEntries(MCP_PROVIDER_IDS.map((agent) => [agent, agent === 'claude' || agent === 'codex'])) as Record<McpAgent, boolean> });
   let form = $state(blank());
 
   const lines = (text: string) => text.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -365,16 +358,11 @@
       </span>
     </ZDivider>
     <fieldset class="m-0 flex flex-col gap-2 border-0 p-0" aria-label="Agents">
-      {#each Object.keys(form.agents) as agent (agent)}
+      {#each mcpSources as source (source.provider)}
+        {@const agent = source.provider}
         <div class="flex min-h-9 items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm">
-          {#if agent === 'codex'}
-            <ZIcon zSvg={OPENAI_SVG} class="size-4 shrink-0 text-foreground" />
-          {:else if agent === 'copilot'}
-            <ZIcon zSvg={GITHUB_SVG} class="size-4 shrink-0 text-foreground" />
-          {:else}
-            <ZIcon zType={icon(agent === 'claude' ? 'brandClaude' : 'brandGemini')} class="size-4 shrink-0" />
-          {/if}
-          <span class="flex-1 font-medium {AGENT[agent].tone}">{AGENT[agent].label}</span>
+          <AgentLogo {agent} class="size-4 shrink-0" />
+          <span class="flex-1 font-medium">{source.label}</span>
           <ZSwitch zVariant="dot" bind:checked={form.agents[agent as McpAgent]} zSize="sm" />
         </div>
       {/each}

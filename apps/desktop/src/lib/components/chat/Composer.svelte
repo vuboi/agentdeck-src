@@ -3,7 +3,7 @@
   import ProjectBar from '../layout/ProjectBar.svelte';
   import { onMount, untrack } from 'svelte';
   import { getPref, setPref } from '../../app/platform/prefs';
-  import { ZButton, ZIcon, ZPopover, zTooltip } from '@shival99/z-ui-svelte';
+  import { ZButton, ZIcon, ZPopover, ZProgress, zTooltip } from '@shival99/z-ui-svelte';
   import PickerPopover, { type PickerItem } from '../ui/PickerPopover.svelte';
   import type { ZIconName } from '@shival99/z-ui-svelte';
   import { loadSlash, slash, type SlashItem } from '../../chat/slash.svelte';
@@ -146,10 +146,6 @@
   const contextTone = $derived(
     contextPercent >= 90 ? 'text-destructive' : contextPercent >= 75 ? 'text-warning' : 'text-primary',
   );
-  const contextBarTone = $derived(
-    contextPercent >= 90 ? 'bg-destructive' : contextPercent >= 75 ? 'bg-warning' : 'bg-primary',
-  );
-
   // A queued message not sent yet goes back into the field to be changed; sending it again queues it as before. What
   // was in the field takes its place in the queue, so nothing typed is lost.
   function editQueued(item: Queued) {
@@ -1096,19 +1092,19 @@
         type="button"
         zType="ghost"
         zSize="sm"
-        class="relative size-6! shrink-0 rounded-full p-0! {contextOpen
+        class="relative size-7! shrink-0 rounded-full p-0! {contextOpen
           ? 'bg-primary/15! text-primary!'
           : `${contextTone} hover:bg-accent/50`}"
         aria-label="Show context usage"
         aria-expanded={contextOpen}
         onclick={() => (contextOpen = !contextOpen)}
       >
-        <svg class="absolute inset-1 size-4 -rotate-90" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-opacity="0.18" stroke-width="2" />
+        <svg class="size-3.5 shrink-0 -rotate-90" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-opacity="0.18" stroke-width="2" />
           <circle
             cx="10"
             cy="10"
-            r="8"
+            r="7.5"
             stroke="currentColor"
             stroke-width="2"
             stroke-linecap="round"
@@ -1131,9 +1127,13 @@
               <span class="text-xs font-medium text-foreground">Context usage</span>
               <span class="text-[0.6875rem] tabular-nums text-muted-foreground">{contextPercent}%</span>
             </div>
-            <div class="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-              <div class="h-full rounded-full {contextBarTone}" style:width="{contextPercent}%"></div>
-            </div>
+            <ZProgress
+              zValue={contextPercent}
+              zMax={100}
+              zSize="xs"
+              zColor={contextPercent >= 90 ? 'destructive' : contextPercent >= 75 ? 'warning' : 'primary'}
+              zLabel="Context usage"
+            />
             <div class="flex items-center justify-between gap-3 text-[0.6875rem] text-muted-foreground">
               <span>{shortCount(contextTokens >= COMPRESS_TOKENS ? COMPRESS_TOKENS : contextTokens)}{contextTokens >= COMPRESS_TOKENS ? '+' : ''} tokens</span>
               <span>limit {shortCount(COMPRESS_TOKENS)}</span>

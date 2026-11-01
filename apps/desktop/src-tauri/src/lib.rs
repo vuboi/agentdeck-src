@@ -636,6 +636,9 @@ async fn models_list(agent: String) -> Vec<ag_adapters::models::ModelInfo> {
     if agent == "copilot" {
         return copilot::models_list().await.unwrap_or_default();
     }
+    if agent == "workbuddy" {
+        return connectors::workbuddy_model_infos().await.unwrap_or_default();
+    }
     // `agy models` asks the server: off the main thread.
     tauri::async_runtime::spawn_blocking(move || models_of(&agent))
         .await
@@ -2646,6 +2649,7 @@ pub fn run() {
             connectors::provider_quota,
             connectors::opencode_quota,
             connectors::workbuddy_models,
+            connectors::workbuddy_image_models,
             connectors::muse_code_models,
             connectors::connector_logout,
             connectors::claude_console_credit,

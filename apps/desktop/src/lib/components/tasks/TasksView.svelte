@@ -506,7 +506,7 @@
     </button>
     <button type="button" class="relative grid size-7 cursor-pointer place-items-center rounded {logOpen ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}" aria-label="Error log" aria-expanded={logOpen} {@attach zTooltip({ content: 'Error log: errors and hangs, to debug', position: 'top' })} onclick={() => (logOpen = !logOpen)}>
       <ZIcon zType={'lucideScrollText' as ZIconName} class="size-4" />
-      {#if errorLog.count > 0}<span class="pointer-events-none absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-destructive px-1 text-center text-[9px] leading-3.5 text-white">{errorLog.count > 99 ? '99+' : errorLog.count}</span>{/if}
+      {#if errorLog.count > 0}<span class="pointer-events-none absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-red-700 px-1 text-center text-[9px] leading-3.5 text-white">{errorLog.count > 99 ? '99+' : errorLog.count}</span>{/if}
     </button>
     <button type="button" class="grid size-7 cursor-pointer place-items-center rounded text-muted-foreground hover:bg-primary/10 hover:text-primary" aria-label="Clear the whole log" {@attach zTooltip({ content: 'Clear all', position: 'top' })} onclick={clearAudit}>
       <ZIcon zType={'lucideBan' as ZIconName} class="size-4" />

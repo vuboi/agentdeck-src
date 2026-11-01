@@ -13,6 +13,7 @@ use ag_adapters::agent::interrupt::{StopHandle, StopToken, INTERRUPT_DEADLINE};
 use ag_adapters::agent::opencode::OpenCode;
 use ag_adapters::agent::runner::{drive_turn, resolve_binary};
 use ag_adapters::agent::warm::drive_warm_turn_with;
+use ag_adapters::agent::workbuddy::WorkBuddy;
 use ag_adapters::agent::{AgentEvent, ChatResponseCapabilities, Provider, TurnRequest};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -161,6 +162,7 @@ fn provider_for(agent: &str) -> Result<Box<dyn Provider>, String> {
         "codex" => Ok(Box::new(Codex::default())),
         "antigravity" => Ok(Box::new(Antigravity::default())),
         "opencode" => Ok(Box::new(OpenCode::default())),
+        "workbuddy" => Ok(Box::new(WorkBuddy)),
         other => Err(format!("no agent provider for `{other}` yet")),
     }
 }
@@ -255,6 +257,14 @@ pub(crate) async fn agent_prewarm(
         return Ok(());
     }
     let provider = provider_for(&agent)?;
+    let api_key = if agent == "workbuddy" {
+        crate::connectors::workbuddy::access_token()
+            .await
+            .ok()
+            .or(api_key)
+    } else {
+        api_key
+    };
     let req = TurnRequest {
         prompt: String::new(),
         session_id: agent_session,
@@ -374,6 +384,14 @@ pub(crate) async fn agent_send(
         return Ok(());
     }
     let provider = provider_for(&agent)?;
+    let api_key = if agent == "workbuddy" {
+        crate::connectors::workbuddy::access_token()
+            .await
+            .ok()
+            .or(api_key)
+    } else {
+        api_key
+    };
     let req = TurnRequest {
         prompt,
         session_id: agent_session,
@@ -467,6 +485,7 @@ pub(crate) async fn prehandle_attachments(
     base_url: String,
     api_key: Option<String>,
     model: String,
+    effort: Option<String>,
     prompt: String,
     images: Vec<String>,
     files: Vec<String>,
@@ -476,6 +495,7 @@ pub(crate) async fn prehandle_attachments(
         base_url,
         api_key,
         model,
+        effort,
         prompt,
         images,
         files,
@@ -498,11 +518,12 @@ pub(crate) async fn prehandle_opencode(
 #[tauri::command]
 pub(crate) async fn prehandle_antigravity(
     model: String,
+    effort: Option<String>,
     prompt: String,
     images: Vec<String>,
     files: Vec<String>,
 ) -> Result<String, String> {
-    custom_chat::prehandle_antigravity(model, prompt, images, files).await
+    custom_chat::prehandle_antigravity(model, effort, prompt, images, files).await
 }
 
 /// Hands a message to a running turn only when its provider guarantees a distinct reply for that message. Merged steer

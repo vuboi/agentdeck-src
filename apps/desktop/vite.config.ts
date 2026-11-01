@@ -7,8 +7,10 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig(async ({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const port = Number(process.env.VITE_DEV_PORT || env.VITE_DEV_PORT || 1431);
+  const cacheDir = process.env.AGENTDECK_VITE_CACHE_DIR || 'node_modules/.vite';
   return {
     plugins: [tailwindcss(), sveltekit()],
+    cacheDir,
     clearScreen: false,
     server: { host: '127.0.0.1', port, strictPort: true },
     // The UI library is linked from a folder that changes often: pre-bundle it afresh on every start, so a rebuilt copy is never

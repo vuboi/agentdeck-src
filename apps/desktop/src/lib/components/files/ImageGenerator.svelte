@@ -1,12 +1,13 @@
 <script lang="ts">
   import PickerPopover, { type PickerItem } from '../ui/PickerPopover.svelte';
-  import { ACTIVE_ON } from '../../app/ui/popover';
+import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
   import { createTextHistory } from '../../app/text/text-history';
   import { onMount } from 'svelte';
   import { fade } from 'svelte/transition';
   import { ZIcon, ZPopover, ZSwitch, ZTabs, zTooltip } from '@shival99/z-ui-svelte';
   import type { ZDropdownMenuItem } from '@shival99/z-ui-svelte';
-  import { OPENAI_SVG, OPENCODE_SVG } from '../../agents/brand-icons';
+  import { OPENAI_SVG, brandLogoFor } from '../../agents/brand-icons';
+  import AgentLogo from '../ui/AgentLogo.svelte';
   import { activeSession, workspace } from '../../chat/sessions.svelte';
   import { keepPicture, pictureSrc, saveAttachment, type ImageSettings, type SuggestedKeyword } from '../../chat/agent';
   import { openImages } from '../../browser/preview.svelte';
@@ -75,7 +76,11 @@
         custom: { kind: provider.kind, base_url: provider.baseUrl, api_key: key?.apiKey || null, key_env: keyEnv || null },
       }));
   }));
-  const models = $derived<ImageModel[]>([...openAiModels, ...gemini, ...freeImageModels, ...customImageModels]);
+  // WorkBuddy publishes this image model in its CLI catalogue. Keep it visible while the native
+  // catalogue request is still loading or an older desktop binary has not registered the command yet.
+  const workbuddyImageFallback: ImageModel[] = [{ model: 'hy-image-3.5', backend: 'workbuddy-images', label: 'WorkBuddy · hy-image-3.5' }];
+  let workbuddyImageModels = $state<ImageModel[]>([...workbuddyImageFallback]);
+  const models = $derived<ImageModel[]>([...openAiModels, ...gemini, ...workbuddyImageModels, ...freeImageModels, ...customImageModels]);
 
   // A picture pasted or dropped into the prompt box: shown above it, sent to the model with the prompt.
   type Reference = { id: string; name: string; mime: string; src: string; path?: string };
@@ -126,6 +131,7 @@
   const suggesting = $derived(gen.suggesting);
   let settingsOpen = $state(false);
   let settingsTrigger = $state<HTMLElement | null>(null);
+  let settingsPanelMax = $state(600);
   let modelsOpen = $state(false);
   let modelsRow = $state<HTMLElement | null>(null);
   let promptModelsOpen = $state(false);
@@ -133,6 +139,9 @@
   let promptSubProvider = $state('codex');
   let nestedCloseTimer: ReturnType<typeof setTimeout> | undefined;
   let historyOpen = $state(false);
+  let modelPanelMax = $state(600);
+  const modelNestedMax = $derived(Math.min(360, Math.max(160, modelPanelMax - 40)));
+  const settingsViewportRatio = 0.38;
 
   const variantCount = $derived(Math.max(1, Math.min(4, Math.round(variants))));
   const candidateCount = $derived(selectedModels.length * variantCount);
@@ -178,6 +187,17 @@
 
   onMount(() => {
     if (inTauri()) void refreshHistory(true);
+    if (inTauri()) {
+      void import('@tauri-apps/api/core').then(({ invoke }) => invoke<string[]>('workbuddy_image_models'))
+        .then((listed) => {
+          workbuddyImageModels = listed.length
+            ? listed.map((model) => ({ model, backend: 'workbuddy-images' as const, label: `WorkBuddy · ${model}` }))
+            : [...workbuddyImageFallback];
+        })
+        .catch(() => {
+          workbuddyImageModels = [...workbuddyImageFallback];
+        });
+    }
   });
 
   function selected() {
@@ -352,6 +372,43 @@
   function keepNestedMenusOpen() {
     clearTimeout(nestedCloseTimer);
   }
+
+  // Keep the image model list in the same responsive envelope as the chat model picker.
+  function updateModelPanelMax() {
+    if (!modelsRow) return;
+    const availableBelow = window.innerHeight - modelsRow.getBoundingClientRect().top - 24;
+    modelPanelMax = Math.max(
+      96,
+      Math.min(Math.max(550, listHeight() + 150), availableBelow, window.innerHeight - 24),
+    );
+  }
+
+  // The main settings panel can flip above or below its trigger; use whichever side has more room.
+  function updateSettingsPanelMax() {
+    if (!settingsTrigger) return;
+    const rect = settingsTrigger.getBoundingClientRect();
+    const availableAbove = rect.top - 16;
+    const availableBelow = window.innerHeight - rect.bottom - 16;
+    const available = Math.max(availableAbove, availableBelow);
+    settingsPanelMax = Math.max(
+      96,
+      Math.min(Math.max(550, Math.round(window.innerHeight * settingsViewportRatio) + 150), available, window.innerHeight - 24),
+    );
+  }
+
+  $effect(() => {
+    if (!settingsOpen) return;
+    updateSettingsPanelMax();
+    window.addEventListener('resize', updateSettingsPanelMax);
+    return () => window.removeEventListener('resize', updateSettingsPanelMax);
+  });
+
+  $effect(() => {
+    if (!modelsOpen) return;
+    updateModelPanelMax();
+    window.addEventListener('resize', updateModelPanelMax);
+    return () => window.removeEventListener('resize', updateModelPanelMax);
+  });
 
   // Opening the settings only opens the settings: the nested menus wait for the pointer to reach their row.
   function toggleSettings() {
@@ -537,9 +594,9 @@
           </div>
         </div>
 
-        <ZPopover anchor={settingsTrigger} bind:open={settingsOpen} zTrigger="manual" zPosition="top-left" zOffset={8} zWidth={256}>
+        <ZPopover anchor={settingsTrigger} bind:open={settingsOpen} zTrigger="manual" zPosition="bottom-left" zOffset={8} zWidth={256}>
           {#snippet children()}
-            <div class="flex w-full flex-col gap-4 overflow-x-hidden overflow-y-auto px-2.5 py-2.5 text-sm" role="menu" aria-label="Image settings" {@attach glide()}>
+            <div class="flex w-full flex-col gap-4 overflow-x-hidden overflow-y-auto px-2.5 py-2.5 text-sm" style:max-height="{settingsPanelMax}px" role="menu" aria-label="Image settings" {@attach glide()}>
               <section aria-label="Image models">
                 <SectionTitle label="MODEL" />
                 <button
@@ -575,15 +632,7 @@
                       onfocus={(event) => openPromptModels(group.provider, event.currentTarget)}
                       onclick={(event) => openPromptModels(group.provider, event.currentTarget)}
                     >
-                      {#if group.provider === 'codex'}
-                        <ZIcon zSvg={OPENAI_SVG} class="size-3.5 shrink-0 text-foreground" />
-                      {:else if group.provider === 'opencode'}
-                        <ZIcon zSvg={OPENCODE_SVG} class="size-3.5 shrink-0 text-foreground" />
-                      {:else if group.logo}
-                        <img src={group.logo} alt="" class="size-3.5 shrink-0 object-contain" />
-                      {:else}
-                        <ZIcon zType={group.icon} class="size-3.5 shrink-0 text-muted-foreground" />
-                      {/if}
+                      <AgentLogo agent={group.agent} model={group.agent === 'custom' ? group.items[0]?.value : undefined} class="size-3.5 shrink-0" />
                       <!-- As in the chat's model picker: the provider's name keeps its room, the model's gives way (truncated). -->
                       <span class="flex min-w-0 flex-1 items-baseline gap-2">
                         <span class="truncate {activeProvider ? 'max-w-[60%] shrink-0' : 'min-w-0 flex-1'}">{group.label}</span>
@@ -641,7 +690,7 @@
 
         <ZPopover anchor={modelsRow} bind:open={modelsOpen} zTrigger="manual" zPosition="right-top" zOffset={6} zWidth={203}>
           {#snippet children()}
-            <div class="flex w-full flex-col gap-0.5 p-1.5 text-sm" role="menu" aria-label="Image models" tabindex="-1" onpointerenter={keepNestedMenusOpen} onpointerleave={closeNestedMenusSoon} {@attach glide()}>
+            <div class="flex w-full flex-col gap-0.5 overflow-x-hidden overflow-y-auto overscroll-contain p-1.5 text-sm" style:max-height="{modelNestedMax}px" role="menu" aria-label="Image models" tabindex="-1" onpointerenter={keepNestedMenusOpen} onpointerleave={closeNestedMenusSoon} {@attach glide()}>
               <div class="mr-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase" role="separator"><span>Codex</span><span class="h-px flex-1 bg-primary"></span></div>
               {#each openAiModels as item (item.model)}
                 {@const active = selectedModels.includes(item.model)}
@@ -680,6 +729,17 @@
               {:else}
                 <p class="m-0 px-1.5 py-1 text-[0.6875rem] leading-snug text-muted-foreground">Add a Gemini API key in Settings, Cloud providers, to use Nano Banana.</p>
               {/if}
+              {#if workbuddyImageModels.length}
+                <div class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase" role="separator"><span>WorkBuddy</span><span class="h-px flex-1 bg-primary"></span></div>
+                {#each workbuddyImageModels as item (`workbuddy:${item.model}`)}
+                  {@const active = selectedModels.includes(item.model)}
+                  <button type="button" data-glide-item role="menuitemcheckbox" aria-checked={active} class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active ? 'bg-primary/10 text-primary' : ''}" onclick={() => toggleModel(item.model)} {@attach zTooltip({ content: item.label, position: 'right', autoDetect: true, offset: 6 })}>
+                    <AgentLogo agent="workbuddy" class="size-3.5 shrink-0" />
+                    <span class="min-w-0 flex-1 truncate">{item.label.replace('WorkBuddy · ', '')}</span>
+                    {#if active}<ZIcon zType="lucideCheck" class="size-3.5 shrink-0" />{/if}
+                  </button>
+                {/each}
+              {/if}
               <div class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase" role="separator"><span>Free community</span><span class="h-px flex-1 bg-primary"></span></div>
               {#each freeImageModels as item (item.model)}
                 {@const active = selectedModels.includes(item.model)}
@@ -691,10 +751,11 @@
               {/each}
               {#if customImageModels.length}
                 <div class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase" role="separator"><span>Configured image APIs</span><span class="h-px flex-1 bg-primary"></span></div>
-                {#each customImageModels as item (item.model)}
+                {#each customImageModels as item, index (`custom:${index}:${item.custom?.base_url ?? ''}:${item.model}`)}
                   {@const active = selectedModels.includes(item.model)}
+                  {@const logo = item.custom ? brandLogoFor(item.custom.base_url) : undefined}
                   <button type="button" data-glide-item role="menuitemcheckbox" aria-checked={active} class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active ? 'bg-primary/10 text-primary' : ''}" onclick={() => toggleModel(item.model)} {@attach zTooltip({ content: item.label, position: 'right', autoDetect: true, offset: 6 })}>
-                    <ZIcon zType="lucideImagePlus" class="size-3.5 shrink-0 text-foreground" />
+                    {#if logo}<img src={logo} alt="" class="size-3.5 shrink-0 rounded-sm object-contain" />{:else}<ZIcon zType="lucideImagePlus" class="size-3.5 shrink-0 text-foreground" />{/if}
                     <span class="min-w-0 flex-1 truncate">{item.label}</span>
                     {#if active}<ZIcon zType="lucideCheck" class="size-3.5 shrink-0" />{/if}
                   </button>

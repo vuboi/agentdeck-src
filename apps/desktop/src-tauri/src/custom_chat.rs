@@ -179,6 +179,7 @@ pub struct PrehandleRequest {
     pub base_url: String,
     pub api_key: Option<String>,
     pub model: String,
+    pub effort: Option<String>,
     pub prompt: String,
     pub images: Vec<String>,
     pub files: Vec<String>,
@@ -238,6 +239,9 @@ pub async fn prehandle_opencode(
         &ag_adapters::agent::opencode::OpenCode::default(),
     );
     let mut command = Command::new(binary);
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        command.env(key, path);
+    }
     command.args(["run", "--standalone", "--format", "json", "--model", &model]);
     for path in images.iter().take(4) {
         command.args(["--file", path]);
@@ -298,6 +302,7 @@ pub async fn prehandle_opencode(
 /// options the user chose), with `--sandbox` on so its terminal stays restricted. The prompt is an argument, so it is capped.
 pub async fn prehandle_antigravity(
     model: String,
+    effort: Option<String>,
     prompt: String,
     images: Vec<String>,
     files: Vec<String>,
@@ -322,12 +327,15 @@ pub async fn prehandle_antigravity(
     }
     let text: String = text.chars().take(24_000).collect();
     let mut command = Command::new(binary);
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        command.env(key, path);
+    }
     command.arg(format!("-p={text}"));
     command.args([
         "--model",
         &model,
         "--effort",
-        "low",
+        effort.as_deref().unwrap_or("low"),
         "--dangerously-skip-permissions",
         "--sandbox",
     ]);
@@ -425,8 +433,8 @@ pub async fn prehandle_attachments(request: PrehandleRequest) -> Result<String, 
                 "messages": [{ "role": "user", "content": parts }],
                 "temperature": 0.1,
                 "max_tokens": 1400,
-                // The cheapest effort: a memo of what the picture shows needs no deep thinking.
-                "output_config": { "effort": "low" }
+                // The cheapest effort remains the default when the route has no explicit choice.
+                "output_config": { "effort": request.effort.as_deref().unwrap_or("low") }
             }))
     } else {
         client
@@ -436,7 +444,7 @@ pub async fn prehandle_attachments(request: PrehandleRequest) -> Result<String, 
                 "messages": [{ "role": "user", "content": parts }],
                 "temperature": 0.1,
                 "max_tokens": 1400,
-                "reasoning_effort": "low",
+                "reasoning_effort": request.effort.as_deref().unwrap_or("low"),
                 "stream": false
             }))
     };

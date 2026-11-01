@@ -5,7 +5,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use ag_adapters::agent::permission::{verdict, Action, Mode, Verdict};
-use ag_adapters::agent::{allow_entry, file_change};
+use ag_adapters::agent::{allow_entry, file_change, line_diff};
 use serde_json::{json, Value};
 use tauri::AppHandle;
 use tokio::io::AsyncReadExt;
@@ -77,6 +77,9 @@ pub(crate) async fn run_bash(command: &str, cwd: Option<&Path>) -> Outcome {
         .kill_on_drop(true);
     if let Some(dir) = cwd.filter(|dir| dir.is_dir()) {
         process.current_dir(dir);
+    }
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        process.env(key, path);
     }
     let mut child = match process.spawn() {
         Ok(child) => child,
@@ -774,8 +777,12 @@ pub(crate) fn change_for(
         if let Ok(old) =
             std::fs::read_to_string(resolve(cwd, args["file_path"].as_str().unwrap_or_default()))
         {
-            change.removed = old.lines().count();
-            change.before = old.chars().take(3000).collect();
+            let new = args["content"].as_str().unwrap_or_default();
+            let diff = line_diff(&old, new);
+            change.added = diff.added;
+            change.removed = diff.removed;
+            change.before = diff.before;
+            change.after = diff.after;
         }
     }
     Some(change)

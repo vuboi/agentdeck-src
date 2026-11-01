@@ -374,6 +374,7 @@ fn patch_change(raw: &str) -> Option<(&'static str, crate::agent::FileChange)> {
             path: path.to_owned(),
             added,
             removed,
+            cumulative: false,
             before: String::new(),
             after: String::new(),
         },

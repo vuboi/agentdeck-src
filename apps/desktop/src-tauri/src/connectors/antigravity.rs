@@ -10,19 +10,20 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
+use tauri::AppHandle;
+#[cfg(windows)]
+use tauri::Manager;
 #[cfg(windows)]
 use tokio::process::Command;
 
 use crate::endpoints::ENDPOINTS;
 
-use super::{
-    antigravity_login, capture, parse_iso, version_of, which, UsageWindow,
-};
 #[cfg(windows)]
 use super::{
     antigravity_email_since, delete_secret, refresh_antigravity_cli_email, safe_arg, stored_secret,
     write_secret, CancellableChild,
 };
+use super::{antigravity_login, capture, parse_iso, version_of, which, UsageWindow};
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct QuotaGroup {
@@ -325,7 +326,9 @@ impl Drop for RestoreSignIn {
 }
 
 /// Saves the current credential before clearing the shared sign-in, then waits for the desktop app to finish OAuth.
-pub(crate) async fn antigravity_sign_in_another_account() -> Result<(), String> {
+pub(crate) async fn antigravity_sign_in_another_account(app: &AppHandle) -> Result<(), String> {
+    #[cfg(not(windows))]
+    let _ = app;
     #[cfg(not(windows))]
     return Err(
         "Antigravity account sign-in currently requires Windows Credential Manager".to_string(),
@@ -370,6 +373,21 @@ pub(crate) async fn antigravity_sign_in_another_account() -> Result<(), String> 
         let child = cli
             .spawn()
             .map_err(|error| format!("could not start Antigravity CLI: {error}"))?;
+        // CREATE_NEW_CONSOLE activates the child window on Windows. Return focus to AgentDeck after
+        // the console has had time to appear; the console stays available if the sign-in flow needs input.
+        for delay in [
+            Duration::from_millis(80),
+            Duration::from_millis(220),
+            Duration::from_millis(500),
+        ] {
+            let app = app.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(delay).await;
+                if let Some(window) = app.get_window("main") {
+                    let _ = window.set_focus();
+                }
+            });
+        }
         let mut child = CancellableChild {
             child,
             kill_on_drop: true,

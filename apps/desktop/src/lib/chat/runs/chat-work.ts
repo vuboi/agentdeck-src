@@ -1,5 +1,5 @@
 import type { Activity } from './activity.svelte';
-import type { TaskRecord } from '../../tasks/delegate-task';
+import { cardStateOf, type TaskRecord } from '../../tasks/delegate-task';
 import type { DelegateRun } from '../session/delegation.svelte';
 import { isLongRunningWork } from './run-lanes';
 
@@ -76,17 +76,18 @@ export function projectChatWork(events: readonly Activity[], tasks: readonly Tas
     });
   }
   for (const task of tasks) {
+    const taskState = cardStateOf(task);
     work.push({
       id: `delegate:${task.id}`, sessionId: task.caller, title: task.task,
-      state: task.state === 'stopped' && /closed or reloaded/.test(task.note ?? '') ? 'unknown' : task.pausedAt !== undefined && ['queued', 'running'].includes(task.state) ? 'paused' : task.state === 'approval' ? 'input' : task.state,
+      state: taskState === 'background' ? 'running' : taskState === 'approval' ? 'input' : taskState,
       agent: task.agent, model: task.model, kind: 'agent', sourceMessageId: task.sourceMessageId, sourceTitle: task.sourceTask,
       childId: task.childId, delegateId: task.id, startedAt: task.startedAt, endedAt: task.endedAt,
-      canStop: ['queued', 'running', 'approval'].includes(task.state),
+      canStop: ['queued', 'waiting', 'running', 'paused', 'approval'].includes(taskState),
       canPause: task.pausedAt === undefined && ['queued', 'running'].includes(task.state),
       canResume: task.pausedAt !== undefined && ['queued', 'running'].includes(task.state),
       pausedAt: task.pausedAt,
       canReturn: task.state === 'done' && task.reportState === 'failed' && Boolean(task.digest),
-      detail: [task.reportState === 'waiting' ? 'Worker finished. Waiting to return its report.' : task.reportState === 'running' ? 'Worker finished. Preparing the final report.' : task.reportState === 'failed' ? 'Worker result saved. The summary could not finish.' : '', task.digest ?? task.note ?? ''].filter(Boolean).join('\n\n'),
+      detail: [task.waitingFor ? `Waiting for ${task.waitingFor.label}` : task.reportState === 'waiting' ? 'Worker finished. Waiting to return its report.' : task.reportState === 'running' ? 'Worker finished. Preparing the final report.' : task.reportState === 'failed' ? 'Worker result saved. The summary could not finish.' : '', task.digest ?? task.note ?? ''].filter(Boolean).join('\n\n'),
     });
   }
   const knownChildren = new Set(tasks.map((task) => task.childId));

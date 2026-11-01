@@ -295,7 +295,9 @@ export function buildTree(
     ...section(
       'computer',
       'This computer',
-      limited('computer', ordered(outside), LIST_LIMIT * 3, (item) => sessionNode(item)),
+      limited('computer', ordered(outside), LIST_LIMIT * 3, (item) =>
+        flatNode(item, 'session'),
+      ),
       true,
     ),
     ...section(

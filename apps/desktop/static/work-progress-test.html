@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Work Progress visual test</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: #18181b; color: #fafafa; }
+      main { max-width: 760px; margin: 0 auto; padding: 48px 24px; }
+      h1 { margin: 0 0 8px; font-size: 20px; }
+      p { margin: 0 0 20px; color: #a1a1aa; font-size: 14px; }
+      .panel { overflow: hidden; border: 1px solid #3f3f46; border-radius: 16px; background: #18181b; box-shadow: 0 12px 30px #0004; }
+      .header { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px; color: #a1a1aa; font-size: 13px; font-weight: 600; }
+      .header span:last-child { margin-left: auto; color: #71717a; font-weight: 400; }
+      .list { border-top: 1px solid #3f3f4680; }
+      .item { display: flex; align-items: center; gap: 12px; min-height: 70px; padding: 12px 16px; background: #18181bf2; border-bottom: 1px solid #3f3f4680; }
+      .item:last-child { border-bottom: 0; }
+      .state { display: grid; width: 20px; height: 20px; flex: 0 0 20px; place-items: center; }
+      .state.running { color: #a78bfa; }
+      .state.failed { color: #f87171; }
+      .dot { width: 12px; height: 12px; border: 2px solid currentColor; border-radius: 999px; }
+      .cross { position: relative; width: 15px; height: 15px; border: 2px solid currentColor; border-radius: 999px; }
+      .cross::before, .cross::after { content: ''; position: absolute; left: 2px; top: 5px; width: 7px; height: 2px; background: currentColor; transform: rotate(45deg); }
+      .cross::after { transform: rotate(-45deg); }
+      .copy { min-width: 0; flex: 1; }
+      .top { display: flex; align-items: center; gap: 8px; }
+      .owner { font-size: 13px; font-weight: 600; }
+      .title { overflow: hidden; margin-top: 5px; color: #a1a1aa; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .status { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; color: #a78bfa; font-size: 12px; }
+      .failed .status { color: #f87171; }
+      .time { color: #71717a; font-variant-numeric: tabular-nums; }
+      .note { margin-top: 18px; color: #71717a; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Work Progress visual test</h1>
+      <p>Two fake items loaded in Preview to verify the separator between rows.</p>
+      <section class="panel" aria-label="Chat tasks">
+        <div class="header"><span>☷</span><span>Work</span><span>2 saved</span></div>
+        <div class="list" aria-label="Task list">
+          <div class="item">
+            <span class="state running" aria-label="Working"><span class="dot"></span></span>
+            <div class="copy"><div class="top"><span class="owner">Command</span><span class="status">Working</span><span class="time">21m 43s</span></div><div class="title">pnpm --filter desktop dev E:/WORK/PROJECTS/agentdeck</div></div>
+          </div>
+          <div class="item failed">
+            <span class="state failed" aria-label="Failed"><span class="cross"></span></span>
+            <div class="copy"><div class="top"><span class="owner">Command</span><span class="status">Failed</span><span class="time">36s</span></div><div class="title">pnpm --filter desktop dev ... --port 1432</div></div>
+          </div>
+        </div>
+      </section>
+      <div class="note">Expected result: one separator line between the two work items.</div>
+    </main>
+  </body>
+</html>

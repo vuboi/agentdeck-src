@@ -2,7 +2,7 @@ import type { Block, FileChange, Message } from '../mock';
 
 export type ActivityStatus = 'completed' | 'failed' | 'stopped';
 
-export type ActivityChange = Pick<FileChange, 'path' | 'added' | 'removed' | 'create'> & {
+export type ActivityChange = Pick<FileChange, 'path' | 'added' | 'removed' | 'create' | 'cumulative'> & {
   deleted?: boolean;
 };
 
@@ -142,7 +142,7 @@ function collectChanges(blocks: Block[], into: ActivityChange[]) {
   }
 }
 
-/** Collects the provider's file snapshots once per path, preserving the final counts. */
+/** Collects file changes once per path, replacing cumulative snapshots and summing tool-level deltas. */
 export function changesFromMessages(messages: Message[]): ActivityChange[] {
   const byPath = new Map<string, ActivityChange>();
   for (const message of messages) {
@@ -150,13 +150,23 @@ export function changesFromMessages(messages: Message[]): ActivityChange[] {
     collectChanges(message.blocks, changes);
     for (const change of changes) {
       const current = byPath.get(change.path);
-      byPath.set(change.path, {
-        path: change.path,
-        added: (current?.added ?? 0) + change.added,
-        removed: (current?.removed ?? 0) + change.removed,
-        create: current?.create || change.create,
-        deleted: current?.deleted || false,
-      });
+      byPath.set(change.path, change.cumulative === false
+        ? {
+            path: change.path,
+            added: (current?.added ?? 0) + change.added,
+            removed: (current?.removed ?? 0) + change.removed,
+            cumulative: false,
+            create: current?.create || change.create,
+            deleted: current?.deleted || false,
+          }
+        : {
+            path: change.path,
+            added: change.added,
+            removed: change.removed,
+            cumulative: true,
+            create: current?.create || change.create,
+            deleted: current?.deleted || false,
+          });
     }
   }
   return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
@@ -168,4 +178,3 @@ export function messageText(message: Message | undefined): string {
     .join('\n')
     .trim() ?? '';
 }
-

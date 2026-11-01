@@ -243,14 +243,28 @@ export function summarize(items: CommandBlock[]): string {
 
 /** Lines and files a group changed, or null when it changed no files. */
 export function totalChange(items: CommandBlock[]): Counts | null {
-  const changes = items.filter((item) => item.change);
+  const changesByPath = new Map<string, { item: CommandBlock; added: number; removed: number }>();
+  for (const item of items) {
+    if (!item.change) continue;
+    const current = changesByPath.get(item.change.path);
+    if (item.change.cumulative === false) {
+      changesByPath.set(item.change.path, {
+        item,
+        added: (current?.added ?? 0) + item.change.added,
+        removed: (current?.removed ?? 0) + item.change.removed,
+      });
+    } else {
+      changesByPath.set(item.change.path, { item, added: item.change.added, removed: item.change.removed });
+    }
+  }
+  const changes = [...changesByPath.values()];
   if (changes.length === 0) return null;
   const isDelete = (item: CommandBlock) => toolOf(item.command) === 'Delete';
   return {
-    added: changes.reduce((sum, item) => sum + item.change!.added, 0),
-    removed: changes.reduce((sum, item) => sum + item.change!.removed, 0),
-    created: changes.filter((item) => !isDelete(item) && item.change!.create === true).length,
-    deleted: changes.filter(isDelete).length,
+    added: changes.reduce((sum, entry) => sum + entry.added, 0),
+    removed: changes.reduce((sum, entry) => sum + entry.removed, 0),
+    created: changes.filter((entry) => !isDelete(entry.item) && entry.item.change!.create === true).length,
+    deleted: changes.filter((entry) => isDelete(entry.item)).length,
   };
 }
 

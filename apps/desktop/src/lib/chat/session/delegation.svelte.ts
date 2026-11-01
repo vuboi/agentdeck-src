@@ -74,6 +74,12 @@ export function beginWorkflowRun(main: string, task: string, preset: import('../
 /** Adds the worker started by delegate_task to the current model-led workflow history. */
 export function addWorkflowWorker(main: string, childId: string, agent: Agent, model: string, label: string, task: string, queued: boolean): string | undefined {
   const run = activeWorkflowByMain.get(main);
+  return addWorkflowWorkerToRun(run?.id, childId, agent, model, label, task, queued);
+}
+
+/** Adds a nested worker to the same workflow history as its parent worker. */
+export function addWorkflowWorkerToRun(runId: string | undefined, childId: string, agent: Agent, model: string, label: string, task: string, queued: boolean): string | undefined {
+  const run = runId ? delegateRuns.find((item) => item.id === runId) : undefined;
   if (!run || run.endedAt) return undefined;
   const node = { childId, agent, model, label, input: task, startedAt: Date.now(), state: queued ? 'idle' : 'running', note: queued ? 'Queued for an available worker slot' : undefined } as RunNode;
   // A follow-up to a reused child is the same worker: refresh its node instead of counting it twice

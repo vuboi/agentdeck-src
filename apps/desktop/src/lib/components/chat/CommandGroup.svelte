@@ -468,9 +468,14 @@
                     {@const lang = isRead(item) ? readLanguage(item) : undefined}
                     {@const markdown = lang === 'markdown' || lang === 'mdx'}
                     {#if isRead(item) && (lang || markdown)}
+                      {@const readPath = stepFilePath(item)}
                       <div class="overflow-hidden rounded-md border border-border bg-background">
                         <div class="flex h-7 items-center gap-1 border-b border-border px-1.5">
-                          <span class="min-w-0 flex-1 truncate px-1 font-mono text-[10px] text-muted-foreground">{readName(item)}</span>
+                          {#if readPath && canOpenFiles}
+                            <button type="button" class="min-w-0 flex-1 cursor-pointer truncate px-1 text-left font-mono text-[10px] text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring" title={`Open ${displayPath(projectRoot(), readPath)}`} onclick={(event) => { event.stopPropagation(); openChangedFile(readPath); }}>{readName(item)}</button>
+                          {:else}
+                            <span class="min-w-0 flex-1 truncate px-1 font-mono text-[10px] text-muted-foreground">{readName(item)}</span>
+                          {/if}
                           {#if markdown}
                             {#each ['preview', 'raw'] as mode}
                               <ZButton zWave={false} zType={readModes[key] === mode || readModes[key] === undefined && mode === 'preview' ? 'default' : 'ghost'} zSize="sm" class="h-5! px-1.5! text-[10px]!" aria-pressed={(readModes[key] ?? 'preview') === mode} onclick={() => (readModes[key] = mode as 'preview' | 'raw')}>{mode === 'preview' ? 'Preview' : 'Raw'}</ZButton>

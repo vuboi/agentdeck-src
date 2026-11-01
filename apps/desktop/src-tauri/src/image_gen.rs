@@ -12,6 +12,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::image_backend::{backend_for, Job};
 
+fn node_command() -> Command {
+    let mut command = Command::new("node");
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        command.env(key, path);
+    }
+    command
+}
+
+fn cli_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        command.env(key, path);
+    }
+    command
+}
+
 /// Set by `image_stop`: the run in progress stops before its next candidate.
 pub(crate) static CANCELLED: AtomicBool = AtomicBool::new(false);
 /// Process ids of the generator runs in progress, so `image_stop` can end them.
@@ -350,7 +366,7 @@ fn suggest(request: ImagePromptSuggestRequest) -> Result<ImagePromptSuggestResul
     }
 
     let script = imagen_script()?;
-    let mut command = Command::new("node");
+    let mut command = node_command();
     command
         .arg(script)
         .args([
@@ -409,7 +425,7 @@ fn suggest_with_claude(
     use std::io::Write;
 
     let binary = ag_adapters::agent::runner::resolve_binary(&ag_adapters::agent::claude::Claude);
-    let mut command = Command::new(binary);
+    let mut command = cli_command(binary);
     command.args(["-p", "--model", model, "--output-format", "text"]);
     if !references.is_empty() {
         command.args(["--allowedTools", "Read"]);
@@ -465,7 +481,7 @@ fn suggest_with_cli(
 ) -> Result<ImagePromptSuggestResult, String> {
     use std::io::Write;
 
-    let mut command = Command::new(binary);
+    let mut command = cli_command(binary);
     command
         .args(args)
         .stdin(if stdin_input.is_some() {
@@ -668,7 +684,7 @@ pub(crate) fn generate_one(
     if CANCELLED.load(Ordering::SeqCst) {
         return Err("stopped".to_string());
     }
-    let mut command = Command::new("node");
+    let mut command = node_command();
     command
         .arg(script)
         .args([

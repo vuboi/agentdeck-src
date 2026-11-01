@@ -40,10 +40,13 @@ struct State {
     waiting: HashMap<String, oneshot::Sender<Value>>,
 }
 
-static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
+static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| Mutex::new(State::default()));
 /// One lock per tab: two agents never fire input into the same page at once, while other tabs run in parallel.
 static TAB_LOCKS: LazyLock<Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>> =
-    LazyLock::new(Default::default);
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Serializes opens for one server so concurrent browser_open/browser_serve calls see the tab created by the first.
+static OPEN_GATES: LazyLock<Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
 fn push(list: &mut VecDeque<Value>, value: Value) {
@@ -102,6 +105,16 @@ async fn lock_tab(tab: &str) -> Option<tokio::sync::OwnedMutexGuard<()>> {
         .or_default()
         .clone();
     Some(lock.lock_owned().await)
+}
+
+async fn lock_open_server(server: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    let lock = OPEN_GATES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entry(server.to_string())
+        .or_default()
+        .clone();
+    lock.lock_owned().await
 }
 
 /// The tab the user is looking at: what the agent's requests are about.
@@ -509,6 +522,7 @@ async fn open_page(
     requested: Option<bool>,
     chat: &str,
 ) -> Result<Value, String> {
+    let _server_gate = lock_open_server(&server_of(url)).await;
     // Reuse a tab that already shows this server before opening another; an explicit `new_tab` decides for itself.
     let own = if requested == Some(true) {
         None
@@ -517,6 +531,11 @@ async fn open_page(
     };
     // Nothing to reuse: a new tab, unless the tab in front is free and blank (then the page goes there).
     let new_tab = requested.unwrap_or_else(|| own.is_none() && front_taken(chat));
+    // Wait for an action already using the selected tab instead of opening a duplicate page beside it.
+    let _tab_lock = match own.as_deref() {
+        Some(tab) => lock_tab(tab).await,
+        None => None,
+    };
     app.emit_to(
         "main",
         "agent-open",
@@ -571,11 +590,7 @@ fn server_of(url: &str) -> String {
 fn reusable_tab(app: &AppHandle, chat: &str, url: &str) -> Option<String> {
     let alive = |tab: &str| !tab.is_empty() && app.get_webview(&format!("browser-{tab}")).is_some();
     let state = STATE.lock().ok()?;
-    if let Some(tab) = state
-        .current
-        .get(chat)
-        .filter(|tab| alive(tab) && !tab_busy(tab))
-    {
+    if let Some(tab) = state.current.get(chat).filter(|tab| alive(tab)) {
         return Some(tab.clone());
     }
     let server = server_of(url);
@@ -586,22 +601,12 @@ fn reusable_tab(app: &AppHandle, chat: &str, url: &str) -> Option<String> {
             !tab.url.is_empty()
                 && server_of(&tab.url) == server
                 && alive(id)
-                && !tab_busy(id)
                 && state.owners.get(*id).is_none_or(|owner| owner == chat)
         })
         .map(|(id, _)| id)
         .collect();
     tabs.sort_by_key(|id| (**id != state.active, (*id).clone()));
     tabs.first().map(|id| (*id).clone())
-}
-
-/// A browser action is already using this tab. Opening a project into it would race the page operation and steal its
-/// current state, so the caller gets a fresh tab and the existing owner keeps its tab.
-fn tab_busy(tab: &str) -> bool {
-    let Ok(locks) = TAB_LOCKS.lock() else {
-        return true;
-    };
-    locks.get(tab).is_some_and(|lock| lock.try_lock().is_err())
 }
 
 /// Whether the tab in front is taken: it shows a page, or another chat opened and drives it. Such a tab is left alone.

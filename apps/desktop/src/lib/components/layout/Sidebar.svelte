@@ -42,6 +42,7 @@
     prefetchTranscript,
     renameSession,
     workspace,
+    type Agent,
     DEFAULT_VIEW,
     type SessionItem,
     type SidebarView,
@@ -464,12 +465,12 @@
       icon: 'lucideFilter' as ZIconName,
       iconSize: '12',
       class: ITEM,
-      shortcut: { all: 'All chats', agentdeck: 'AgentDeck', imported: 'Imported', claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity', opencode: 'OpenCode', copilot: 'Copilot', custom: 'Custom' }[view.filter],
+      shortcut: { all: 'All chats', agentdeck: 'AgentDeck', imported: 'Imported', claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity', opencode: 'OpenCode', workbuddy: 'WorkBuddy', copilot: 'Copilot', custom: 'Custom' }[view.filter],
       submenu: [
         { label: 'All chats', class: ITEM, checked: view.filter === 'all', onClick: () => setView({ filter: 'all' }) },
         { label: 'AgentDeck chats', class: ITEM, checked: view.filter === 'agentdeck', onClick: () => setView({ filter: 'agentdeck' }) },
         { label: 'Imported history', class: ITEM, checked: view.filter === 'imported', onClick: () => setView({ filter: 'imported' }) },
-        ...(['claude', 'codex', 'antigravity', 'opencode', 'copilot', 'custom'] as const).map((agent) => ({ label: agentDisplayName(agent), class: ITEM, checked: view.filter === agent, onClick: () => setView({ filter: agent }) })),
+        ...(['claude', 'codex', 'antigravity', 'opencode', 'workbuddy', 'copilot', 'custom'] as const).map((agent) => ({ label: agentDisplayName(agent), class: ITEM, checked: view.filter === agent, onClick: () => setView({ filter: agent }) })),
       ],
     },
     {
@@ -633,11 +634,12 @@
   const dotFallback = { working: 'var(--color-success, #22c55e)', waiting: 'var(--color-warning, #f59e0b)', idle: undefined } as const;
   const agentLabel = (agent: string) => agent[0].toUpperCase() + agent.slice(1);
   // Each agent has its own tint so rows are readable at a glance.
-  const agentTag = {
+  const agentTag: Record<Agent, string> = {
     claude: 'bg-orange-500/15 text-orange-500',
     codex: 'bg-emerald-500/15 text-emerald-500',
     antigravity: 'bg-sky-500/15 text-sky-500',
     opencode: 'bg-foreground/10 text-foreground',
+    workbuddy: 'bg-blue-500/15 text-blue-500',
     copilot: 'bg-foreground/10 text-foreground',
     custom: 'bg-violet-500/15 text-violet-500',
   } as const;
@@ -889,7 +891,7 @@
       {#if updater.status === 'available' || updater.status === 'downloading'}<span class="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-primary"></span>{/if}
     </ZButton>
     <ZButton zWave={false} zType="ghost" zSize="sm" class="relative h-6 w-6" aria-label="Settings (Ctrl+,)" title="Settings (Ctrl+,)" onclick={() => (closeDrawer(), openSettings())}>
-      <ZIcon zType={'lucideSettings' as ZIconName} class="size-3.5" />
+      <ZIcon zType={'lucideSettings' as ZIconName} zSize="18" class="size-4.5" />
       {#if limitWarnings.length > 0}<span class="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-destructive" aria-label="Near a usage limit"></span>{/if}
     </ZButton>
   </div>

@@ -433,6 +433,23 @@ pub async fn workbuddy_models() -> Result<Vec<String>, String> {
     workbuddy::models().await
 }
 
+pub async fn workbuddy_model_infos() -> Result<Vec<ag_adapters::models::ModelInfo>, String> {
+    workbuddy::model_infos().await
+}
+
+#[tauri::command]
+pub async fn workbuddy_image_models() -> Result<Vec<String>, String> {
+    workbuddy::image_models().await
+}
+
+pub(crate) async fn workbuddy_image(
+    model: &str,
+    prompt: &str,
+    references: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    workbuddy::image_generate(model, prompt, references).await
+}
+
 #[tauri::command]
 pub async fn muse_code_models() -> Result<Vec<String>, String> {
     muse_code::models().await
@@ -447,7 +464,7 @@ pub fn connector_logout(id: String) -> Result<(), String> {
     }
 }
 
-const TOOLS: [&str; 10] = [
+const TOOLS: [&str; 11] = [
     "claude",
     "codex",
     "agy",
@@ -458,6 +475,7 @@ const TOOLS: [&str; 10] = [
     "uv",
     "npm",
     "gh",
+    "codebuddy",
 ];
 
 pub(crate) fn codex_home() -> PathBuf {
@@ -616,11 +634,30 @@ fn antigravity_login() -> Login {
     }
 }
 
+fn detect_selected(only: Option<&str>, id: &str) -> bool {
+    only.is_none() || only == Some(id)
+}
+
+fn detect_tools(only: Option<&str>) -> Vec<&'static str> {
+    match only {
+        None => TOOLS.to_vec(),
+        Some("claude") => vec!["claude", "cswap"],
+        Some("codex") => vec!["codex", "codex-auth"],
+        Some("agy") => vec!["agy"],
+        Some("opencode") => vec!["opencode"],
+        Some("copilot") => vec!["copilot", "gh"],
+        Some("workbuddy") => vec!["codebuddy"],
+        Some("muse-code") => Vec::new(),
+        Some(_) => Vec::new(),
+    }
+}
+
 /// Which CLIs are installed (with versions) and whether each is signed in. Reads no tokens.
 #[tauri::command]
-pub async fn connectors_detect() -> Detected {
-    let handles: Vec<_> = TOOLS
-        .iter()
+pub async fn connectors_detect(only: Option<String>) -> Detected {
+    let only = only.as_deref();
+    let handles: Vec<_> = detect_tools(only)
+        .into_iter()
         .map(|id| {
             let found = which(id);
             tauri::async_runtime::spawn(async move {
@@ -642,23 +679,54 @@ pub async fn connectors_detect() -> Detected {
             tools.push(tool);
         }
     }
-    let claude = match which("claude") {
-        Some(path) => match capture(&path, &["auth", "status"], Duration::from_secs(10)).await {
-            Ok(out) => claude_login(&out.stdout),
-            Err(_) => Login::default(),
-        },
-        None => Login::default(),
+    let claude = if detect_selected(only, "claude") {
+        match which("claude") {
+            Some(path) => {
+                match capture(&path, &["auth", "status"], Duration::from_secs(10)).await {
+                    Ok(out) => claude_login(&out.stdout),
+                    Err(_) => Login::default(),
+                }
+            }
+            None => Login::default(),
+        }
+    } else {
+        Login::default()
     };
-    let opencode = opencode::login_status().await;
+    let codex = detect_selected(only, "codex")
+        .then(codex_login)
+        .unwrap_or_default();
+    let antigravity = detect_selected(only, "agy")
+        .then(antigravity_login)
+        .unwrap_or_default();
+    let opencode = if detect_selected(only, "opencode") {
+        opencode::login_status().await
+    } else {
+        Login::default()
+    };
+    let copilot = if detect_selected(only, "copilot") {
+        github::login().await
+    } else {
+        Login::default()
+    };
+    let workbuddy = if detect_selected(only, "workbuddy") {
+        workbuddy::login_status()
+    } else {
+        Login::default()
+    };
+    let muse_code = if detect_selected(only, "muse-code") {
+        muse_code::login_status()
+    } else {
+        Login::default()
+    };
     Detected {
         tools,
         claude,
-        codex: codex_login(),
-        antigravity: antigravity_login(),
+        codex,
+        antigravity,
         opencode,
-        copilot: github::login().await,
-        workbuddy: workbuddy::login_status(),
-        muse_code: muse_code::login_status(),
+        copilot,
+        workbuddy,
+        muse_code,
     }
 }
 
@@ -677,6 +745,11 @@ pub async fn connector_install(app: AppHandle, id: String) -> Result<(), String>
         } else {
             Err("Node.js (npm) is needed for this: install it from nodejs.org first".to_string())
         }
+    };
+    let pnpm_tool = |package: &str| -> Result<(PathBuf, Vec<String>), String> {
+        let pnpm = which("pnpm")
+            .ok_or("pnpm is needed for this: install pnpm through Corepack or pnpm.io first")?;
+        Ok((pnpm, vec!["add".into(), "-g".into(), package.into()]))
     };
     let (program, args): (PathBuf, Vec<String>) = match id.as_str() {
         "codex" => node_tool("@openai/codex")?,
@@ -761,6 +834,7 @@ pub async fn connector_install(app: AppHandle, id: String) -> Result<(), String>
         }
         // Pinned to the CLI version the SDK was built against (its `cli-version.txt`): the SDK speaks its protocol.
         "copilot" => node_tool(&format!("@github/copilot@{}", ENDPOINTS.pins.copilot))?,
+        "workbuddy" => pnpm_tool("@tencent-ai/codebuddy-code")?,
         other => return Err(format!("do not know how to install `{other}`")),
     };
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -905,7 +979,7 @@ async fn connector_login_inner(app: AppHandle, id: String) -> Result<(), String>
             )
             .await
         }
-        "agy" => antigravity_sign_in_another_account().await,
+        "agy" => antigravity_sign_in_another_account(&app).await,
         other => Err(format!("no sign-in for `{other}`")),
     }
 }

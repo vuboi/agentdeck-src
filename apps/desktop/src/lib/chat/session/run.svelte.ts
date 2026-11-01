@@ -9,7 +9,7 @@ import { logFlow } from '../../tasks/flow-log';
 import { sessionMark } from '../content/chat-dividers';
 import { within, PREPARE_LIMIT_MS } from '../../app/text/within';
 import { expandSlash } from '../slash.svelte';
-import { modelLabel, parseCustomModel } from '../../agents/models.svelte';
+import { effortLabel, modelLabel, parseCustomModel, supportedEffortValues } from '../../agents/models.svelte';
 import { routesOf, taskRoleHint } from '../../agents/task-roles';
 import { taskRoles } from '../../agents/task-roles.svelte';
 import { agentDisplayName } from '../../agents/provider-registry';
@@ -28,10 +28,10 @@ import { parseQuestions, type Question } from '../recovery/questions';
 import { dequeue, enqueueNext } from '../runs/queue';
 import { MODELS, activeSession, advanceRun, localMessages, nextId, persistLocal, runEpochs, sessionCwd, workspace, type Agent, type Attachment, type Effort, type FileAttachment, type SessionItem } from './state.svelte';
 import { AGENTDECK_HINT, KNOWS_PREVIEW, NATIVE_DELEGATION, NATIVE_DELEGATION_HINT, NO_DELEGATE_HINT, OPEN_WORDS, PERMISSION_MODE, agentLabel, approved, continuationGroups, delegateHinted, hasOutstandingSessionWork, hasTurnWork, hiddenPrompt, isRunning, lastPrompt, missedTurns, modelFor, nativeDelegationHinted, notifySessionWorkDone, orchestrateTold, priorDelegateHinted, queuePaused, queued, rememberDelegateHint, rememberLastChat, rememberNativeDelegationHint, turnOptions, turnOptionsOf, turns, effortFor } from './turns.svelte';
-import { handleAgentEvent, lastEventAt, lastEventKind, manuallyStopped, recoveryChain, recoveryModelFor } from './events.svelte';
+import { handleAgentEvent, lastEventAt, lastEventKind, manuallyStopped, recoveryChain, recoveryEffortFor, recoveryModelFor } from './events.svelte';
 import { answerWorkerApproval, backlog, flushReports, isWorkerChat } from './delegate-task.svelte';
 import { LANGUAGE_RULE } from './orchestration.svelte';
-import { COMPACT_COMMAND, MODEL_LEAD, compressIfNeeded, handoffDigest, liveModel, send, sendImmediate } from './sending.svelte';
+import { COMPACT_COMMAND, MODEL_LEAD, compressIfNeeded, flushCoordinationPrompt, handoffDigest, liveModel, send, sendImmediate } from './sending.svelte';
 import { chat, history, settleKeptPermission } from './history.svelte';
 
 /** The chats that ran a turn since the app started: the first turn of any other chat that resumes a conversation resumes a session from before. */
@@ -45,9 +45,9 @@ const reminded = new Map<string, boolean>();
 const prewarmedAt = new Map<string, number>();
 
 type PreHandler =
-  | { via: 'http'; label: string; kind: string; baseUrl: string; apiKey: string | null; model: string }
-  | { via: 'opencode' | 'antigravity'; label: string; model: string };
-/** `route` is the `agent|model` the Task roles settings name this model by (see agents/task-roles.ts). */
+  | { via: 'http'; label: string; kind: string; baseUrl: string; apiKey: string | null; model: string; effort?: string }
+  | { via: 'opencode' | 'antigravity'; label: string; model: string; effort?: string };
+/** `route` is the `agent|model|effort` route the Task roles settings name this model by (see agents/task-roles.ts). */
 type Candidate = { pick: PreHandler; route: string };
 /** The wait for a CLI pre-handle: the CLI starts, then the model answers (the Rust side stops at 120 s). */
 const CLI_PREPARE_LIMIT_MS = 120_000;
@@ -65,22 +65,22 @@ function prehandleProvider(): PreHandler | undefined {
     const key = activeProviderKey(provider);
     if (providerQuotas[`${provider.id}:${key?.id ?? 'default'}`]?.remaining === 0) continue;
     for (const model of new Set([...provider.models, provider.defaultModel].filter(Boolean))) {
-      candidates.push({
-        route: `${provider.id}|${model}`,
-        pick: { via: 'http', label: `${provider.kind}:${provider.id}`, kind: provider.kind, baseUrl: provider.baseUrl, apiKey: key?.apiKey || null, model },
-      });
+      const base = { via: 'http' as const, label: `${provider.kind}:${provider.id}`, kind: provider.kind, baseUrl: provider.baseUrl, apiKey: key?.apiKey || null, model };
+      candidates.push({ route: `${provider.id}|${model}`, pick: base });
+      for (const effort of supportedEffortValues('custom', `${provider.id}::${model}`)) candidates.push({ route: `${provider.id}|${model}|${effort}`, pick: { ...base, effort } });
     }
   }
   if (claudeCreditOn() && !((claudeCreditState.reading?.balance ?? 1) <= 0)) {
     for (const model of CLAUDE_CREDIT_MODELS) {
-      candidates.push({
-        route: `claude|credit:${model}`,
-        pick: { via: 'http', label: 'claude-credit', kind: 'anthropic', baseUrl: 'https://api.anthropic.com', apiKey: connectors.claudeCredit.apiKey.trim(), model },
-      });
+      const base = { via: 'http' as const, label: 'claude-credit', kind: 'anthropic', baseUrl: 'https://api.anthropic.com', apiKey: connectors.claudeCredit.apiKey.trim(), model };
+      candidates.push({ route: `claude|credit:${model}`, pick: base });
+      for (const effort of supportedEffortValues('claude', `credit:${model}`)) candidates.push({ route: `claude|credit:${model}|${effort}`, pick: { ...base, effort } });
     }
   }
   for (const item of MODELS.copilot) {
-    candidates.push({ route: `copilot|${item.value}`, pick: { via: 'http', label: 'copilot', kind: 'copilot', baseUrl: 'https://api.githubcopilot.com', apiKey: null, model: item.value } });
+    const base = { via: 'http' as const, label: 'copilot', kind: 'copilot', baseUrl: 'https://api.githubcopilot.com', apiKey: null, model: item.value };
+    candidates.push({ route: `copilot|${item.value}`, pick: base });
+    for (const effort of supportedEffortValues('copilot', item.value)) candidates.push({ route: `copilot|${item.value}|${effort}`, pick: { ...base, effort } });
   }
   for (const item of MODELS.opencode) {
     candidates.push({ route: `opencode|${item.value}`, pick: { via: 'opencode', label: 'opencode', model: item.value } });
@@ -88,7 +88,9 @@ function prehandleProvider(): PreHandler | undefined {
   // An Antigravity model at its usage limit is skipped; its CLI prints no usable memo once it is out.
   for (const item of MODELS.antigravity) {
     if ((usagePct('antigravity', item.value) ?? 0) >= 100) continue;
-    candidates.push({ route: `antigravity|${item.value}`, pick: { via: 'antigravity', label: 'antigravity', model: item.value } });
+    const base = { via: 'antigravity' as const, label: 'antigravity', model: item.value };
+    candidates.push({ route: `antigravity|${item.value}`, pick: base });
+    for (const effort of supportedEffortValues('antigravity', item.value)) candidates.push({ route: `antigravity|${item.value}|${effort}`, pick: { ...base, effort } });
   }
   // A model that failed lately (expired key, no quota) is left out for a while: the turn that failed went to the main
   // agent, and the next turns take the next model instead of failing on the same one again.
@@ -100,10 +102,9 @@ function prehandleProvider(): PreHandler | undefined {
 
 /** A route as the user reads it: "Codex GPT 5.6 Terra". */
 const routeLabel = (route: string) => {
-  const [agent, ...rest] = route.split('|');
-  const model = rest.join('|');
+  const [agent, model, effort] = route.split('|');
   const custom = connectors.custom.find((item) => item.id === agent);
-  return `${custom?.name ?? agentDisplayName(agent)} ${modelLabel(custom ? `${agent}::${model}` : model)}`;
+  return `${custom?.name ?? agentDisplayName(agent)} ${modelLabel(custom ? `${agent}::${model}` : model)}${effort ? ` · ${effortLabel(effort)}` : ''}`;
 };
 
 /** The pick a failed pre-handle is remembered by. */
@@ -133,7 +134,7 @@ export function prewarmChat(sessionId: string) {
   const selected = workspace.sessions.find((item) => item.id === sessionId);
   if (selected && credentialBusy(selected.agent === 'antigravity' ? 'agy' : selected.agent)) return;
   const session = workspace.sessions.find((item) => item.id === sessionId);
-  if (!session || !inTauri() || !['claude', 'codex', 'antigravity', 'copilot'].includes(session.agent) || isRunning(session.id)) return;
+  if (!session || !inTauri() || !['claude', 'codex', 'antigravity', 'workbuddy', 'copilot'].includes(session.agent) || isRunning(session.id)) return;
   const selectedModel = modelFor(session);
   const now = Date.now();
   const epoch = accountEpoch[session.agent] ?? 0;
@@ -193,8 +194,9 @@ function prewarmFallback(session: SessionItem) {
   if (!connectors.recovery.enabled || !inTauri()) return;
   const target = recoveryChain().find((agent) => agent !== session.agent && ['codex', 'antigravity'].includes(agent));
   const model = target ? (recoveryModelFor(target) ?? MODELS[target as Agent]?.[0]?.value) : undefined;
+  const effort = target ? recoveryEffortFor(target) : undefined;
   if (!target || !model) return;
-  const throttle = `${session.id}|${target}|${model}|fallback`;
+  const throttle = `${session.id}|${target}|${model}|${effort ?? ''}|fallback`;
   const now = Date.now();
   if (now - (prewarmedAt.get(throttle) ?? 0) < 300_000) return;
   prewarmedAt.set(throttle, now);
@@ -206,7 +208,7 @@ function prewarmFallback(session: SessionItem) {
     resume: false,
     model,
     permissionMode: PERMISSION_MODE[turnOptionsOf(session.id).permission],
-    effort: effortFor(session),
+    effort: effort ?? null,
     allowedTools: [...(approved[session.id] ?? [])],
     cwd,
   }).catch(() => {});
@@ -450,12 +452,14 @@ export function startTurn(
       if (selected) {
         logFlow(session.id, 'attachment pre-handle started', `provider=${selected.label} model=${selected.model} images=${paths.length} files=${files.length}`);
         try {
-          const request = { model: selected.model, prompt: body, images: paths, files: files.map((file) => file.path) };
+          const request = { model: selected.model, effort: selected.effort, prompt: body, images: paths, files: files.map((file) => file.path) };
           // A CLI start (OpenCode, Antigravity) takes longer than an HTTP call, so it gets the CLI's own limit.
           const memo = await within(
             selected.via === 'http'
               ? prehandleAttachments({ ...request, kind: selected.kind, baseUrl: selected.baseUrl, apiKey: selected.apiKey })
-              : selected.via === 'opencode' ? prehandleOpencode(request) : prehandleAntigravity(request),
+              : selected.via === 'opencode'
+                ? prehandleOpencode({ model: request.model, prompt: request.prompt, images: request.images, files: request.files })
+                : prehandleAntigravity(request),
             selected.via === 'http' ? PREPARE_LIMIT_MS : CLI_PREPARE_LIMIT_MS,
             'preparing attachment notes',
           );
@@ -1015,6 +1019,7 @@ export function sendNextQueued(sessionId: string) {
 function sendNextQueuedNow(sessionId: string, pump: QueuePump) {
   const listenerAvailable = () => canListenToSession(sessionId) && !needsUserInput(sessionId) && Boolean(queued[sessionId]?.length) && !queued[sessionId][0].mentions?.some((mention) => mention.kind === 'ai' || mention.kind === 'workflow');
   if (pump.dispatching || queuePaused[sessionId]) return;
+  if (flushCoordinationPrompt(sessionId)) return;
   if (!queued[sessionId]?.length) {
     if (backlog.get(sessionId)?.length) flushReports(sessionId, 0);
     return;

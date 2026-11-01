@@ -7,11 +7,8 @@
   import { inTauri, isPreviewCopy } from '../../app/platform/history';
   import { getPref } from '../../app/platform/prefs';
   import {
-    connectors,
     consumeCodexResetCredit,
-    refreshWorkbuddyModels,
-    refreshMuseCodeModels,
-    refreshAll,
+    refreshConnector,
     scanLocal,
     settings,
     startWatching,
@@ -95,14 +92,12 @@
     if (!settings.open) return;
     // Keep the connector data cached between opens; re-running all CLI/account checks whenever Settings opens
     // makes the list feel like it is loading on scroll.
-    untrack(() => {
-      if (!connectors.detected) {
-        void refreshAll(false);
-        void scanLocal();
-      }
-      if (connectors.detected?.workbuddy.logged_in) void refreshWorkbuddyModels();
-      if (connectors.detected?.muse_code.logged_in) void refreshMuseCodeModels();
-    });
+    if (settings.section === 'connectors') {
+      const tab = untrack(() => connectorTab || 'claude');
+      void refreshConnector(tab as Parameters<typeof refreshConnector>[0]);
+    } else if (settings.section === 'providers') {
+      void scanLocal();
+    }
     void tick().then(() => panel?.focus());
   });
 

@@ -23,11 +23,20 @@ pub const MAX_TIMEOUT_S: u64 = 7200;
 const TASK_MAX_CHARS: usize = 30_000;
 /// How long a quick tool (list, status, stop, a task started in the background) may wait for the webview.
 const QUICK_WAIT: Duration = Duration::from_secs(20);
+/// How long a worker may wait for another agent's answer before the question is released.
+const QUESTION_WAIT: Duration = Duration::from_secs(900);
 /// What the call waits beyond the task's own timeout, which the webview enforces (stopping the worker): only a backstop.
 const BACKSTOP: Duration = Duration::from_secs(60);
 
 pub const DELEGATE_TOOL: &str = "delegate_task";
-const TOOLS: [&str; 4] = [DELEGATE_TOOL, "list_agents", "task_status", "task_stop"];
+const TOOLS: [&str; 6] = [
+    DELEGATE_TOOL,
+    "list_agents",
+    "task_status",
+    "task_stop",
+    "task_ask",
+    "task_answer",
+];
 
 pub fn is_tool(name: &str) -> bool {
     TOOLS.contains(&name)
@@ -37,7 +46,7 @@ pub fn tool_defs() -> Vec<Value> {
     vec![
         json!({
             "name": DELEGATE_TOOL,
-            "description": format!("Hands a task to another AI agent running in AgentDeck (Claude, Codex, Antigravity or a local model) and returns its short report. Use this for cross-provider handoffs or independent work that benefits from another AgentDeck agent. If your CLI already has native sub-agents, use those for its own internal orchestration; do not replace them with this cross-provider tool. Do NOT delegate small things: keep ordinary Q&A, a small or single-file edit, a quick command or a simple artifact action in the current chat, and do not invent work just to delegate. Implementing a larger plan (several files or steps) is delegated too: split it into independent work packages, one worker each, and keep the integration yourself. Use 1-4 workers for genuinely independent capabilities such as investigation, implementation on disjoint files, verification, browser or artifact work; never assign overlapping write scopes. Give each worker a self-contained goal, paths/resources, constraints and evidence-first handoff: it sees nothing of this conversation. Independent tasks go out together in ONE turn with wait=false so they work in the background while you continue the main task; use wait=true only when the next step depends on a report. At most {MAX_PARALLEL_WORKERS} workers run at a time; more wait in line and start as others finish. Keep ownership of the main task and final integration. Never delegate merely to relay the user's message; never delegate the final answer. Reuse worker conversations for corrections: to send a correction to a worker that already answered, call delegate_task with continue=<task_id>. Replan only after evidence shows a real gap. Call list_agents first when unsure which agent or model to use. A FREE TIER agent sees no file or project and may train on the task: send it only public, non-sensitive text."),
+            "description": format!("Hands a task to another AI agent running in AgentDeck (Claude, Codex, Antigravity or a local model) and returns its short report. Use this for cross-provider handoffs or independent work that benefits from another AgentDeck agent. If your CLI already has native sub-agents, use those for its own internal orchestration; do not replace them with this cross-provider tool. Do NOT delegate small things: keep ordinary Q&A, a small or single-file edit, a quick command or a simple artifact action in the current chat, and do not invent work just to delegate. Implementing a larger plan (several files or steps) is delegated too: split it into independent work packages, one worker each, and keep the integration yourself. Use 1-4 workers for genuinely independent capabilities such as investigation, implementation on disjoint files, verification, browser or artifact work; never assign overlapping write scopes. Give each worker a self-contained goal, paths/resources, constraints and evidence-first handoff: it sees nothing of this conversation. Independent tasks go out together in ONE turn with wait=false so they work in the background while you continue the main task; use wait=true only when the next step depends on a report, and use depends_on=[task_id] for an explicit sequence. At most {MAX_PARALLEL_WORKERS} workers run at a time; more wait in line and start as others finish. A worker may ask its parent with task_ask and continue after task_answer; use wait=false when the parent must answer a child during a longer workflow, because a synchronous parent waiting for that child would deadlock. Keep ownership of the main task and final integration. Never delegate merely to relay the user's message; never delegate the final answer. Reuse worker conversations for corrections: to send a correction to a worker that already answered, call delegate_task with continue=<task_id>. Replan only after evidence shows a real gap. Call list_agents first when unsure which agent or model to use. A FREE TIER agent sees no file or project and may train on the task: send it only public, non-sensitive text."),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -47,6 +56,7 @@ pub fn tool_defs() -> Vec<Value> {
                     "role": { "type": "string", "description": "the kind of work, as set in Settings > Tasks: read, research, plan, review, write, text or logic. AgentDeck then sends the work to the first agent set for that role, so agent and model can be left out" },
                     "task": { "type": "string", "description": "the self-contained task: goal, paths, constraints, what to report back" },
                     "wait": { "type": "boolean", "description": "true (default): wait for the report because the next step depends on it. false: run in the background and return a task_id now" },
+                    "depends_on": { "type": ["string", "array"], "items": { "type": "string" }, "description": "task_id or task_ids that must finish successfully before this worker starts; use this for an explicit sequence" },
                     "timeout_s": { "type": "number", "description": format!("seconds the worker may take before it is stopped (default {DEFAULT_TIMEOUT_S}, at most {MAX_TIMEOUT_S})") },
                 },
                 "required": ["task"],
@@ -67,6 +77,16 @@ pub fn tool_defs() -> Vec<Value> {
             "description": "Stops a task started with delegate_task: its worker is killed. Use it when the result is no longer needed.",
             "inputSchema": { "type": "object", "properties": { "task_id": { "type": "string", "description": "the task_id delegate_task returned" } }, "required": ["task_id"] },
         }),
+        json!({
+            "name": "task_ask",
+            "description": "Ask the agent that handed you this task for a decision or missing context. Your task pauses at Waiting for <agent>'s answer and resumes in the same worker conversation when the parent calls task_answer. Keep the question focused. If the parent is waiting synchronously for your report, use your own best judgement instead of creating a deadlock.",
+            "inputSchema": { "type": "object", "properties": { "question": { "type": "string", "description": "the focused question for the parent agent" } }, "required": ["question"] },
+        }),
+        json!({
+            "name": "task_answer",
+            "description": "Answer a task_ask from a child agent. Use the question_id and give the decision or context directly so the child can continue its work.",
+            "inputSchema": { "type": "object", "properties": { "question_id": { "type": "string", "description": "the question_id shown in the coordination prompt" }, "answer": { "type": "string", "description": "the answer the child should use" } }, "required": ["question_id", "answer"] },
+        }),
     ]
 }
 
@@ -80,6 +100,7 @@ pub struct DelegateArgs {
     pub timeout_s: u64,
     /// A task id or worker chat id whose chat is reused for a follow-up.
     pub continue_id: Option<String>,
+    pub depends_on: Vec<String>,
 }
 
 fn text_of(value: &Value) -> Option<String> {
@@ -116,6 +137,18 @@ pub fn parse_delegate(args: &Value) -> Result<DelegateArgs, String> {
     let continue_id = text_of(&args["continue"]);
     // A role names its agent in Settings > Task roles, so it needs none here.
     let role = text_of(&args["role"]);
+    let depends_on = match &args["depends_on"] {
+        Value::Null => Vec::new(),
+        Value::String(value) => vec![parse_task_id(&json!({ "task_id": value }))?],
+        Value::Array(values) => values
+            .iter()
+            .map(|value| parse_task_id(&json!({ "task_id": value })))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err("depends_on must be a task_id or an array of task_ids".into()),
+    };
+    if depends_on.len() > 8 {
+        return Err("depends_on accepts at most 8 task ids".into());
+    }
     let agent = match text_of(&args["agent"]) {
         Some(agent) => agent,
         None if continue_id.is_some() || role.is_some() => String::new(),
@@ -146,6 +179,7 @@ pub fn parse_delegate(args: &Value) -> Result<DelegateArgs, String> {
         wait,
         timeout_s,
         continue_id,
+        depends_on,
     })
 }
 
@@ -162,8 +196,33 @@ pub fn parse_task_id(args: &Value) -> Result<String, String> {
     Ok(id)
 }
 
+pub fn parse_question(args: &Value) -> Result<String, String> {
+    let question = text_of(&args["question"]).ok_or(
+        "question is required: ask the parent for one focused decision or missing context",
+    )?;
+    if question.chars().count() > TASK_MAX_CHARS {
+        return Err(format!(
+            "question is longer than {TASK_MAX_CHARS} characters"
+        ));
+    }
+    Ok(question)
+}
+
+pub fn parse_question_id(args: &Value) -> Result<(String, String), String> {
+    let id = parse_task_id(&json!({ "task_id": args["question_id"] }))?;
+    let answer = text_of(&args["answer"])
+        .ok_or("answer is required: give the child the decision or context it asked for")?;
+    if answer.chars().count() > TASK_MAX_CHARS {
+        return Err(format!("answer is longer than {TASK_MAX_CHARS} characters"));
+    }
+    Ok((id, answer))
+}
+
 /// How long the call waits for the webview's answer.
 pub fn wait_limit(tool: &str, args: &Value) -> Duration {
+    if tool == "task_ask" && parse_question(args).is_ok() {
+        return QUESTION_WAIT + BACKSTOP;
+    }
     match (tool, parse_delegate(args)) {
         (DELEGATE_TOOL, Ok(parsed)) if parsed.wait => {
             Duration::from_secs(parsed.timeout_s) + BACKSTOP
@@ -179,8 +238,10 @@ pub fn is_long_call(body: &str) -> bool {
         return false;
     };
     request["method"] == "tools/call"
-        && request["params"]["name"] == DELEGATE_TOOL
-        && parse_delegate(&request["params"]["arguments"]).is_ok_and(|parsed| parsed.wait)
+        && ((request["params"]["name"] == DELEGATE_TOOL
+            && parse_delegate(&request["params"]["arguments"]).is_ok_and(|parsed| parsed.wait))
+            || (request["params"]["name"] == "task_ask"
+                && parse_question(&request["params"]["arguments"]).is_ok()))
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -268,9 +329,11 @@ fn reply_value(text: String, is_error: bool) -> Value {
 pub async fn call(app: &AppHandle, tool: &str, args: &Value, chat: &str) -> Value {
     let checked = match tool {
         DELEGATE_TOOL => parse_delegate(args).map(|parsed| {
-            json!({ "agent": parsed.agent, "model": parsed.model, "task": parsed.task, "wait": parsed.wait, "timeout_s": parsed.timeout_s, "continue": parsed.continue_id })
+            json!({ "agent": parsed.agent, "model": parsed.model, "task": parsed.task, "wait": parsed.wait, "timeout_s": parsed.timeout_s, "continue": parsed.continue_id, "depends_on": parsed.depends_on })
         }),
         "task_status" | "task_stop" => parse_task_id(args).map(|id| json!({ "task_id": id })),
+        "task_ask" => parse_question(args).map(|question| json!({ "question": question })),
+        "task_answer" => parse_question_id(args).map(|(question_id, answer)| json!({ "question_id": question_id, "answer": answer })),
         _ => Ok(json!({})),
     };
     let args = match checked {
@@ -282,7 +345,7 @@ pub async fn call(app: &AppHandle, tool: &str, args: &Value, chat: &str) -> Valu
     let mut guard = Abandon {
         app,
         id: id.clone(),
-        notify: tool == DELEGATE_TOOL && args["wait"] == true,
+        notify: (tool == DELEGATE_TOOL && args["wait"] == true) || tool == "task_ask",
         done: false,
     };
     // Only the main window: a Preview page is a copy of this app and must not answer the chats' calls.
@@ -415,7 +478,8 @@ mod tests {
                 task: "read the logs".into(),
                 wait: true,
                 timeout_s: 1800,
-                continue_id: None
+                continue_id: None,
+                depends_on: vec![],
             }
         );
     }
@@ -601,7 +665,14 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["delegate_task", "list_agents", "task_status", "task_stop"]
+            [
+                "delegate_task",
+                "list_agents",
+                "task_status",
+                "task_stop",
+                "task_ask",
+                "task_answer"
+            ]
         );
         assert!(names.iter().all(|name| is_tool(name)));
         let text = defs[0]["description"].as_str().unwrap_or_default();

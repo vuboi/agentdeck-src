@@ -28,12 +28,24 @@ import {
 
 // Mock workspace. Real data arrives from agentd (M2); the shapes follow crates/protocol.
 export type Agent =
-  'claude' | 'codex' | 'antigravity' | 'opencode' | 'copilot' | 'custom';
+  'claude' | 'codex' | 'antigravity' | 'opencode' | 'workbuddy' | 'copilot' | 'custom';
 export type Status = 'working' | 'idle' | 'waiting';
 /** Reasoning effort and the approval modes shared by the agent CLIs. */
 export type Effort =
   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 export type Permission = 'ask' | 'edits' | 'plan' | 'auto' | 'yolo';
+
+export const CONTEXT_LIMITS = [200_000, 500_000, 1_000_000] as const;
+export type ContextLimit = (typeof CONTEXT_LIMITS)[number];
+export const DEFAULT_CONTEXT_LIMIT: ContextLimit = 500_000;
+export type ContextLimitChange = {
+  value: ContextLimit;
+  changedAt: string;
+};
+type SavedContextSettings = {
+  limit: ContextLimit;
+  history: ContextLimitChange[];
+};
 
 export type Project = { id: string; name: string; path: string };
 export type SessionItem = {
@@ -72,6 +84,10 @@ export type SessionItem = {
   conversationModel?: string;
   /** Model used by each additional agent conversation in a mixed chat. */
   agentModels?: Partial<Record<Agent, string>>;
+  /** Token threshold used by auto-compress for this chat. */
+  contextLimit?: ContextLimit;
+  /** Previous context thresholds selected in this chat, oldest first. */
+  contextLimitHistory?: ContextLimitChange[];
   /** Per agent: its own conversation id and whether it has one yet. `agentSession` / `agentStarted` belong to
    *  the chat's first agent; an agent the chat moved to later keeps its ids here. */
   agentIds?: Partial<
@@ -96,6 +112,9 @@ export const AGENT_TEXT: Record<Agent, string> = {
   opencode:
     BUILT_IN_AGENTS.find((item) => item.id === 'opencode')?.tone ??
     'text-foreground',
+  workbuddy:
+    BUILT_IN_AGENTS.find((item) => item.id === 'workbuddy')?.tone ??
+    'text-blue-500',
   copilot:
     BUILT_IN_AGENTS.find((item) => item.id === 'copilot')?.tone ??
     'text-foreground',
@@ -110,6 +129,9 @@ export const AGENT_ICON: Record<Agent, ZIconName> = {
   opencode:
     BUILT_IN_AGENTS.find((item) => item.id === 'opencode')?.icon ??
     ('lucideTerminal' as ZIconName),
+  workbuddy:
+    BUILT_IN_AGENTS.find((item) => item.id === 'workbuddy')?.icon ??
+    ('lucideBot' as ZIconName),
   copilot:
     BUILT_IN_AGENTS.find((item) => item.id === 'copilot')?.icon ??
     ('lucideBot' as ZIconName),
@@ -232,6 +254,42 @@ if (inTauri() && !isPreviewCopy()) {
 
 export const activeSession = () =>
   workspace.sessions.find((item) => item.id === workspace.activeId);
+
+// Keep this small record separately as well as on local SessionItem rows: imported history sessions are rebuilt from
+// provider files on startup, while their AgentDeck-only context setting must survive that rebuild too.
+const CONTEXT_SETTINGS_KEY = 'chat.context-settings';
+const contextSettings = $state<Record<string, SavedContextSettings>>({});
+void getPref<Record<string, SavedContextSettings>>(CONTEXT_SETTINGS_KEY).then((saved) => {
+  if (saved) Object.assign(contextSettings, saved);
+});
+
+export function contextLimitOf(
+  session: Pick<SessionItem, 'id' | 'contextLimit'> | undefined,
+): ContextLimit {
+  const value = session?.contextLimit ?? (session && contextSettings[session.id]?.limit);
+  return CONTEXT_LIMITS.includes(value as ContextLimit)
+    ? (value as ContextLimit)
+    : DEFAULT_CONTEXT_LIMIT;
+}
+
+/** Changes the compression threshold for one chat and keeps its recent choices with the session. */
+export function setSessionContextLimit(sessionId: string, value: number) {
+  const session = workspace.sessions.find((item) => item.id === sessionId);
+  const next = CONTEXT_LIMITS.find((limit) => limit === value);
+  if (!session || next === undefined || session.contextLimit === next) return;
+  session.contextLimit = next;
+  const history =
+    session.contextLimitHistory ?? contextSettings[sessionId]?.history ?? [];
+  if (history.at(-1)?.value !== next)
+    history.push({ value: next, changedAt: new Date().toISOString() });
+  session.contextLimitHistory = history.slice(-20);
+  contextSettings[sessionId] = {
+    limit: next,
+    history: session.contextLimitHistory,
+  };
+  void setPref(CONTEXT_SETTINGS_KEY, { ...contextSettings });
+  persistLocal(sessionId);
+}
 export const projectOf = (session: SessionItem) =>
   workspace.projects.find((item) => item.id === session.projectId);
 
@@ -823,6 +881,7 @@ export function newSession(projectId = NO_PROJECT) {
     agent: start.agent,
     agentSession: uuid,
     model: start.model,
+    contextLimit: DEFAULT_CONTEXT_LIMIT,
     gitBranch: projectId === NO_PROJECT ? undefined : base?.gitBranch,
     status: 'idle',
     draft: true,

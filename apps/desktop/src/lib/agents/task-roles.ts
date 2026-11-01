@@ -1,7 +1,7 @@
 // Which agents do which kind of work. Pure (no stores, no Tauri) so plain node can test it.
 //
-// A route is `agent|model` in the form `delegate_task` takes: `claude|claude-haiku-5-5`, `codex|gpt-5.6-terra`, or a
-// connector's id with its model. A role holds an ordered list of routes: the first is the highest priority. The read role
+// A route is `agent|model` in the form `delegate_task` takes, with an optional `|effort` selected in Settings:
+// `claude|claude-haiku-5-5|medium`, `codex|gpt-5.6-terra`, or a connector's id with its model. A role holds an ordered list of routes: the first is the highest priority. The read role
 // tries them in that order for pictures (the pre-handle, run.svelte.ts); the other roles offer them to the main agent to
 // choose from, and the hand-off goes through `delegate_task`, so it shows in the Workflow tab like any other delegation.
 
@@ -41,6 +41,16 @@ export function canonicalRole(value: unknown): TaskRoleId | undefined {
 /** The ordered routes of each role (a row with no model yet is `''`), the master flag (off: no role is used at all), and the
  *  roles switched off one by one (their picks are kept, they are just not used). */
 export type RoleState = { routes: Partial<Record<string, string[]>>; on: boolean; off: string[] };
+
+/** A saved task or fallback route, with the optional effort chosen for its model. */
+export type RoutedModel = { agent: string; model: string; effort?: string };
+
+/** Parses both the current `agent|model|effort` route and older `agent|model` settings. */
+export function parseRoutedModel(route: string): RoutedModel | undefined {
+  const [agent, model, effort] = route.split('|');
+  if (!agent || !model) return undefined;
+  return { agent, model, ...(effort ? { effort } : {}) };
+}
 
 /** Saved routes under the old role ids, moved to the new ones. A new role's routes are the old ones it took in, in order. */
 export function migrateRoutes(saved: Partial<Record<string, string[]>>): Partial<Record<string, string[]>> {
