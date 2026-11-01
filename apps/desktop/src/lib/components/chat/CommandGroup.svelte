@@ -91,6 +91,18 @@
   const runningLine = $derived(runningStep ? stepLine(runningStep) : '');
   const total = $derived(totalChange(items));
   const seconds = $derived(elapsed(ticker.sec - (startedAt ?? ticker.sec)));
+  let previousRunningLine = '';
+  let runningLineStartedAt = 0;
+  let lineTransition = $state<'fade' | 'legacy'>('legacy');
+  $effect.pre(() => {
+    const line = runningLine;
+    if (line === previousRunningLine) return;
+    const now = performance.now();
+    const visibleFor = runningLineStartedAt > 0 ? now - runningLineStartedAt : Infinity;
+    lineTransition = visibleFor < 1000 ? 'fade' : 'legacy';
+    previousRunningLine = line;
+    runningLineStartedAt = now;
+  });
   const shown = (item: CommandBlock) => (toolOf(item.command) === 'Bash' ? `> ${argOf(item.command)}` : item.command);
   let readModes = $state<Record<string, 'preview' | 'raw'>>({});
   let expandedChildLogs = $state<Record<string, boolean>>({});
@@ -265,9 +277,13 @@
              width; once every step is done it goes back to the summary. -->
         <span class="min-w-0 truncate font-medium">
           {#key runningLine}
-            <span class="block truncate" in:fade={{ duration: 120 }} out:fade={{ duration: 90 }}>
+            {#if lineTransition === 'fade'}
+              <span class="block truncate" in:fade={{ duration: 120 }} out:fade={{ duration: 90 }}>
+                <ZShimmerText class="block truncate font-medium" zText={runningLine} />
+              </span>
+            {:else}
               <ZShimmerText class="block truncate font-medium" zText={runningLine} />
-            </span>
+            {/if}
           {/key}
         </span>
       {:else if working}
