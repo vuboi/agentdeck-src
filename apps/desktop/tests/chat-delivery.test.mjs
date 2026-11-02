@@ -21,6 +21,39 @@ const providers = [
 ];
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+/** A run whose attachments are still being saved; each provider launch is logged as [path, arguments] in f.calls. */
+function prepareLaunch(f, preparing) {
+    Object.assign(f.bindings, {
+        modelFor: () => 'model',
+        rememberLastChat() {},
+        pendingNew: new Set(),
+        chat: { messages: f.messages },
+        currentCredentialId: () => 'fixture',
+        missedTurns: () => '',
+        sessionMark: () => undefined,
+        turnOptions: { effort: 'medium' },
+        accountEpoch: {},
+        liveModel: () => true,
+        liveReplies: {},
+        runEpochs: {},
+        turns: {},
+        advanceRun() {},
+        sessionCwd: () => null,
+        prewarmAgent: async () => {},
+        isWorkerChat: () => true,
+        lastPrompt: {},
+        lastEventAt: new Map(),
+        lastEventKind: new Map(),
+        saveAttachment: () => preparing,
+        within: (promise) => promise,
+        sendAgentTurn: async (args) => f.calls.push(['agent', args]),
+        sendCustomTurn: async (args) => f.calls.push(['custom', args]),
+        handleAgentEvent: (_id, event) => {
+            throw new Error(`Unexpected error: ${event.message}`);
+        },
+    });
+}
+
 /** Shared fixtures contain no credentials and no real endpoint. */
 function fixture(agent) {
     let id = 0;
@@ -37,6 +70,8 @@ function fixture(agent) {
     const queuePaused = {};
     const starts = [];
     const stops = [];
+    // One ordered log of the stubs that matter to a test: [name, ...arguments].
+    const calls = [];
     const bindings = {
         workspace: { activeId: 'chat', sessions: [session], projects: [] },
         activeSession: () => session,
@@ -71,11 +106,13 @@ function fixture(agent) {
         localMessages: {},
         startTurn: (...args) => {
             starts.push(args);
+            calls.push(['start']);
             replies.chat = 'reply';
             session.status = 'working';
         },
         stopTurn: (...args) => {
             stops.push(args);
+            calls.push(['stop', ...args]);
             delete replies.chat;
             session.status = 'idle';
         },
@@ -84,11 +121,12 @@ function fixture(agent) {
         withElements: (value) => value,
         credentialScope,
         forgetUnstartedConversation() {},
-        dropRecovery() {},
+        dropRecovery: (...args) => calls.push(['dropRecovery', ...args]),
         messagesById: new Map(),
         resolveBinding,
-        supersedeOwedTurn() {},
-        stopOwedTurn() {},
+        supersedeOwedTurn: (...args) =>
+            calls.push(['supersedeOwedTurn', ...args]),
+        stopOwedTurn: (...args) => calls.push(['stopOwedTurn', ...args]),
         turnOptionsOf: () => ({}),
         recoveries: {},
         mentionContext: () => '',
@@ -102,6 +140,7 @@ function fixture(agent) {
         queuePaused,
         starts,
         stops,
+        calls,
         bindings,
     };
 }
@@ -130,11 +169,18 @@ for (const agent of providers) {
         // Send now stops the running answer (as Ctrl/Cmd+Enter does) and starts this message once.
         assert.equal(f.stops.length, 1);
         assert.equal(f.starts.length, 1);
+        assert.deepEqual(f.stops[0], ['chat']);
+        // The old answer stops first; the new message then settles the owed turn and the recovery before it starts.
+        assert.deepEqual(f.calls, [
+            ['stop', 'chat'],
+            ['supersedeOwedTurn', 'chat'],
+            ['dropRecovery', 'chat'],
+            ['start'],
+        ]);
         assert.deepEqual(
             Array.from(f.queued.chat ?? [], (item) => item.messageId),
             ['two'],
         );
-        assert.equal(f.queuePaused.chat, undefined);
     });
 
     test(`${agent}: Send now cannot bypass a pending permission or question`, async () => {
@@ -177,36 +223,7 @@ for (const agent of providers) {
         const preparing = new Promise((resolve) => {
             release = resolve;
         });
-        const calls = [];
-        Object.assign(f.bindings, {
-            modelFor: () => 'model',
-            rememberLastChat() {},
-            pendingNew: new Set(),
-            chat: { messages: f.messages },
-            currentCredentialId: () => 'fixture',
-            missedTurns: () => '',
-            sessionMark: () => undefined,
-            turnOptions: { effort: 'medium' },
-            accountEpoch: {},
-            liveModel: () => true,
-            liveReplies: {},
-            runEpochs: {},
-            turns: {},
-            advanceRun() {},
-            sessionCwd: () => null,
-            prewarmAgent: async () => {},
-            isWorkerChat: () => true,
-            lastPrompt: {},
-            lastEventAt: new Map(),
-            lastEventKind: new Map(),
-            saveAttachment: () => preparing,
-            within: (promise) => promise,
-            sendAgentTurn: async (...args) => calls.push(args),
-            sendCustomTurn: async (...args) => calls.push(args),
-            handleAgentEvent: (_id, event) => {
-                throw new Error(`Unexpected error: ${event.message}`);
-            },
-        });
+        prepareLaunch(f, preparing);
         const api = await load('run', f.bindings);
         f.messages.push({ id: 'ask', role: 'user', blocks: [] });
         api.startTurn(f.session, 'hello', [
@@ -217,7 +234,7 @@ for (const agent of providers) {
         api.runReplies.clear();
         release('fixture.png');
         await flush();
-        assert.equal(calls.length, 0);
+        assert.deepEqual(f.calls, []);
     });
 }
 
@@ -237,6 +254,8 @@ test('Stop pauses the queue before returning from a foreground listener', async 
     api.queued.chat = f.queued.chat;
     api.stopTurn('chat');
     assert.equal(api.queuePaused.chat, 'interrupted');
+    // Stop closes an owed (failed, waiting for retry) turn as stopped.
+    assert.deepEqual(f.calls, [['stopOwedTurn', 'chat']]);
 });
 
 test('a background report keeps the originating request even when a newer prompt exists', async () => {
