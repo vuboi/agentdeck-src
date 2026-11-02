@@ -95,6 +95,7 @@
         workspace,
     } from '../../chat/sessions.svelte';
     import { keepPicture, keepPictureUrl, pictureUrl } from '../../chat/agent';
+    import { theme } from '../../app/ui/theme.svelte';
 
     // The AgentDeck browser: tabs, an address bar, device sizes, an element picker, devtools, and a markup view
     // whose result goes to the chat. The pages themselves are native webviews placed over the stage below.
@@ -282,6 +283,7 @@
     /** Takes the page off screen. The app is filled where it was see-through first, so the window never shows through. */
     async function takePageAway() {
         cutHole(null, null);
+        holeRect = null;
         placed = '';
         await painted();
         await hideBrowser();
@@ -289,6 +291,17 @@
 
     /** Where the page was last placed (tab, rectangle, zoom): the same again is not sent again. */
     let placed = '';
+    /** The rectangle the page's hole is cut at, so a theme switch can cut it again in the new colours. */
+    let holeRect: Rect | null = null;
+
+    // The hole takes the colours of the theme it is cut in. A theme switch cuts it again in the same flush as the new
+    // colours (theme.settledKey), so no frame shows the old colours.
+    $effect(() => {
+        void theme.settledKey;
+        untrack(() => {
+            if (stage && holeRect) cutHole(stage, holeRect);
+        });
+    });
 
     async function placePage() {
         const place = frame();
@@ -331,6 +344,7 @@
             else await showBrowser(place.rect);
             // The app is see-through where the page is, so whatever it opens over the page can sit above it.
             cutHole(stage!, place.rect);
+            holeRect = place.rect;
             if (tab.opened && shownZoom !== String(place.zoom))
                 await zoomBrowser(place.zoom);
             placed = key;

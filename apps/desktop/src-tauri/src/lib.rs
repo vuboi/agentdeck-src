@@ -2790,6 +2790,7 @@ pub fn run() {
             server_log,
             detect::run_target,
             browser::browser_show,
+            browser::browser_theme,
             browser::browser_pick_extension,
             browser::browser_add_extension,
             browser_extensions::browser_extensions,

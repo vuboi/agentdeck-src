@@ -29,6 +29,47 @@ static REQUESTED: std::sync::Mutex<Option<std::collections::HashMap<String, Stri
 /// Marks the error page AgentDeck shows in place of the browser's own (Chromium's `chrome-error://` page).
 const ERROR_MARK: &str = "<!--agentdeck-error-->";
 
+/// Whether the app shows its dark theme. The blank colour under the pages and the error page follow it. Dark until the
+/// app says otherwise (the app's default).
+static DARK: AtomicBool = AtomicBool::new(true);
+
+/// The blank colour under a page: a light paper on a light app, a dark one on a dark app.
+fn paper(dark: bool) -> tauri::window::Color {
+    if dark {
+        tauri::window::Color(24, 24, 27, 255)
+    } else {
+        tauri::window::Color(255, 255, 255, 255)
+    }
+}
+
+/// The error page's colour scheme, text, muted text and accent, for the app's theme.
+fn palette(
+    dark: bool,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
+    if dark {
+        ("dark", "#202124", "#e8eaed", "#9aa0a6", "#8ab4f8")
+    } else {
+        ("light", "#ffffff", "#202124", "#5f6368", "#1a73e8")
+    }
+}
+
+/// The app's theme changed: the blank colour of the pages and the error page follow it, the pages already open too.
+#[tauri::command]
+pub fn browser_theme(app: AppHandle, dark: bool) {
+    DARK.store(dark, Ordering::Relaxed);
+    for (label, view) in app.webviews() {
+        if label.starts_with(PREFIX) {
+            let _ = view.set_background_color(Some(paper(dark)));
+        }
+    }
+}
+
 /// How many times a tab's failed page was asked for again, and whether one such retry is running now, by tab id.
 /// More than `RETRIES` means it gave up and shows AgentDeck's error page. A page that loads, or an address the user
 /// asks for, starts the count again.
@@ -75,8 +116,9 @@ pub(crate) fn error_html(target: &str, reason: &str) -> String {
         .replace('\\', "\\\\")
         .replace('\'', "\\'")
         .replace('"', "%22");
+    let (scheme, bg, fg, muted, accent) = palette(DARK.load(Ordering::Relaxed));
     format!(
-        "{ERROR_MARK}<!doctype html><html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>{host}</title><style>:root{{color-scheme:light dark;--bg:#ffffff;--fg:#202124;--muted:#5f6368;--accent:#1a73e8}}@media (prefers-color-scheme:dark){{:root{{--bg:#202124;--fg:#e8eaed;--muted:#9aa0a6;--accent:#8ab4f8}}}}body{{margin:0;min-height:100vh;background:var(--bg);color:var(--muted);font:15px/1.55 system-ui,'Segoe UI',sans-serif}}main{{max-width:560px;margin:0 auto;padding:18vh 32px 32px}}svg{{width:40px;height:40px;color:var(--accent)}}h1{{margin:24px 0 12px;font-size:22px;font-weight:500;color:var(--fg)}}ul{{margin:8px 0 0;padding-left:22px}}code{{font-size:12px;letter-spacing:.02em}}button{{margin-top:32px;padding:8px 18px;border:0;border-radius:6px;background:var(--accent);color:var(--bg);font:500 14px system-ui,sans-serif;cursor:pointer}}</style><main><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round'><path d='M12 21a9 9 0 1 1 9-9'/><path d='M12 7v5l3 2'/></svg><h1>This site can't be reached</h1><p>{what}</p><p>Try:</p><ul><li>Checking that the dev server is running</li><li>Checking the address, and whether it is http or https: <code>{shown}</code></li></ul><p><code>{code}</code></p><button onclick=\"location.replace('{go}')\">Reload</button></main><script>setInterval(()=>fetch('{go}',{{mode:'no-cors',cache:'no-store'}}).then(()=>location.replace('{go}'),()=>{{}}),1500)</script></html>"
+        "{ERROR_MARK}<!doctype html><html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>{host}</title><style>:root{{color-scheme:{scheme};--bg:{bg};--fg:{fg};--muted:{muted};--accent:{accent}}}body{{margin:0;min-height:100vh;background:var(--bg);color:var(--muted);font:15px/1.55 system-ui,'Segoe UI',sans-serif}}main{{max-width:560px;margin:0 auto;padding:18vh 32px 32px}}svg{{width:40px;height:40px;color:var(--accent)}}h1{{margin:24px 0 12px;font-size:22px;font-weight:500;color:var(--fg)}}ul{{margin:8px 0 0;padding-left:22px}}code{{font-size:12px;letter-spacing:.02em}}button{{margin-top:32px;padding:8px 18px;border:0;border-radius:6px;background:var(--accent);color:var(--bg);font:500 14px system-ui,sans-serif;cursor:pointer}}</style><main><svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round'><path d='M12 21a9 9 0 1 1 9-9'/><path d='M12 7v5l3 2'/></svg><h1>This site can't be reached</h1><p>{what}</p><p>Try:</p><ul><li>Checking that the dev server is running</li><li>Checking the address, and whether it is http or https: <code>{shown}</code></li></ul><p><code>{code}</code></p><button onclick=\"location.replace('{go}')\">Reload</button></main><script>setInterval(()=>fetch('{go}',{{mode:'no-cors',cache:'no-store'}}).then(()=>location.replace('{go}'),()=>{{}}),1500)</script></html>"
     )
 }
 
@@ -509,9 +551,9 @@ pub async fn browser_show(
         std::fs::create_dir_all(&extension_root).map_err(|error| error.to_string())?;
         builder = builder.extensions_path(extension_root);
     }
-    // Opaque white under the page: while the page's window is resized (the mark-up bar or the developer tools open and
-    // shrink the area) the strip not yet painted shows this, not black.
-    builder = builder.background_color(tauri::window::Color(255, 255, 255, 255));
+    // Opaque paper under the page: while the page's window is resized (the mark-up bar or the developer tools open and
+    // shrink the area) the strip not yet painted shows this, not black. It is the app's theme colour.
+    builder = builder.background_color(paper(DARK.load(Ordering::Relaxed)));
     // A phone or tablet identifies itself as one, so sites send their mobile layout.
     if let Some(agent) = user_agent.as_deref() {
         builder = builder.user_agent(agent);

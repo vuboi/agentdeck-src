@@ -1,4 +1,3 @@
-import { SvelteMap } from 'svelte/reactivity';
 import {
     neutralTokens,
     primaryTokens,
@@ -8,6 +7,7 @@ import {
     type Primary,
 } from './theme-tokens';
 import { logFlow } from '../../tasks/flow-log';
+import { inTauri } from '../platform/history';
 
 const KEY = 'agentdeck.theme';
 export type ChatLayout = 'split' | 'single';
@@ -54,132 +54,10 @@ function themeSnapshot(phase: string): string {
         surface: backgroundOf('.bg-background'),
         card: backgroundOf('.bg-card'),
         popover: backgroundOf('.bg-popover'),
+        // Elements painted with a hole (page-layer.ts): a hole keeps the colour it was cut in until it is cut again.
+        holes: document.querySelectorAll('[style*="no-repeat"]').length,
         visible: document.visibilityState,
     });
-}
-
-/** Records rendered colour styles across the page without writing user-visible text into the debug log. */
-function logThemeUiAudit(phase: string) {
-    const groups = new SvelteMap<
-        string,
-        {
-            count: number;
-            bg: string;
-            fg: string;
-            border: string;
-            fill: string;
-            stroke: string;
-            tokens: string;
-            samples: string[];
-        }
-    >();
-    let inspected = 0;
-    let styled = 0;
-    for (const element of document.querySelectorAll<HTMLElement>('*')) {
-        if (element.getClientRects().length === 0) continue;
-        inspected += 1;
-        const classes = [...element.classList];
-        const colorClasses = classes.filter((name) =>
-            /^(?:dark:)?(?:bg|text|border|ring|outline|fill|stroke)-/.test(
-                name,
-            ),
-        );
-        const inlineStyle = element.getAttribute('style') ?? '';
-        if (
-            !colorClasses.length &&
-            !/(?:color|background|border|outline|fill|stroke):/i.test(
-                inlineStyle,
-            )
-        )
-            continue;
-        styled += 1;
-        const style = getComputedStyle(element);
-        const bg = style.backgroundColor;
-        const fg = style.color;
-        const border = style.borderTopColor;
-        const fill = style.fill;
-        const stroke = style.stroke;
-        const tokens = colorClasses
-            .filter((name) =>
-                /^(?:dark:)?(?:bg|text|border|ring|outline|fill|stroke)-(?:background|foreground|card|popover|primary|secondary|muted|accent|destructive|sidebar|input|border|ring)(?:-|\/|$)/.test(
-                    name,
-                ),
-            )
-            .sort()
-            .join(' ');
-        const key = `${bg}|${fg}|${border}|${fill}|${stroke}|${style.opacity}|${tokens}`;
-        let group = groups.get(key);
-        if (!group) {
-            group = {
-                count: 0,
-                bg,
-                fg,
-                border,
-                fill,
-                stroke,
-                tokens,
-                samples: [],
-            };
-            groups.set(key, group);
-        }
-        group.count += 1;
-        if (group.samples.length < 2) {
-            const identity = [
-                element.tagName.toLowerCase(),
-                element.id ? `#${element.id}` : '',
-                element.getAttribute('role')
-                    ? `[role=${element.getAttribute('role')}]`
-                    : '',
-                element.getAttribute('data-testid')
-                    ? `[testid=${element.getAttribute('data-testid')}]`
-                    : '',
-            ]
-                .join('')
-                .slice(0, 44);
-            const classesForLog = colorClasses
-                .slice(0, 4)
-                .join(' ')
-                .slice(0, 28);
-            group.samples.push(`${identity}{${classesForLog}}`);
-        }
-    }
-
-    const entries = [...groups.values()];
-    const limit = 240;
-    logFlow(
-        '-',
-        'theme ui audit',
-        JSON.stringify({
-            phase,
-            inspected,
-            styled,
-            groups: entries.length,
-            recorded: Math.min(entries.length, limit),
-        }),
-    );
-    for (const [index, group] of entries.slice(0, limit).entries()) {
-        logFlow(
-            '-',
-            'theme ui style',
-            JSON.stringify({
-                i: index,
-                n: group.count,
-                bg: group.bg,
-                fg: group.fg,
-                border: group.border,
-                fill: group.fill,
-                stroke: group.stroke,
-                tokens: group.tokens.slice(0, 32),
-                samples: group.samples,
-            }),
-        );
-    }
-    if (entries.length > limit)
-        logFlow(
-            '-',
-            'theme ui audit truncated',
-            `phase=${phase} omitted=${entries.length - limit}`,
-        );
 }
 
 function read(): Saved {
@@ -197,6 +75,16 @@ function read(): Saved {
 
 const initial = read();
 const media = matchMedia('(prefers-color-scheme: dark)');
+/** The dark flag the Rust side was last told (null: not told yet). */
+let previewDark: boolean | null = null;
+
+/** The Preview's blank colour and its error page follow the app's theme. */
+function tellPreview(dark: boolean) {
+    if (!inTauri()) return;
+    void import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('browser_theme', { dark }))
+        .catch(() => {});
+}
 
 /** Theme state. Tokens are applied inline on <html>, so they win over the stylesheet's z-theme layer. */
 class Theme {
@@ -238,27 +126,8 @@ class Theme {
         );
         this.settledKey = this.keyNow();
         let unfreeze = 0;
-        let resumeCheck = 0;
         const logThemeSnapshot = (phase: string) =>
             logFlow('-', 'theme snapshot', themeSnapshot(phase));
-        const scheduleResumeSnapshot = (phase: string) => {
-            window.clearTimeout(resumeCheck);
-            resumeCheck = window.setTimeout(() => {
-                logThemeSnapshot(phase);
-                if (typeof window.requestIdleCallback === 'function') {
-                    window.requestIdleCallback(() => logThemeUiAudit(phase), {
-                        timeout: 1500,
-                    });
-                } else {
-                    window.setTimeout(() => logThemeUiAudit(phase), 250);
-                }
-            }, 150);
-        };
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible')
-                scheduleResumeSnapshot('visible');
-        });
-        window.addEventListener('focus', () => scheduleResumeSnapshot('focus'));
         // Catch another page subsystem overwriting the global theme class or tokens after startup.
         new MutationObserver(() => {
             const root = document.documentElement;
@@ -288,6 +157,12 @@ class Theme {
                 }
                 root.classList.toggle('dark', this.dark);
                 root.style.colorScheme = this.dark ? 'dark' : 'light';
+                document
+                    .querySelector('meta[name="theme-color"]')
+                    ?.setAttribute(
+                        'content',
+                        this.dark ? '#0a0a0a' : '#ffffff',
+                    );
                 root.style.fontSize = `${this.uiFontSize}px`;
                 for (const [name, value] of Object.entries(this.tokens))
                     root.style.setProperty(name, value, 'important');
@@ -301,18 +176,11 @@ class Theme {
                     unfreeze = requestAnimationFrame(() => {
                         logThemeSnapshot('next frame');
                         root.classList.remove('theme-switching');
-                        if (typeof window.requestIdleCallback === 'function') {
-                            window.requestIdleCallback(
-                                () => logThemeUiAudit('settled'),
-                                { timeout: 1500 },
-                            );
-                        } else {
-                            window.setTimeout(
-                                () => logThemeUiAudit('settled'),
-                                250,
-                            );
-                        }
                     });
+                }
+                if (this.dark !== previewDark) {
+                    previewDark = this.dark;
+                    tellPreview(this.dark);
                 }
                 try {
                     const saved: Saved = {
