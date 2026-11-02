@@ -1,7 +1,7 @@
 import { workspace, localMessages, type SessionItem } from './state.svelte';
 import { send } from './sending.svelte';
 import { askText } from './run.svelte';
-import { chatTurnOptions } from './turns.svelte';
+import { chatTurnOptions, stopTurn } from './turns.svelte';
 
 export { btwQuestionOf } from './btw-command';
 
@@ -9,14 +9,16 @@ export { btwQuestionOf } from './btw-command';
 export const sideOf = (parentId: string) =>
     workspace.sessions.find((item) => item.side?.parentId === parentId);
 
-/** Closes the side chat of a chat: it is removed from the app and never saved. */
+/** Closes the side chat of a chat: its run is stopped, then it is removed from the app and never saved. */
 export function dropSide(parentId: string) {
     const side = sideOf(parentId);
     if (!side) return;
+    stopTurn(side.id, true);
     workspace.sessions = workspace.sessions.filter(
         (item) => item.id !== side.id,
     );
     delete localMessages[side.id];
+    delete chatTurnOptions[side.id];
 }
 
 const CONTEXT_CHARS = 12000;

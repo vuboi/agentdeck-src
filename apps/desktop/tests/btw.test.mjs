@@ -124,3 +124,26 @@ test('R4.2: a side chat cannot delegate, with or without a worktree', async () =
         assert.deepEqual(Object.keys(api.delegateTasks), []);
     }
 });
+
+test('R4.3: closing a side chat stops its run before it is removed, and a new /btw does the same', async () => {
+    const { api, workspace, sent, stops } = await setup('claude');
+    const first = api.askBtw('chat', 'first?').side;
+    api.dropSide('chat');
+    assert.deepEqual(
+        stops.map(([id]) => id),
+        [first.id],
+        'closing stops the side chat',
+    );
+    assert.equal(
+        workspace.sessions.some((item) => item.side),
+        false,
+    );
+    const second = api.askBtw('chat', 'second?').side;
+    api.askBtw('chat', 'third?');
+    assert.deepEqual(
+        stops.map(([id]) => id),
+        [first.id, second.id],
+        'a new /btw stops the one it replaces',
+    );
+    assert.equal(sent.length, 3);
+});

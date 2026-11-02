@@ -61,6 +61,7 @@ import {
     withLive,
 } from './run.svelte';
 import { hidden, signature } from './sending.svelte';
+import { dropSide } from './btw.svelte';
 import {
     lastPrompt,
     queuePaused,
@@ -1125,6 +1126,8 @@ export async function releaseCli(id: string) {
 async function forgetSessions(removed: SessionItem[]) {
     if (!removed.length) return;
     const gone = new Set(removed.map((item) => item.id));
+    // A side chat of a removed chat stops with it: its answer has no chat to go to.
+    for (const id of gone) dropSide(id);
     // Forks of a removed chat move up to the nearest parent that stays.
     const survivingParent = (id: string | undefined): string | undefined => {
         let parent = id;
