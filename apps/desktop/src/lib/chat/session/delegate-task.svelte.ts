@@ -53,6 +53,7 @@ import {
     modelLabel,
 } from '../../agents/models.svelte';
 import { logFlow } from '../../tasks/flow-log';
+import { WORKTREE_RULE } from '../../tasks/worktree';
 import { inTauri } from '../../app/platform/history';
 import { startPageMemoryBridge } from '../../browser/page-memory-bridge';
 import {
@@ -483,6 +484,23 @@ async function makeWorkerWorktree(
     });
 }
 
+/** Calls whose worktree is still being made, by their chat. A stop of that chat cancels the worker (see endWaitingTasks). */
+const preparingWorktrees = new SvelteSet<{
+    caller: string;
+    cancelled: boolean;
+}>();
+
+/** Removes a worktree made for a call that never started its worker. Best effort: a folder that stays is listed by the repository. */
+function discardWorktree(root: string | null, info: WorktreeInfo) {
+    if (!root) return;
+    void invoke('worktree_remove', {
+        root,
+        path: info.path,
+        branch: info.branch,
+        force: true,
+    }).catch(() => undefined);
+}
+
 function startTask(
     call: DelegateCall,
     answer: (text: string, isError?: boolean) => void,
@@ -502,7 +520,14 @@ function startTask(
         worktree: isolated,
     } = parsed.args;
     const caller = callerOf(call.caller);
-    const reply = answer;
+    // A worktree made for this call is removed again when the call ends in an error: no worker will ever use it.
+    const reply =
+        prepared && caller
+            ? (text: string, isError?: boolean) => {
+                  if (isError) discardWorktree(sessionCwd(caller), prepared);
+                  answer(text, isError);
+              }
+            : answer;
     if (!caller)
         return reply(
             'AgentDeck could not tell which chat is calling. Do the task yourself, or ask the user to run it from the chat.',
@@ -514,22 +539,6 @@ function startTask(
             'side chats cannot delegate: answer the question yourself, read-only.',
             true,
         );
-    if (isolated && !prepared) {
-        if (continueId)
-            return reply(
-                'isolation worktree cannot be used with continue: a reused chat keeps its folder. Start a new task instead.',
-                true,
-            );
-        void makeWorkerWorktree(caller, parsed.args.task)
-            .then((info) => startTask(call, reply, info))
-            .catch((error: unknown) =>
-                reply(
-                    `Could not create a worktree: ${String(error)}. Run the task with isolation shared, or fix the repository.`,
-                    true,
-                ),
-            );
-        return;
-    }
     if (taskDepth(caller.id) >= MAX_DELEGATION_DEPTH)
         return reply(
             `Delegation depth is limited to ${MAX_DELEGATION_DEPTH} levels. Finish this task yourself and report back.`,
@@ -555,6 +564,40 @@ function startTask(
                 `depends_on=${dependencyId} is unknown: use a task_id returned by delegate_task.`,
                 true,
             );
+    }
+    // The worktree is made only once the call is known to be valid, so a refused call leaves no folder or branch behind.
+    // The call then runs again with the worktree in hand (prepared), and discards it if it still fails.
+    if (isolated && !prepared) {
+        if (continueId)
+            return reply(
+                'isolation worktree cannot be used with continue: a reused chat keeps its folder. Start a new task instead.',
+                true,
+            );
+        // While the worktree is made the call is not a task yet: a stop of its chat in the meantime cancels it (endWaitingTasks).
+        const pending = { caller: caller.id, cancelled: false };
+        preparingWorktrees.add(pending);
+        const root = sessionCwd(caller);
+        void makeWorkerWorktree(caller, parsed.args.task).then(
+            (info) => {
+                preparingWorktrees.delete(pending);
+                if (pending.cancelled) {
+                    discardWorktree(root, info);
+                    return reply(
+                        'the chat was stopped before its worker started, so no worker was made',
+                        true,
+                    );
+                }
+                return startTask(call, reply, info);
+            },
+            (error: unknown) => {
+                preparingWorktrees.delete(pending);
+                return reply(
+                    `Could not create a worktree: ${String(error)}. Run the task with isolation shared, or fix the repository.`,
+                    true,
+                );
+            },
+        );
+        return;
     }
     // `continue`: reuse an idle worker chat (found by task id or chat id) instead of creating a new one.
     let reuse: { session: SessionItem; record?: TaskRecord } | undefined;
@@ -811,7 +854,7 @@ function startTask(
     );
     const brief = reuse
         ? `${FOLLOW_UP_PREFACE} ${REPORT_RULE} ${languageRule}`
-        : `You were asked by another agent (${agentLabel(caller.agent, caller.model)}), who is working for the user in this project, to do the task below on your own. Answer fully, as you would for the user. ${REPORT_RULE} ${languageRule}`;
+        : `You were asked by another agent (${agentLabel(caller.agent, caller.model)}), who is working for the user in this project, to do the task below on your own. Answer fully, as you would for the user. ${REPORT_RULE} ${languageRule}${isolated ? ` ${WORKTREE_RULE}` : ''}`;
     // At most MAX_PARALLEL_WORKERS run at once (delegate.rs keeps the line); explicit dependencies add another gate.
     run.start = () => {
         const record = delegateTasks[taskId];
@@ -1582,6 +1625,10 @@ export function noteWorkerRecovering(childId: string, reason: string) {
  * `stopped`: the user stopped the caller, so the tasks end as stopped by the chat (no report).
  */
 export function endWaitingTasks(callerId: string, stopped = false) {
+    // A worktree still being made for this chat's call: a stop cancels its worker (see startTask).
+    if (stopped)
+        for (const pending of preparingWorktrees)
+            if (pending.caller === callerId) pending.cancelled = true;
     for (const record of Object.values(delegateTasks)) {
         if (
             record.caller === callerId &&

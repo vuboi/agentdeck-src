@@ -77,23 +77,51 @@ fn exclude_worktree_dir(top: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The branch name `base` stands for. `HEAD` becomes the branch it names, or the commit when detached, so the
+/// stored base still means the same branch when it is read again later.
+fn resolve_base(top: &Path, base: &str) -> Result<String, String> {
+    if base != "HEAD" {
+        return Ok(base.to_string());
+    }
+    let name = git_ok(top, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let name = String::from_utf8_lossy(&name).trim().to_string();
+    if name != "HEAD" && !name.is_empty() {
+        return Ok(name);
+    }
+    let sha = git_ok(top, &["rev-parse", "HEAD"])?;
+    Ok(String::from_utf8_lossy(&sha).trim().to_string())
+}
+
+/// A path as the user and git show it: no `\\?\` prefix, one separator style (`\` on Windows).
+fn plain_path(path: &Path) -> String {
+    let text = ag_adapters::agent::runner::without_verbatim(path)
+        .to_string_lossy()
+        .to_string();
+    if cfg!(windows) {
+        text.replace('/', "\\")
+    } else {
+        text
+    }
+}
+
 /// Creates a worktree on a new branch from `base`. Returns its path and branch.
 pub fn create(root: &str, slug: &str, base: &str) -> Result<WorktreeInfo, String> {
     let slug = checked_slug(slug)?;
     let top = toplevel(root)?;
     exclude_worktree_dir(&top)?;
+    let base = resolve_base(&top, base)?;
     let name = unique_name(slug);
     let branch = format!("agentdeck/{name}");
     let path = top.join(DIR).join(&name);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let path_text = path.to_string_lossy().to_string();
-    git_ok(&top, &["worktree", "add", "-b", &branch, &path_text, base])?;
+    let path_text = plain_path(&path);
+    git_ok(&top, &["worktree", "add", "-b", &branch, &path_text, &base])?;
     Ok(WorktreeInfo {
         path: path_text,
         branch,
-        base: base.to_string(),
+        base,
     })
 }
 
@@ -139,10 +167,24 @@ pub fn list(root: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// Merges the worktree's branch into the branch checked out at `root`. Refuses when `root` has local changes.
-/// A conflict aborts the merge and returns git's message; nothing is resolved automatically.
-pub fn merge(root: &str, branch: &str) -> Result<(), String> {
+/// Commits everything in a worktree (the worker's uncommitted files) with `message`. Fails when there is nothing to commit.
+pub fn commit(path: &str, message: &str) -> Result<(), String> {
+    let dir = Path::new(path);
+    git_ok(dir, &["add", "-A"])?;
+    git_ok(dir, &["commit", "-qm", message]).map(|_| ())
+}
+
+/// Merges the worktree's branch into `base`, which must be the branch checked out at `root`. Refuses when `root` is on another
+/// branch or has local changes. A conflict aborts the merge and returns git's message; nothing is resolved automatically.
+pub fn merge(root: &str, branch: &str, base: &str) -> Result<(), String> {
     let top = toplevel(root)?;
+    let head = git_ok(&top, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let head = String::from_utf8_lossy(&head).trim().to_string();
+    if head != base {
+        return Err(format!(
+            "the main checkout is on {head}, not {base}: check out {base} before merging"
+        ));
+    }
     let dirty = git_ok(&top, &["status", "--porcelain"])?;
     if !dirty.is_empty() {
         return Err(
@@ -161,9 +203,27 @@ pub fn merge(root: &str, branch: &str) -> Result<(), String> {
     })
 }
 
+/// Only a folder under `<repo>/.agentdeck/worktrees/` and a branch named `agentdeck/...` may be removed. Anything else
+/// (the main checkout, a user's own worktree, `main`) is refused before git touches it.
+fn guard_removal(top: &Path, path: &str, branch: &str) -> Result<(), String> {
+    if !branch.starts_with("agentdeck/") {
+        return Err(format!(
+            "refusing to remove branch {branch}: only agentdeck/ branches are removed"
+        ));
+    }
+    let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    let folder = format!("{}/", norm(&top.join(DIR).to_string_lossy()));
+    let target = norm(path);
+    if target.contains("/../") || !target.starts_with(&folder) {
+        return Err(format!("refusing to remove {path}: it is not under {DIR}"));
+    }
+    Ok(())
+}
+
 /// Removes a worktree. Refuses local changes unless `force`. The branch is deleted only when merged, unless `force`.
 pub fn remove(root: &str, path: &str, branch: &str, force: bool) -> Result<(), String> {
     let top = toplevel(root)?;
+    guard_removal(&top, path, branch)?;
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
@@ -202,8 +262,13 @@ pub async fn worktree_list(root: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub async fn worktree_merge(root: String, branch: String) -> Result<(), String> {
-    blocking(move || merge(&root, &branch)).await
+pub async fn worktree_merge(root: String, branch: String, base: String) -> Result<(), String> {
+    blocking(move || merge(&root, &branch, &base)).await
+}
+
+#[tauri::command]
+pub async fn worktree_commit(path: String, message: String) -> Result<(), String> {
+    blocking(move || commit(&path, &message)).await
 }
 
 #[tauri::command]
@@ -223,7 +288,6 @@ mod tests {
     fn repo() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("agentdeck-wt-{}", unique_name("t")));
         std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.to_string_lossy().to_string();
         git_ok(&dir, &["init", "-q", "-b", "main"]).unwrap();
         std::fs::write(dir.join("a.txt"), "one\n").unwrap();
         git_ok(&dir, &["add", "."]).unwrap();
@@ -240,7 +304,6 @@ mod tests {
             ],
         )
         .unwrap();
-        let _ = p;
         dir
     }
 
@@ -306,10 +369,10 @@ mod tests {
 
         // Merge refuses while the main checkout is dirty.
         std::fs::write(root.join("dirty.txt"), "x").unwrap();
-        assert!(merge(&r, &wt.branch).is_err());
+        assert!(merge(&r, &wt.branch, "main").is_err());
         std::fs::remove_file(root.join("dirty.txt")).unwrap();
 
-        merge(&r, &wt.branch).unwrap();
+        merge(&r, &wt.branch, "main").unwrap();
         assert!(root.join("b.txt").exists());
 
         remove(&r, &wt.path, &wt.branch, false).unwrap();
@@ -334,6 +397,104 @@ mod tests {
     }
 
     #[test]
+    fn merge_refuses_unless_the_checkout_is_on_base() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let wt = create(&r, "onbase", "main").unwrap();
+        std::fs::write(Path::new(&wt.path).join("b.txt"), "two\n").unwrap();
+        commit_all(Path::new(&wt.path), "add b");
+        git_ok(&root, &["checkout", "-qb", "other"]).unwrap();
+        let err = merge(&r, &wt.branch, "main").unwrap_err();
+        assert!(err.contains("not main"), "{err}");
+        assert!(!root.join("b.txt").exists());
+        git_ok(&root, &["checkout", "-q", "main"]).unwrap();
+        merge(&r, &wt.branch, "main").unwrap();
+        assert!(root.join("b.txt").exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn commit_takes_the_worktree_changes_and_fails_when_there_are_none() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let wt = create(&r, "cm", "main").unwrap();
+        git_ok(Path::new(&wt.path), &["config", "user.name", "t"]).unwrap();
+        git_ok(Path::new(&wt.path), &["config", "user.email", "t@t"]).unwrap();
+        std::fs::write(Path::new(&wt.path).join("c.txt"), "3\n").unwrap();
+        commit(&wt.path, "worker: add c").unwrap();
+        assert_eq!(
+            status(&wt.path, "main").unwrap(),
+            WorktreeStatus {
+                dirty_files: 0,
+                ahead: 1,
+                behind: 0
+            }
+        );
+        assert!(commit(&wt.path, "nothing new").is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn remove_refuses_a_branch_that_is_not_an_agentdeck_branch() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let wt = create(&r, "guard", "main").unwrap();
+        // Forced removal of a worktree with a branch outside agentdeck/ is refused before anything is deleted.
+        let err = remove(&r, &wt.path, "main", true).unwrap_err();
+        assert!(err.contains("agentdeck/"), "{err}");
+        assert!(Path::new(&wt.path).join("a.txt").exists());
+        assert!(!git_ok(&root, &["branch", "--list", "main"])
+            .unwrap()
+            .is_empty());
+        remove(&r, &wt.path, &wt.branch, true).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn remove_refuses_a_worktree_outside_the_agentdeck_folder() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let outside = std::env::temp_dir().join(format!("agentdeck-wt-out-{}", unique_name("o")));
+        let outside_text = outside.to_string_lossy().to_string();
+        git_ok(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "agentdeck/outside",
+                &outside_text,
+                "main",
+            ],
+        )
+        .unwrap();
+        assert!(remove(&r, &outside_text, "agentdeck/outside", true).is_err());
+        assert!(
+            outside.join("a.txt").exists(),
+            "a folder outside .agentdeck is never removed"
+        );
+        git_ok(&root, &["worktree", "remove", "--force", &outside_text]).ok();
+        std::fs::remove_dir_all(&outside).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn create_records_the_base_branch_and_a_plain_path() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let wt = create(&r, "plain", "HEAD").unwrap();
+        // "HEAD" is resolved to the branch it names, so the stored base means the same thing later.
+        assert_eq!(wt.base, "main");
+        assert!(!wt.path.starts_with(r"\\?\"), "{}", wt.path);
+        if cfg!(windows) {
+            assert!(!wt.path.contains('/'), "{}", wt.path);
+        }
+        remove(&r, &wt.path, &wt.branch, false).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn conflicting_merge_is_aborted() {
         let root = repo();
         let r = root.to_string_lossy().to_string();
@@ -342,7 +503,7 @@ mod tests {
         commit_all(Path::new(&wt.path), "theirs");
         std::fs::write(root.join("a.txt"), "ours\n").unwrap();
         commit_all(&root, "ours");
-        assert!(merge(&r, &wt.branch).is_err());
+        assert!(merge(&r, &wt.branch, "main").is_err());
         // The merge was aborted: no MERGE_HEAD left, main still has its own content.
         assert!(!root.join(".git").join("MERGE_HEAD").exists());
         assert_eq!(

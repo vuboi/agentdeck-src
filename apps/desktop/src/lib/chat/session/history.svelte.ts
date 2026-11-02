@@ -20,6 +20,7 @@ import {
 } from '../content/command-images';
 import { archivedMessages, deleteArchivedMessages } from '../content/archive';
 import { samePath } from '../../files/paths';
+import { repoOfWorktreeFolder } from '../../tasks/worktree';
 import { CREDIT_PREFIX, baseModel } from '../../agents/credit-model';
 import { getPref, setPref, setPrefs } from '../../app/platform/prefs';
 
@@ -363,23 +364,25 @@ function applyHistory(all: HistorySession[]) {
                         (project) => project.id === existing.projectId,
                     )
                   : undefined;
+        // A worker run in its own worktree writes its transcript under that folder: the chat belongs to the repository.
+        const folder = repoOfWorktreeFolder(item.cwd);
         if (existingProject) {
             const project = keepProject(existingProject);
-            projectIds.set(item.cwd, project.id);
+            projectIds.set(folder, project.id);
             continue;
         }
         if (
             !item.is_project &&
-            !addedProjects.some((path) => samePath(path, item.cwd))
+            !addedProjects.some((path) => samePath(path, folder))
         )
             continue;
-        if (!projectIds.has(item.cwd)) {
+        if (!projectIds.has(folder)) {
             const project = keepProject({
-                id: `dir:${item.cwd}`,
-                name: item.cwd ? folderName(item.cwd) : 'Unknown',
-                path: item.cwd,
+                id: `dir:${folder}`,
+                name: folder ? folderName(folder) : 'Unknown',
+                path: folder,
             });
-            projectIds.set(item.cwd, project.id);
+            projectIds.set(folder, project.id);
         }
     }
     const sessions: SessionItem[] = found.map((item) => ({
@@ -398,9 +401,13 @@ function applyHistory(all: HistorySession[]) {
             (current.get(item.id)?.made
                 ? current.get(item.id)?.projectId
                 : undefined) ??
-            projectIds.get(item.cwd) ??
+            projectIds.get(repoOfWorktreeFolder(item.cwd)) ??
             NO_PROJECT,
         workingDirectory: item.cwd || undefined,
+        // The worktree of a worker is not in any transcript: keep the one AgentDeck made, or the chat loses its Merge.
+        ...(current.get(item.id)?.worktree
+            ? { worktree: current.get(item.id)?.worktree }
+            : {}),
         title: item.title,
         agent:
             mixed[item.id]?.agent ??

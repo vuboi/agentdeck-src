@@ -138,6 +138,11 @@ export function parseDelegateArgs(
         isolation !== 'worktree'
     )
         return { ok: false, error: 'isolation must be shared or worktree' };
+    if (isolation === 'worktree' && dependsOn.length > 0)
+        return {
+            ok: false,
+            error: "isolation worktree cannot be combined with depends_on: a worktree starts from its base branch and cannot see an earlier task's changes. Drop depends_on, or use isolation shared.",
+        };
     if (input.timeout_s !== undefined && input.timeout_s !== null) {
         const seconds =
             typeof input.timeout_s === 'number'

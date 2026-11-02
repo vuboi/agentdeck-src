@@ -92,6 +92,7 @@
         draftImages,
         drafts,
         projectOf,
+        sessionCwd,
         workspace,
     } from '../../chat/sessions.svelte';
     import { keepPicture, keepPictureUrl, pictureUrl } from '../../chat/agent';
@@ -169,7 +170,7 @@
     const projectPath = $derived(
         (() => {
             const session = activeSession();
-            return (session && projectOf(session)?.path) || '';
+            return (session && sessionCwd(session)) || '';
         })(),
     );
     let targets = $state<RunTarget[]>([]);

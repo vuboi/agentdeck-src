@@ -21,6 +21,7 @@
     import { shortCount, totalTokens, usd } from '../../chat/runs/usage';
     import { projectOf } from '../../chat/session/state.svelte';
     import type { Block } from '../../chat/mock';
+    import { mergeGate, mergeRootOf } from '../../tasks/worktree';
 
     // Delegated agents attached to a message, with their live state and links to their chats.
     let { blocks }: { blocks: Extract<Block, { kind: 'delegate' }>[] } =
@@ -64,15 +65,47 @@
     async function finishWorktree(childId: string, merge: boolean) {
         const session = workspace.sessions.find((item) => item.id === childId);
         const wt = session?.worktree;
-        const root = session ? projectOf(session)?.path : undefined;
-        if (!session || !wt || !root) return;
-        const ask = merge
-            ? `Merge ${wt.branch} into the project's checked-out branch, then remove its worktree?`
-            : `Discard worktree ${wt.branch} and its branch? Unmerged changes are lost.`;
-        if (!confirm(ask)) return;
+        const projectPath = session ? projectOf(session)?.path : undefined;
+        if (!session || !wt || !projectPath) return;
+        const root = mergeRootOf(
+            projectPath,
+            workspace.sessions.find((item) => item.id === session.parentId)
+                ?.worktree,
+            wt.base,
+        );
         try {
+            if (merge) {
+                // Uncommitted files stay out of the merge: offer a commit in the worktree instead, and merge on the next press.
+                const status = await invoke<{
+                    dirtyFiles: number;
+                    ahead: number;
+                }>('worktree_status', { path: wt.path, base: wt.base });
+                const gate = mergeGate(status);
+                if (!gate.ok) {
+                    if (
+                        gate.canCommit &&
+                        confirm(
+                            `${gate.message}. Commit them in the worktree now? The merge is not run; press Merge again after.`,
+                        )
+                    )
+                        await invoke('worktree_commit', {
+                            path: wt.path,
+                            message: 'worker: uncommitted changes',
+                        });
+                    else if (!gate.canCommit) alert(gate.message);
+                    return;
+                }
+            }
+            const ask = merge
+                ? `Merge ${wt.branch} into ${wt.base}, then remove its worktree?`
+                : `Discard worktree ${wt.branch} and its branch? Unmerged changes are lost.`;
+            if (!confirm(ask)) return;
             if (merge)
-                await invoke('worktree_merge', { root, branch: wt.branch });
+                await invoke('worktree_merge', {
+                    root,
+                    branch: wt.branch,
+                    base: wt.base,
+                });
             await invoke('worktree_remove', {
                 root,
                 path: wt.path,
@@ -169,6 +202,7 @@
             {@const settled = settledOf(block)}
             {@const jumpable = settled !== 'queued' && settled !== 'skipped'}
             {@const expanded = openRows[block.childId] ?? false}
+            {@const wt = worktreeOf(block.childId)}
             <div
                 class="group/row flex w-full items-stretch transition-colors hover:bg-muted/60 {i >
                 0
@@ -192,10 +226,9 @@
                     <span class="shrink-0 font-medium"
                         >{agentDisplayName(block.agent, block.model)}</span
                     >
-                    {#if worktreeOf(block.childId)}<span
+                    {#if wt}<span
                             class="shrink-0 rounded-full bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground"
-                            title={worktreeOf(block.childId)?.path}
-                            >{worktreeOf(block.childId)?.branch}</span
+                            title={wt.path}>{wt.branch}</span
                         >{/if}
                     <span class="min-w-0 flex-1 truncate text-muted-foreground"
                         >{lineOf(block.childId, settled) ||
@@ -241,7 +274,7 @@
                             >{queuedCount(block.childId)} waiting</span
                         >{/if}
                 </button>
-                {#if worktreeOf(block.childId)}
+                {#if wt}
                     <button
                         type="button"
                         class="shrink-0 cursor-pointer px-2 text-xs text-muted-foreground outline-none transition-colors hover:text-primary disabled:opacity-40"

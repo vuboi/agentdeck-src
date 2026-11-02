@@ -112,6 +112,35 @@ test('wait and timeout_s take what local models send', () => {
     assert.equal(args({ model: ' haiku ' }).args.model, 'haiku');
 });
 
+test('R5.4: a worktree worker cannot also wait for depends_on', () => {
+    // A worktree starts from the base branch, so it never sees an earlier task's changes: refuse the pair with a clear reason.
+    const refused = parseDelegateArgs({
+        agent: 'codex',
+        task: 'x',
+        isolation: 'worktree',
+        depends_on: ['t1'],
+    });
+    assert.equal(refused.ok, false);
+    assert.match(
+        refused.error,
+        /isolation worktree cannot be combined with depends_on/,
+    );
+    assert.equal(
+        parseDelegateArgs({ agent: 'codex', task: 'x', isolation: 'worktree' })
+            .ok,
+        true,
+    );
+    assert.equal(
+        parseDelegateArgs({
+            agent: 'codex',
+            task: 'x',
+            isolation: 'shared',
+            depends_on: ['t1'],
+        }).ok,
+        true,
+    );
+});
+
 // ---------- agents and models ----------
 
 const claude = [

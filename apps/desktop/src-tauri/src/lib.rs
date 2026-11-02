@@ -2642,6 +2642,7 @@ pub fn run() {
             worktree::worktree_status,
             worktree::worktree_list,
             worktree::worktree_merge,
+            worktree::worktree_commit,
             worktree::worktree_remove,
             changes::change_diff,
             changes::change_revert,
