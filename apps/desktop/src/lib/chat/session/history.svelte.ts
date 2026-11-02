@@ -5,6 +5,7 @@ import {
     fakeData,
     inTauri,
     type HistorySession,
+    type HistorySource,
     listHistory,
     type HistoryMessage,
     clock,
@@ -173,6 +174,16 @@ type SavedProviderState = Pick<
 > & {
     /** Every provider transcript that has belonged to this AgentDeck chat, including threads replaced by a model edit. */
     providerAliases?: string[];
+    /** The native files of this chat, when it has more than one: each is read and merged by time (see `readTranscript`). */
+    paths?: NativeFile[];
+};
+/** One provider history file of a chat. `updatedAt` and `messageCount` are its index row, which decides the cache. */
+export type NativeFile = {
+    source: HistorySource;
+    path: string;
+    nativeId: string;
+    updatedAt?: string;
+    messageCount?: number;
 };
 const mixed: Record<string, SavedProviderState> = {};
 let mixedHydrated = false;
@@ -564,6 +575,8 @@ export function rememberMixed(session: SessionItem) {
             ...current,
             providerAliases: providerAliasesOf(mixed[session.id] ?? current),
         }),
+        // The native files are read from the index, not from the session: saving the provider state keeps them.
+        ...(mixed[session.id]?.paths ? { paths: mixed[session.id].paths } : {}),
     };
     mixed[session.id] = saved;
     if (!mixedHydrated) pendingMixed.set(session.id, saved);
