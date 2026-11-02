@@ -4,6 +4,8 @@ rem bindgen include paths, so whisper-rs-sys gets a fresh bindings.rs.
 rem Usage: scripts\win-cargo.cmd check -p <package>
 rem Requires: VS 2022 BuildTools (C++ workload), LLVM at C:\Program Files\LLVM.
 setlocal EnableDelayedExpansion
+rem cmd truncates PATH at 8191 characters: keep the system folders at the front so they survive vcvars and tests.
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%PATH%"
 
 set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 if not exist "%VCVARS%" (

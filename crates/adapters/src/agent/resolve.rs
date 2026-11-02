@@ -195,6 +195,9 @@ static PATH_CACHE: PathCache = Mutex::new(None);
 type BinaryCache = Mutex<Vec<(String, Option<OsString>, Instant, PathBuf)>>;
 static BINARY_CACHE: BinaryCache = Mutex::new(Vec::new());
 
+/// Longest PATH handed to child processes (see build_augmented_path).
+const AUGMENTED_PATH_MAX: usize = 8000;
+
 fn build_augmented_path() -> Option<OsString> {
     let current = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
@@ -215,7 +218,7 @@ fn build_augmented_path() -> Option<OsString> {
         local.as_deref(),
         appdata.as_deref(),
     );
-    let mut dirs: Vec<PathBuf> = common
+    let dirs: Vec<PathBuf> = common
         .iter()
         .filter(|dir| {
             dir.join(if cfg!(windows) { "node.exe" } else { "node" })
@@ -223,9 +226,37 @@ fn build_augmented_path() -> Option<OsString> {
         })
         .cloned()
         .collect();
-    dirs.extend(common);
-    dirs.extend(current);
-    std::env::join_paths(dirs).ok()
+    // cmd.exe reads only the first 8191 characters of PATH. The system folders go first, so `cmd /C` can always find
+    // ping, where and friends; repeated folders are dropped to keep the value short.
+    let mut ordered: Vec<PathBuf> = Vec::new();
+    if cfg!(windows) {
+        if let Some(root) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("windir")) {
+            let root = PathBuf::from(root);
+            ordered.push(root.join("System32"));
+            ordered.push(root);
+        }
+    }
+    ordered.extend(dirs);
+    ordered.extend(common);
+    ordered.extend(current);
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<PathBuf> = ordered
+        .into_iter()
+        .filter(|dir| seen.insert(dir.to_string_lossy().to_lowercase()))
+        .collect();
+    // The whole value stays under cmd.exe's 8191-character PATH limit (and leaves room for the rest of the environment,
+    // which Windows caps at 32767 characters): the folders at the front win, the tail of the parent PATH is dropped.
+    let mut kept: Vec<PathBuf> = Vec::new();
+    let mut length = 0usize;
+    for dir in unique {
+        let next = dir.as_os_str().len() + 1;
+        if length + next > AUGMENTED_PATH_MAX {
+            break;
+        }
+        length += next;
+        kept.push(dir);
+    }
+    std::env::join_paths(kept).ok()
 }
 
 /// The PATH a login shell gives: what the user's terminal sees, which a GUI app on macOS and Linux does not inherit

@@ -7,6 +7,11 @@ import { enqueue, enqueueNext } from '../src/lib/chat/runs/queue.ts';
 import { applyAgentEvent } from '../src/lib/chat/agent-reply.ts';
 import { credentialScope } from '../src/lib/agents/credential-scope.ts';
 import { resolveBinding } from '../src/lib/chat/session/binding.ts';
+import { isLongRunningWork } from '../src/lib/chat/runs/run-lanes.ts';
+import {
+    endedByTask,
+    statusAfterResult,
+} from '../src/lib/chat/runs/activity-status.ts';
 
 const ts = createRequire(import.meta.url)('typescript');
 const providers = [
@@ -370,7 +375,12 @@ test('pending input and a busy lane keep background reports without polling or d
 });
 
 test('finishing a foreground lane settles only its own tools and request', async () => {
-    const api = await load('../runs/activity', { inTauri: () => false });
+    const api = await load('../runs/activity', {
+        inTauri: () => false,
+        isLongRunningWork,
+        endedByTask,
+        statusAfterResult,
+    });
     const call = {
         kind: 'tool_call',
         id: 'same-id',
@@ -412,7 +422,12 @@ test('finishing a foreground lane settles only its own tools and request', async
 });
 
 test('a provider result preserves background work until the later task completion', async () => {
-    const api = await load('../runs/activity', { inTauri: () => false });
+    const api = await load('../runs/activity', {
+        inTauri: () => false,
+        isLongRunningWork,
+        endedByTask,
+        statusAfterResult,
+    });
     api.trackActivity(
         'chat',
         '',
