@@ -53,6 +53,7 @@ import {
     modelLabel,
 } from '../../agents/models.svelte';
 import { logFlow } from '../../tasks/flow-log';
+import { WORKTREE_RULE } from '../../tasks/worktree';
 import { inTauri } from '../../app/platform/history';
 import { startPageMemoryBridge } from '../../browser/page-memory-bridge';
 import {
@@ -811,7 +812,7 @@ function startTask(
     );
     const brief = reuse
         ? `${FOLLOW_UP_PREFACE} ${REPORT_RULE} ${languageRule}`
-        : `You were asked by another agent (${agentLabel(caller.agent, caller.model)}), who is working for the user in this project, to do the task below on your own. Answer fully, as you would for the user. ${REPORT_RULE} ${languageRule}`;
+        : `You were asked by another agent (${agentLabel(caller.agent, caller.model)}), who is working for the user in this project, to do the task below on your own. Answer fully, as you would for the user. ${REPORT_RULE} ${languageRule}${isolated ? ` ${WORKTREE_RULE}` : ''}`;
     // At most MAX_PARALLEL_WORKERS run at once (delegate.rs keeps the line); explicit dependencies add another gate.
     run.start = () => {
         const record = delegateTasks[taskId];

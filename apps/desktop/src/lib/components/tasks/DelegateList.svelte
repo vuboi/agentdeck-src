@@ -21,6 +21,7 @@
     import { shortCount, totalTokens, usd } from '../../chat/runs/usage';
     import { projectOf } from '../../chat/session/state.svelte';
     import type { Block } from '../../chat/mock';
+    import { mergeGate, mergeRootOf } from '../../tasks/worktree';
 
     // Delegated agents attached to a message, with their live state and links to their chats.
     let { blocks }: { blocks: Extract<Block, { kind: 'delegate' }>[] } =
@@ -64,15 +65,47 @@
     async function finishWorktree(childId: string, merge: boolean) {
         const session = workspace.sessions.find((item) => item.id === childId);
         const wt = session?.worktree;
-        const root = session ? projectOf(session)?.path : undefined;
-        if (!session || !wt || !root) return;
-        const ask = merge
-            ? `Merge ${wt.branch} into the project's checked-out branch, then remove its worktree?`
-            : `Discard worktree ${wt.branch} and its branch? Unmerged changes are lost.`;
-        if (!confirm(ask)) return;
+        const projectPath = session ? projectOf(session)?.path : undefined;
+        if (!session || !wt || !projectPath) return;
+        const root = mergeRootOf(
+            projectPath,
+            workspace.sessions.find((item) => item.id === session.parentId)
+                ?.worktree,
+            wt.base,
+        );
         try {
+            if (merge) {
+                // Uncommitted files stay out of the merge: offer a commit in the worktree instead, and merge on the next press.
+                const status = await invoke<{
+                    dirtyFiles: number;
+                    ahead: number;
+                }>('worktree_status', { path: wt.path, base: wt.base });
+                const gate = mergeGate(status);
+                if (!gate.ok) {
+                    if (
+                        gate.canCommit &&
+                        confirm(
+                            `${gate.message}. Commit them in the worktree now? The merge is not run; press Merge again after.`,
+                        )
+                    )
+                        await invoke('worktree_commit', {
+                            path: wt.path,
+                            message: 'worker: uncommitted changes',
+                        });
+                    else if (!gate.canCommit) alert(gate.message);
+                    return;
+                }
+            }
+            const ask = merge
+                ? `Merge ${wt.branch} into ${wt.base}, then remove its worktree?`
+                : `Discard worktree ${wt.branch} and its branch? Unmerged changes are lost.`;
+            if (!confirm(ask)) return;
             if (merge)
-                await invoke('worktree_merge', { root, branch: wt.branch });
+                await invoke('worktree_merge', {
+                    root,
+                    branch: wt.branch,
+                    base: wt.base,
+                });
             await invoke('worktree_remove', {
                 root,
                 path: wt.path,
