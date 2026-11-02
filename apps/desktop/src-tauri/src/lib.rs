@@ -52,6 +52,7 @@ mod slash_commands;
 mod store;
 mod tts;
 mod voice;
+mod worktree;
 
 use ag_adapters::agent::antigravity::Antigravity;
 use ag_adapters::agent::commandcode::CommandCode;
@@ -769,7 +770,12 @@ async fn export_chat(
 ) -> Result<ag_adapters::history::ExportResult, String> {
     let roots = roots()?;
     tauri::async_runtime::spawn_blocking(move || {
-        tracing::info!(chat = %chat_id, ?target, "exporting chat to a CLI session");
+        flow_log::note(
+            "rust",
+            &chat_id,
+            "export",
+            "exporting chat to a CLI session",
+        );
         ag_adapters::history::export_chat(&roots, target, &chat)
     })
     .await
@@ -2632,6 +2638,11 @@ pub fn run() {
             tray_update_recent,
             history_list,
             changes::changes_list,
+            worktree::worktree_create,
+            worktree::worktree_status,
+            worktree::worktree_list,
+            worktree::worktree_merge,
+            worktree::worktree_remove,
             changes::change_diff,
             changes::change_revert,
             changes::change_revert_all,

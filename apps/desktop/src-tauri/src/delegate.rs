@@ -54,6 +54,7 @@ pub fn tool_defs() -> Vec<Value> {
                     "continue": { "type": "string", "description": "a task_id (e.g. t-ab12cd) or worker chat id of a worker that already answered and is idle: its chat is reused and `task` is sent to it as a follow-up. agent and model may then be left out" },
                     "model": { "type": "string", "description": "a model of that agent as listed by list_agents (a part of its name is enough); left out: the agent's usual one" },
                     "role": { "type": "string", "description": "the kind of work, as set in Settings > Tasks: read, research, plan, review, security, refactor, coding, write, text or logic. AgentDeck then sends the work to the first agent set for that role, so agent and model can be left out" },
+                    "isolation": { "type": "string", "enum": ["shared", "worktree"], "description": "worktree: the worker gets its own git worktree and branch from this chat's branch, so its file edits stay out of the main checkout until merged. Default shared." },
                     "task": { "type": "string", "description": "the self-contained task: goal, paths, constraints, what to report back" },
                     "wait": { "type": "boolean", "description": "true (default): wait for the report because the next step depends on it. false: run in the background and return a task_id now" },
                     "depends_on": { "type": ["string", "array"], "items": { "type": "string" }, "description": "task_id or task_ids that must finish successfully before this worker starts; use this for an explicit sequence" },
@@ -102,6 +103,8 @@ pub struct DelegateArgs {
     /// A task id or worker chat id whose chat is reused for a follow-up.
     pub continue_id: Option<String>,
     pub depends_on: Vec<String>,
+    /// Run the worker in its own git worktree and branch (`isolation: "worktree"`).
+    pub worktree: bool,
 }
 
 fn text_of(value: &Value) -> Option<String> {
@@ -173,6 +176,11 @@ pub fn parse_delegate(args: &Value) -> Result<DelegateArgs, String> {
             (seconds.round().max(0.0) as u64).clamp(MIN_TIMEOUT_S, MAX_TIMEOUT_S)
         }
     };
+    let worktree = match text_of(&args["isolation"]).as_deref() {
+        None | Some("shared") => false,
+        Some("worktree") => true,
+        Some(_) => return Err("isolation must be shared or worktree".into()),
+    };
     Ok(DelegateArgs {
         agent,
         model: text_of(&args["model"]),
@@ -182,6 +190,7 @@ pub fn parse_delegate(args: &Value) -> Result<DelegateArgs, String> {
         timeout_s,
         continue_id,
         depends_on,
+        worktree,
     })
 }
 
@@ -469,6 +478,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn isolation_is_shared_unless_worktree_is_asked() {
+        let base = json!({ "agent": "claude", "task": "fix export" });
+        assert!(!parse_delegate(&base).unwrap().worktree);
+        let mut w = base.clone();
+        w["isolation"] = json!("worktree");
+        assert!(parse_delegate(&w).unwrap().worktree);
+        let mut bad = base;
+        bad["isolation"] = json!("everywhere");
+        assert!(parse_delegate(&bad).is_err());
+    }
+
+    #[test]
     fn defaults_are_wait_and_thirty_minutes() {
         let parsed = parse_delegate(&json!({ "agent": " claude ", "task": " read the logs " }))
             .expect("valid");
@@ -483,6 +504,7 @@ mod tests {
                 timeout_s: 1800,
                 continue_id: None,
                 depends_on: vec![],
+                worktree: false,
             }
         );
     }

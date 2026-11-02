@@ -1,5 +1,6 @@
 <script lang="ts">
     import { slide } from 'svelte/transition';
+    import { invoke } from '@tauri-apps/api/core';
     import { ZIcon, ZShimmerText } from '@shival99/z-ui-svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
@@ -18,6 +19,7 @@
         workspace,
     } from '../../chat/sessions.svelte';
     import { shortCount, totalTokens, usd } from '../../chat/runs/usage';
+    import { projectOf } from '../../chat/session/state.svelte';
     import type { Block } from '../../chat/mock';
 
     // Delegated agents attached to a message, with their live state and links to their chats.
@@ -54,6 +56,33 @@
         if (state !== 'running') return '';
         void ticker.sec;
         return liveStats(childId, Date.now())?.last ?? '';
+    }
+    // A worker run in its own git worktree (isolation: worktree): its branch, and the two ways out of it.
+    const worktreeOf = (childId: string) =>
+        workspace.sessions.find((item) => item.id === childId)?.worktree;
+    /** Merges the worker's branch into the project's checked-out branch and removes its worktree, or discards both. Both ask first. */
+    async function finishWorktree(childId: string, merge: boolean) {
+        const session = workspace.sessions.find((item) => item.id === childId);
+        const wt = session?.worktree;
+        const root = session ? projectOf(session)?.path : undefined;
+        if (!session || !wt || !root) return;
+        const ask = merge
+            ? `Merge ${wt.branch} into the project's checked-out branch, then remove its worktree?`
+            : `Discard worktree ${wt.branch} and its branch? Unmerged changes are lost.`;
+        if (!confirm(ask)) return;
+        try {
+            if (merge)
+                await invoke('worktree_merge', { root, branch: wt.branch });
+            await invoke('worktree_remove', {
+                root,
+                path: wt.path,
+                branch: wt.branch,
+                force: !merge,
+            });
+            session.worktree = undefined;
+        } catch (error) {
+            alert(String(error));
+        }
     }
     // A row opens in place to show the delegated agent's run details.
     let openRows = $state<Record<string, boolean>>({});
@@ -163,6 +192,11 @@
                     <span class="shrink-0 font-medium"
                         >{agentDisplayName(block.agent, block.model)}</span
                     >
+                    {#if worktreeOf(block.childId)}<span
+                            class="shrink-0 rounded-full bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground"
+                            title={worktreeOf(block.childId)?.path}
+                            >{worktreeOf(block.childId)?.branch}</span
+                        >{/if}
                     <span class="min-w-0 flex-1 truncate text-muted-foreground"
                         >{lineOf(block.childId, settled) ||
                             modelLabel(block.model)}</span
@@ -207,6 +241,24 @@
                             >{queuedCount(block.childId)} waiting</span
                         >{/if}
                 </button>
+                {#if worktreeOf(block.childId)}
+                    <button
+                        type="button"
+                        class="shrink-0 cursor-pointer px-2 text-xs text-muted-foreground outline-none transition-colors hover:text-primary disabled:opacity-40"
+                        disabled={settled === 'running' || settled === 'queued'}
+                        title="Merge this worker's branch into the project and remove its worktree"
+                        onclick={() => finishWorktree(block.childId, true)}
+                        >Merge</button
+                    >
+                    <button
+                        type="button"
+                        class="shrink-0 cursor-pointer px-2 text-xs text-muted-foreground outline-none transition-colors hover:text-destructive disabled:opacity-40"
+                        disabled={settled === 'running' || settled === 'queued'}
+                        title="Discard this worker's worktree and branch"
+                        onclick={() => finishWorktree(block.childId, false)}
+                        >Discard</button
+                    >
+                {/if}
                 {#if settled === 'failed'}
                     <button
                         type="button"

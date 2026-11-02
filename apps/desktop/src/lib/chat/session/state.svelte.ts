@@ -55,6 +55,9 @@ type SavedContextSettings = {
 };
 
 export type Project = { id: string; name: string; path: string };
+/** A git worktree AgentDeck created for a chat: its folder, its branch and the branch it started from. */
+export type WorktreeInfo = { path: string; branch: string; base: string };
+
 export type SessionItem = {
     id: string;
     projectId: string;
@@ -69,6 +72,8 @@ export type SessionItem = {
     model: string;
     /** Git branch the session works on, if any. A conversation branch is `parentId`, not this. */
     gitBranch?: string;
+    /** Own git worktree for this chat (isolation: worktree). Its path is the working folder while it is set. */
+    worktree?: WorktreeInfo;
     status: Status;
     /** Set on a fork: the session it was forked from. */
     parentId?: string;
@@ -322,7 +327,10 @@ export const projectOf = (session: SessionItem) =>
 
 /** Working folder for a continued chat, independent of its sidebar classification. */
 export const sessionCwd = (session: SessionItem): string | null =>
-    projectOf(session)?.path || session.workingDirectory || null;
+    session.worktree?.path ||
+    projectOf(session)?.path ||
+    session.workingDirectory ||
+    null;
 
 export type Mention = {
     kind: 'session' | 'project' | 'ai' | 'workflow';
