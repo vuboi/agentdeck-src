@@ -5,7 +5,7 @@ import { btwQuestionOf } from '../src/lib/chat/session/btw-command.ts';
 import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
 
 /** A parent chat on `agent`, and the stubs `btw.svelte.ts` reaches through its imports. */
-async function setup(agent = 'claude', saved = {}) {
+async function setup(agent = 'claude', saved = {}, extra = {}) {
     const parent = {
         id: 'chat',
         agent,
@@ -28,11 +28,13 @@ async function setup(agent = 'claude', saved = {}) {
         send: (...args) => sent.push(args),
         stopTurn: (...args) => stops.push(args),
         askText: () => '',
+        messagesView: () => [],
         btwQuestionOf,
         getPref: async (key) => saved[key],
         setPref: async (key, value) => {
             saved[key] = value;
         },
+        ...extra,
     });
     return { api, workspace, chatTurnOptions, sent, stops, saved };
 }
@@ -168,4 +170,24 @@ test('R4.4: the transcript of a closed side chat is ignored by history, also aft
     const later = await setup('claude', { ...saved });
     await later.api.btwIgnoredReady;
     assert.equal(later.api.isBtwTranscript(key), true);
+});
+
+test('R4.5: the /btw snapshot reads the parent through messagesView, not only localMessages', async () => {
+    const parentMessages = [
+        { role: 'user', blocks: [], text: 'earlier question' },
+        { role: 'assistant', blocks: [], text: 'earlier answer' },
+    ];
+    const { api, sent } = await setup(
+        'claude',
+        {},
+        {
+            // The chat's messages live in messagesById while it is open; localMessages is empty.
+            messagesView: (id) => (id === 'chat' ? parentMessages : []),
+            askText: (message) => message.text,
+        },
+    );
+    api.askBtw('chat', 'and now?');
+    const prompt = sent[0][1];
+    assert.match(prompt, /User: earlier question/);
+    assert.match(prompt, /Assistant: earlier answer/);
 });

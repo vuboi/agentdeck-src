@@ -1,7 +1,7 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { workspace, localMessages, type SessionItem } from './state.svelte';
 import { send } from './sending.svelte';
-import { askText } from './run.svelte';
+import { askText, messagesView } from './run.svelte';
 import { chatTurnOptions, stopTurn } from './turns.svelte';
 import { getPref, setPref } from '../../app/platform/prefs';
 
@@ -54,7 +54,7 @@ const CONTEXT_CHARS = 12000;
 /** The parent chat so far as text, newest last, within the budget. Turns still streaming are left out. */
 export function snapshotOf(parentId: string): string {
     const lines: string[] = [];
-    for (const message of localMessages[parentId] ?? []) {
+    for (const message of messagesView(parentId)) {
         if (
             message.blocks.some(
                 (block) => 'streaming' in block && block.streaming,
