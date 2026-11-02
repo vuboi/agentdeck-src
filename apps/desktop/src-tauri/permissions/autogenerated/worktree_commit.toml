@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-worktree-commit"
+description = "Enables the worktree_commit command without any pre-configured scope."
+commands.allow = ["worktree_commit"]
+
+[[permission]]
+identifier = "deny-worktree-commit"
+description = "Denies the worktree_commit command without any pre-configured scope."
+commands.deny = ["worktree_commit"]
