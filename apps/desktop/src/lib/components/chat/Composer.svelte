@@ -2,6 +2,8 @@
     import RunActionButton from './RunActionButton.svelte';
     import ProjectBar from '../layout/ProjectBar.svelte';
     import { onMount, untrack } from 'svelte';
+    import { askBtw } from '../../chat/session/btw.svelte';
+    import { btwQuestionOf } from '../../chat/session/btw-command';
     import { getPref, setPref } from '../../app/platform/prefs';
     import {
         ZButton,
@@ -1000,6 +1002,16 @@
 
     function submit(whileRunning: 'queue' | 'next' | 'interrupt' = 'queue') {
         if (!hasInput) return;
+        // `/btw` asks a side question in its own chat: this chat's run and queue are not touched.
+        const question = btwQuestionOf(draft);
+        if (question !== null) {
+            if (question) askBtw(sessionId, question);
+            setDraft('', { sent: true });
+            setMentions([]);
+            setImages([]);
+            setFiles([]);
+            return;
+        }
         delete manuallyStopped[sessionId];
         sendMessage(draft, images, elements, mentions, whileRunning, attached);
         draftElements[sessionId] = [];
