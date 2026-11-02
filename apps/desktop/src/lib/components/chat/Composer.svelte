@@ -1005,7 +1005,10 @@
         // `/btw` asks a side question in its own chat: this chat's run and queue are not touched.
         const question = btwQuestionOf(draft);
         if (question !== null) {
-            if (question) askBtw(sessionId, question);
+            if (question) {
+                const asked = askBtw(sessionId, question);
+                if (!asked.ok) toast.error(asked.error);
+            }
             setDraft('', { sent: true });
             setMentions([]);
             setImages([]);

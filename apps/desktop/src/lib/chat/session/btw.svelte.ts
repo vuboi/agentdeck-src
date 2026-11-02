@@ -1,6 +1,9 @@
+import { SvelteSet } from 'svelte/reactivity';
 import { workspace, localMessages, type SessionItem } from './state.svelte';
 import { send } from './sending.svelte';
-import { askText } from './run.svelte';
+import { askText, messagesView } from './run.svelte';
+import { chatTurnOptions, stopTurn } from './turns.svelte';
+import { getPref, setPref } from '../../app/platform/prefs';
 
 export { btwQuestionOf } from './btw-command';
 
@@ -8,14 +11,42 @@ export { btwQuestionOf } from './btw-command';
 export const sideOf = (parentId: string) =>
     workspace.sessions.find((item) => item.side?.parentId === parentId);
 
-/** Closes the side chat of a chat: it is removed from the app and never saved. */
+/**
+ * Transcripts (`claude:<session>`) of closed side chats. Claude Code keeps every session file it writes, so history
+ * would import these as chats of their own. Kept as a pref so the list survives a restart.
+ */
+const IGNORED_PREF = 'btw.ignored';
+const IGNORED_LIMIT = 200;
+const ignored = new SvelteSet<string>();
+export const btwIgnoredReady = getPref<string[]>(IGNORED_PREF).then(
+    (saved) => {
+        for (const key of saved ?? []) ignored.add(key);
+    },
+    () => {},
+);
+/** Whether a history item is the transcript of a closed side chat (its id, as history lists it). */
+export const isBtwTranscript = (historyId: string) => ignored.has(historyId);
+
+function ignoreTranscript(key: string) {
+    ignored.delete(key);
+    ignored.add(key);
+    while (ignored.size > IGNORED_LIMIT)
+        ignored.delete(ignored.values().next().value as string);
+    void btwIgnoredReady.then(() => setPref(IGNORED_PREF, [...ignored]));
+}
+
+/** Closes the side chat of a chat: its run is stopped, then it is removed from the app and never saved. */
 export function dropSide(parentId: string) {
     const side = sideOf(parentId);
     if (!side) return;
+    stopTurn(side.id, true);
+    if (side.agentSession)
+        ignoreTranscript(`${side.agent}:${side.agentSession}`);
     workspace.sessions = workspace.sessions.filter(
         (item) => item.id !== side.id,
     );
     delete localMessages[side.id];
+    delete chatTurnOptions[side.id];
 }
 
 const CONTEXT_CHARS = 12000;
@@ -23,7 +54,7 @@ const CONTEXT_CHARS = 12000;
 /** The parent chat so far as text, newest last, within the budget. Turns still streaming are left out. */
 export function snapshotOf(parentId: string): string {
     const lines: string[] = [];
-    for (const message of localMessages[parentId] ?? []) {
+    for (const message of messagesView(parentId)) {
         if (
             message.blocks.some(
                 (block) => 'streaming' in block && block.streaming,
@@ -46,13 +77,26 @@ export function snapshotOf(parentId: string): string {
 
 /**
  * Asks a side question about a chat. The side chat is its own session: the parent's run is not touched,
- * nothing enters its queue, and the side chat is never listed or saved.
+ * nothing enters its queue, and the side chat is never listed or saved. It runs in Claude's plan mode, which
+ * cannot edit files, so only a Claude chat can ask one.
  */
-export function askBtw(parentId: string, question: string) {
+export function askBtw(
+    parentId: string,
+    question: string,
+): { ok: true; side: SessionItem } | { ok: false; error: string } {
     const parent = workspace.sessions.find((item) => item.id === parentId);
-    if (!parent) return;
+    if (!parent) return { ok: false, error: 'This chat is no longer open.' };
+    if (parent.agent !== 'claude')
+        return {
+            ok: false,
+            error: '/btw is only available in Claude chats for now (it runs in read-only plan mode).',
+        };
     dropSide(parentId);
     const id = crypto.randomUUID();
+    chatTurnOptions[id] = {
+        permission: 'plan',
+        effort: chatTurnOptions[parentId]?.effort ?? 'medium',
+    };
     const side: SessionItem = {
         id,
         projectId: parent.projectId,
@@ -78,5 +122,5 @@ export function askBtw(parentId: string, question: string) {
         .filter(Boolean)
         .join('\n\n');
     send(id, prompt, [], []);
-    return side;
+    return { ok: true, side };
 }
