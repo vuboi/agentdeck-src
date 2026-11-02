@@ -36,17 +36,28 @@ async fn main() {
     for prompt in ["Reply only: ok", "Reply only: done"] {
         let sent = Instant::now();
         let (mut first, mut text) = (None, String::new());
-        drive_warm_turn(binary.clone(), &agy, &request(prompt, conversation.clone()), |event| match event {
-            AgentEvent::Delta { text: piece } => {
-                first.get_or_insert(sent.elapsed().as_millis());
-                text.push_str(&piece);
-            }
-            AgentEvent::Done { session_id, .. } => conversation = session_id.or(conversation.clone()),
-            AgentEvent::Error { message } => text = format!("ERROR {message}"),
-            _ => {}
-        })
+        drive_warm_turn(
+            binary.clone(),
+            &agy,
+            &request(prompt, conversation.clone()),
+            |event| match event {
+                AgentEvent::Delta { text: piece } => {
+                    first.get_or_insert(sent.elapsed().as_millis());
+                    text.push_str(&piece);
+                }
+                AgentEvent::Done { session_id, .. } => {
+                    conversation = session_id.or(conversation.clone())
+                }
+                AgentEvent::Error { message } => text = format!("ERROR {message}"),
+                _ => {}
+            },
+        )
         .await;
-        println!("turn {prompt:?}: {}ms, first text {}ms {text:?}", sent.elapsed().as_millis(), first.unwrap_or(0));
+        println!(
+            "turn {prompt:?}: {}ms, first text {}ms {text:?}",
+            sent.elapsed().as_millis(),
+            first.unwrap_or(0)
+        );
     }
     reset(None);
 }

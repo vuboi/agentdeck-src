@@ -23,6 +23,7 @@ import {
     isTaskId,
     workerLanguageRule,
     FOLLOW_UP_PREFACE,
+    RESTORED_LOST_NOTE,
 } from '../../tasks/delegate-task';
 import { getPref, setPref } from '../../app/platform/prefs';
 import {
@@ -168,7 +169,7 @@ void getPref<TaskRecord[]>(TASKS_KEY)
                           ? { reportState: 'failed' as const }
                           : {}),
                       endedAt: item.endedAt ?? Date.now(),
-                      note: 'Stopped: AgentDeck was closed or reloaded while it ran.',
+                      note: RESTORED_LOST_NOTE,
                   }
                 : item.reportState === 'running' ||
                     item.reportState === 'waiting'

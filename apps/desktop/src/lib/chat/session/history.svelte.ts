@@ -522,7 +522,8 @@ const SAVED_TAIL = PAGE_LIMIT;
 
 function providerAliasesOf(state: SavedProviderState): string[] {
     const aliases = new SvelteSet(state.providerAliases ?? []);
-    const first = state.source ?? state.agents?.[0] ?? state.agent;
+    const first =
+        state.firstAgent ?? state.source ?? state.agents?.[0] ?? state.agent;
     if (state.agentSession && first)
         aliases.add(`${first}:${state.agentSession}`);
     for (const [agent, ids] of Object.entries(state.agentIds ?? {}))

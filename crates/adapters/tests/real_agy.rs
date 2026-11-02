@@ -26,7 +26,13 @@ fn folder(name: &str) -> PathBuf {
     dir
 }
 
-fn request(chat: &str, prompt: &str, conversation: Option<&str>, mode: Option<&str>, cwd: &PathBuf) -> TurnRequest {
+fn request(
+    chat: &str,
+    prompt: &str,
+    conversation: Option<&str>,
+    mode: Option<&str>,
+    cwd: &std::path::Path,
+) -> TurnRequest {
     TurnRequest {
         prompt: prompt.into(),
         session_id: conversation.map(str::to_owned),
@@ -35,7 +41,7 @@ fn request(chat: &str, prompt: &str, conversation: Option<&str>, mode: Option<&s
         permission_mode: mode.map(str::to_owned),
         effort: None,
         allowed_tools: Vec::new(),
-        cwd: Some(cwd.clone()),
+        cwd: Some(cwd.to_path_buf()),
         owner: Some(chat.into()),
         api_key: None,
     }
@@ -46,11 +52,18 @@ async fn turn(req: TurnRequest, stop_after: Option<Duration>) -> Vec<AgentEvent>
     let provider = Antigravity::default();
     let binary = resolve_binary(&provider);
     let (handle, token) = StopHandle::new();
-    let token: StopToken = if stop_after.is_some() { token } else { StopToken::never() };
+    let token: StopToken = if stop_after.is_some() {
+        token
+    } else {
+        StopToken::never()
+    };
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&events);
     let run = async {
-        drive_warm_turn_with(binary, &provider as &dyn Provider, &req, token, |event| seen.lock().unwrap().push(event)).await
+        drive_warm_turn_with(binary, &provider as &dyn Provider, &req, token, |event| {
+            seen.lock().unwrap().push(event)
+        })
+        .await
     };
     let stopper = async {
         match stop_after {
@@ -66,7 +79,10 @@ async fn turn(req: TurnRequest, stop_after: Option<Duration>) -> Vec<AgentEvent>
         ran = tokio::time::timeout(TURN_LIMIT, run) => ran,
         () = stopper => unreachable!(),
     };
-    assert!(matches!(ran, Ok(true)), "the turn did not run to its end: {ran:?}");
+    assert!(
+        matches!(ran, Ok(true)),
+        "the turn did not run to its end: {ran:?}"
+    );
     let list = events.lock().unwrap().clone();
     list
 }
@@ -91,15 +107,37 @@ fn show(title: &str, events: &[AgentEvent]) {
 }
 
 fn answer(events: &[AgentEvent]) -> String {
-    events.iter().filter_map(|event| if let AgentEvent::Delta { text } = event { Some(text.as_str()) } else { None }).collect()
+    events
+        .iter()
+        .filter_map(|event| {
+            if let AgentEvent::Delta { text } = event {
+                Some(text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn conversation(events: &[AgentEvent]) -> Option<String> {
-    events.iter().find_map(|event| if let AgentEvent::Done { session_id: Some(id), .. } = event { Some(id.clone()) } else { None })
+    events.iter().find_map(|event| {
+        if let AgentEvent::Done {
+            session_id: Some(id),
+            ..
+        } = event
+        {
+            Some(id.clone())
+        } else {
+            None
+        }
+    })
 }
 
 fn dones(events: &[AgentEvent]) -> usize {
-    events.iter().filter(|event| matches!(event, AgentEvent::Done { .. })).count()
+    events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::Done { .. }))
+        .count()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -107,17 +145,40 @@ fn dones(events: &[AgentEvent]) -> usize {
 async fn real_agy_through_the_adapter() {
     // (1) A plain answer: deltas, one Done with the conversation id.
     let dir = folder("plain");
-    let first = turn(request("agy-plain", "Reply with only the word PONG.", None, None, &dir), None).await;
+    let first = turn(
+        request(
+            "agy-plain",
+            "Reply with only the word PONG.",
+            None,
+            None,
+            &dir,
+        ),
+        None,
+    )
+    .await;
     show("1 plain", &first);
     assert!(answer(&first).contains("PONG"), "no answer");
     assert_eq!(dones(&first), 1);
     let id = conversation(&first).expect("the Done carries agy's conversation id");
 
     // (4) The next message of the chat reuses the kept process and the conversation: two clean turns, nothing merged.
-    let second = turn(request("agy-plain", "What word did I ask you to reply with before? Reply with only that word.", Some(&id), None, &dir), None).await;
+    let second = turn(
+        request(
+            "agy-plain",
+            "What word did I ask you to reply with before? Reply with only that word.",
+            Some(&id),
+            None,
+            &dir,
+        ),
+        None,
+    )
+    .await;
     show("4 second message on the same conversation", &second);
     assert_eq!(dones(&second), 1);
-    assert!(answer(&second).contains("PONG"), "the second turn lost the conversation");
+    assert!(
+        answer(&second).contains("PONG"),
+        "the second turn lost the conversation"
+    );
     assert!(!answer(&second).contains("PONGPONG"));
     reset(Some("antigravity"));
 
@@ -132,9 +193,18 @@ async fn real_agy_through_the_adapter() {
     let dir = folder("tools-yolo");
     let done = turn(request("agy-yolo", "Create a file named note.txt containing hello, then run the command `echo hi` and tell me what it printed.", None, Some("bypassPermissions"), &dir), None).await;
     show("2b tools, yolo", &done);
-    let calls = done.iter().filter(|event| matches!(event, AgentEvent::ToolCall { .. })).count();
-    let results = done.iter().filter(|event| matches!(event, AgentEvent::ToolResult { .. })).count();
-    assert!(calls > 0 && calls == results, "calls {calls} results {results}");
+    let calls = done
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::ToolCall { .. }))
+        .count();
+    let results = done
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::ToolResult { .. }))
+        .count();
+    assert!(
+        calls > 0 && calls == results,
+        "calls {calls} results {results}"
+    );
     assert!(dir.join("note.txt").exists(), "the file was not written");
     reset(Some("antigravity"));
 
@@ -142,11 +212,40 @@ async fn real_agy_through_the_adapter() {
     let dir = folder("subagent");
     let sub = turn(request("agy-sub", "Use a subagent (invoke_subagent) to compute 17*3. Relay its answer and reply with only the number.", None, Some("bypassPermissions"), &dir), None).await;
     show("3 sub-agent", &sub);
-    assert!(sub.iter().any(|event| matches!(event, AgentEvent::ToolCall { background: true, .. })), "the sub-agent call is not marked as background work");
-    assert!(sub.iter().any(|event| matches!(event, AgentEvent::Task { status: TaskStatus::Started, .. })));
-    assert!(sub.iter().any(|event| matches!(event, AgentEvent::Task { status: TaskStatus::Done, .. })));
-    assert!(answer(&sub).trim().ends_with("51"), "answer: {:?}", answer(&sub));
-    assert!(answer(&sub).trim().len() < 12, "the sub-agent's text leaked into the answer: {:?}", answer(&sub));
+    assert!(
+        sub.iter().any(|event| matches!(
+            event,
+            AgentEvent::ToolCall {
+                background: true,
+                ..
+            }
+        )),
+        "the sub-agent call is not marked as background work"
+    );
+    assert!(sub.iter().any(|event| matches!(
+        event,
+        AgentEvent::Task {
+            status: TaskStatus::Started,
+            ..
+        }
+    )));
+    assert!(sub.iter().any(|event| matches!(
+        event,
+        AgentEvent::Task {
+            status: TaskStatus::Done,
+            ..
+        }
+    )));
+    assert!(
+        answer(&sub).trim().ends_with("51"),
+        "answer: {:?}",
+        answer(&sub)
+    );
+    assert!(
+        answer(&sub).trim().len() < 12,
+        "the sub-agent's text leaked into the answer: {:?}",
+        answer(&sub)
+    );
     assert_eq!(dones(&sub), 1);
     reset(Some("antigravity"));
 
@@ -158,42 +257,102 @@ async fn real_agy_through_the_adapter() {
         "Start this as a BACKGROUND command and do not wait for it: `Start-Sleep -Seconds 20; Set-Content -Path '{}' -Value finished`. Then reply with only the word STARTED.",
         marker.display()
     );
-    let started = turn(request("agy-bg", &prompt, None, Some("bypassPermissions"), &dir), None).await;
+    let started = turn(
+        request("agy-bg", &prompt, None, Some("bypassPermissions"), &dir),
+        None,
+    )
+    .await;
     show("5a background command, process kept", &started);
     assert_eq!(dones(&started), 1);
     tokio::time::sleep(Duration::from_secs(30)).await;
-    println!("  job finished while the process stayed warm: {}", marker.exists());
+    println!(
+        "  job finished while the process stayed warm: {}",
+        marker.exists()
+    );
     reset(Some("antigravity"));
     let dropped_marker = dir.join("bg-dropped.txt");
     let prompt = format!(
         "Start this as a BACKGROUND command and do not wait for it: `Start-Sleep -Seconds 20; Set-Content -Path '{}' -Value finished`. Then reply with only the word STARTED.",
         dropped_marker.display()
     );
-    let started = turn(request("agy-bg2", &prompt, None, Some("bypassPermissions"), &dir), None).await;
+    let started = turn(
+        request("agy-bg2", &prompt, None, Some("bypassPermissions"), &dir),
+        None,
+    )
+    .await;
     assert_eq!(dones(&started), 1);
     reset(Some("antigravity"));
     tokio::time::sleep(Duration::from_secs(30)).await;
-    println!("  job finished after the process was dropped right away: {}", dropped_marker.exists());
+    println!(
+        "  job finished after the process was dropped right away: {}",
+        dropped_marker.exists()
+    );
 
     // (6) A stop mid-turn is a kill (agy has no interrupt message). What does the app get, and can the next message
     // continue the conversation?
     let dir = folder("stop");
-    let primed = turn(request("agy-stop", "Remember the secret word TULIP. Reply with only OK.", None, None, &dir), None).await;
+    let primed = turn(
+        request(
+            "agy-stop",
+            "Remember the secret word TULIP. Reply with only OK.",
+            None,
+            None,
+            &dir,
+        ),
+        None,
+    )
+    .await;
     let id = conversation(&primed).expect("a conversation id after the first turn");
-    let stopped = turn(request("agy-stop", "Run the command `Start-Sleep -Seconds 60` and then reply DONE.", Some(&id), Some("bypassPermissions"), &dir), Some(Duration::from_secs(8))).await;
+    let stopped = turn(
+        request(
+            "agy-stop",
+            "Run the command `Start-Sleep -Seconds 60` and then reply DONE.",
+            Some(&id),
+            Some("bypassPermissions"),
+            &dir,
+        ),
+        Some(Duration::from_secs(8)),
+    )
+    .await;
     show("6 stopped mid-turn", &stopped);
-    assert!(stopped.iter().any(|event| matches!(event, AgentEvent::Done { .. } | AgentEvent::Error { .. })), "a stop must end the turn with an event");
-    let after = turn(request("agy-stop", "What was the secret word? Reply with only the word.", Some(&id), None, &dir), None).await;
+    assert!(
+        stopped
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Done { .. } | AgentEvent::Error { .. })),
+        "a stop must end the turn with an event"
+    );
+    let after = turn(
+        request(
+            "agy-stop",
+            "What was the secret word? Reply with only the word.",
+            Some(&id),
+            None,
+            &dir,
+        ),
+        None,
+    )
+    .await;
     show("6 the message after the stop", &after);
-    println!("  conversation survived the kill: {}", answer(&after).to_uppercase().contains("TULIP"));
+    println!(
+        "  conversation survived the kill: {}",
+        answer(&after).to_uppercase().contains("TULIP")
+    );
     reset(Some("antigravity"));
 
     // (7) A kept process idles for 60 s and still takes the next turn.
     let dir = folder("idle");
-    let one = turn(request("agy-idle", "Reply with only ONE.", None, None, &dir), None).await;
+    let one = turn(
+        request("agy-idle", "Reply with only ONE.", None, None, &dir),
+        None,
+    )
+    .await;
     let id = conversation(&one).expect("a conversation id");
     tokio::time::sleep(Duration::from_secs(60)).await;
-    let two = turn(request("agy-idle", "Reply with only TWO.", Some(&id), None, &dir), None).await;
+    let two = turn(
+        request("agy-idle", "Reply with only TWO.", Some(&id), None, &dir),
+        None,
+    )
+    .await;
     show("7 after 60 s idle", &two);
     assert!(answer(&two).contains("TWO"));
     reset(Some("antigravity"));
