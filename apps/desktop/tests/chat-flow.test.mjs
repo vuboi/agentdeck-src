@@ -36,6 +36,7 @@ async function delegateWith({
         projectId: 'project',
     };
     const sent = [];
+    const replies = [];
     const api = await load('delegate-task', {
         ...taskHelpers,
         elapsed: (ms) => `${ms} ms`,
@@ -53,14 +54,18 @@ async function delegateWith({
         sendNextQueued() {},
         handbackPrompt: () => 'handback',
         NO_HANDOUT: {},
-        replyDelegateCall: async () => delivered,
+        replyDelegateCall: async (...args) => {
+            replies.push(args);
+            return delivered;
+        },
         releaseWorkerSlot: async () => {},
         stopTurn() {},
+        failSessionWork() {},
         updateWorkflowWorker() {},
         settleWorkflowRun() {},
         taskWaiters: new Map(),
     });
-    return { api, sent };
+    return { api, sent, replies };
 }
 
 /** A running wait=true task of the chat, as startTask leaves it. */
@@ -115,13 +120,45 @@ test('R3.2: stopping the caller ends its wait task without any report to it', as
     assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
 });
 
-test('R3.2: a task aborted with its caller leaves no report in the backlog', async () => {
+// D-B (plan_next.md): a task that ends without a user stop (its connection lost, or its caller ended the turn normally)
+// still reports to its caller, through the backlog when nobody waits for the call any more.
+test('D-B: a task aborted when its caller ends its turn keeps its report in the caller backlog', async () => {
     const { api } = await delegateWith({ delivered: false });
     runningWaitTask(api);
     api.endWaitingTasks('chat', false);
     await settle();
     assert.equal(api.taskRuns.has('t1'), false, 'the task ended');
+    const held = api.backlog.get('chat') ?? [];
+    assert.equal(held.length, 1, 'exactly one report');
+    assert.equal(held[0].taskId, 't1');
+});
+
+test('D-B: the user stopping the task itself leaves no report anywhere', async () => {
+    const { api } = await delegateWith({ delivered: false });
+    runningWaitTask(api);
+    api.stopDelegateTask('t1');
+    await settle();
+    assert.equal(api.taskRuns.has('t1'), false, 'the task ended');
     assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
+});
+
+// N1.1: a timed-out task gives its caller one notice: the waiting call if it still waits, else the backlog.
+test('N1.1: a timed-out task answers its waiting call and adds nothing to the backlog', async () => {
+    const { api, replies } = await delegateWith({ delivered: true });
+    runningWaitTask(api);
+    api.finishTask('t1', 'timed out', 'timed out', '');
+    await settle();
+    assert.equal(replies.length, 1, 'one reply to the call');
+    assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
+});
+
+test('N1.1: a timed-out task whose call is gone leaves exactly one report in the backlog', async () => {
+    const { api, replies } = await delegateWith({ delivered: false });
+    runningWaitTask(api);
+    api.finishTask('t1', 'timed out', 'timed out', '');
+    await settle();
+    assert.equal(replies.length, 1, 'the reply was refused');
+    assert.equal(api.backlog.get('chat')?.length, 1, 'one notice, not two');
 });
 
 // ---------- R3.3: a picker change made during a turn applies when the chat's turns end ----------
@@ -135,12 +172,13 @@ async function eventsWith(pending) {
         status: 'idle',
         projectId: 'project',
     };
-    const calls = { persist: 0, cancelAutoSwitch: 0 };
+    const calls = { persist: 0, cancelAutoSwitch: 0, remember: 0 };
     const api = await load('events', {
         workspace: { activeId: 'chat', sessions: [session], projects: [] },
         pendingSwitch: pending,
         persistLocal: () => calls.persist++,
         cancelAutoSwitch: () => calls.cancelAutoSwitch++,
+        rememberMixed: () => calls.remember++,
         getPref: async () => null,
         setPref() {},
         logFlow() {},
@@ -276,5 +314,226 @@ test('R3.7: a reload drops the watchdog notes from the restored backlog and keep
     assert.deepEqual(
         api.backlog.get('chat').map((item) => item.taskId),
         ['t1'],
+    );
+});
+
+// ---------- R3.6 (D-A, plan_next.md): a saved model that is no longer offered blocks the send; it is never swapped ----------
+
+const { creditModel: realCreditModel } =
+    await import('../src/lib/agents/credit-model.ts');
+
+/** The turns module with the catalogue given: `chatModel`, `modelFor`, `effortFor` are the real ones. */
+async function loadTurns({ catalogue = {}, ready = {}, sessions = [] } = {}) {
+    return load('turns', {
+        getPref: async () => null,
+        setPref() {},
+        inTauri: () => false,
+        creditModel: realCreditModel,
+        MODELS: catalogue,
+        modelsReady: ready,
+        findModel: (agent, value) =>
+            (catalogue[agent] ?? []).find((item) => item.value === value),
+        customProviderName: () => undefined,
+        workspace: { activeId: null, sessions, projects: [] },
+    });
+}
+
+const claudeCatalogue = {
+    claude: [
+        { value: 'claude-opus-5-5', label: 'Opus 5.5' },
+        { value: 'claude-haiku-5-5', label: 'Haiku 5.5' },
+    ],
+};
+
+/** The run module, for startTurn and prewarmChat, with a chat and its catalogue. Records what reaches the CLI. */
+async function runWith(
+    session,
+    { catalogue = claudeCatalogue, ready = { claude: true } } = {},
+) {
+    const turns = await loadTurns({ catalogue, ready });
+    const calls = { custom: [], agent: [], prewarm: [] };
+    const localMessages = {};
+    const run = await load('run', {
+        accountEpochsLoaded: true,
+        accountEpochsReady: Promise.resolve(),
+        inTauri: () => true,
+        credentialBusy: () => false,
+        credentialScope: credentialScope,
+        isRunning: () => false,
+        workspace: { activeId: null, sessions: [session], projects: [] },
+        MODELS: catalogue,
+        modelsReady: ready,
+        chatModel: turns.chatModel,
+        modelFor: turns.modelFor,
+        effortFor: turns.effortFor,
+        firstAgentOf: turns.firstAgentOf,
+        messagesById: new Map(),
+        localMessages,
+        chat: { messages: [] },
+        mockMessages: [],
+        setMessages() {},
+        persistLocal() {},
+        nextId: () => 'id',
+        clock: () => '00:00',
+        SvelteDate: Date,
+        logFlow() {},
+        turnOptionsOf: () => ({ permission: 'ask', effort: 'medium' }),
+        PERMISSION_MODE: {},
+        approved: {},
+        sessionCwd: () => '/project',
+        liveModel: () => false,
+        accountEpoch: {},
+        sendCustomTurn: (args) => calls.custom.push(args),
+        sendAgentTurn: (args) => calls.agent.push(args),
+        prewarmAgent: async (args) => {
+            calls.prewarm.push(args);
+        },
+    });
+    return { run, turns, calls, localMessages };
+}
+
+test('R3.6: pickModel keeps a listed model, takes the first when none is saved, and names a missing one', async () => {
+    const turns = await loadTurns();
+    const list = [{ value: 'a' }, { value: 'b' }];
+    // The module runs in its own realm: results are compared as plain JSON.
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    assert.deepEqual(plain(turns.pickModel('b', list)), { model: 'b' });
+    assert.deepEqual(plain(turns.pickModel(undefined, list)), { model: 'a' });
+    assert.deepEqual(plain(turns.pickModel('gone', list)), { missing: 'gone' });
+    assert.deepEqual(plain(turns.pickModel('gone', [])), { missing: 'gone' });
+});
+
+test('R3.6: a listed saved model is what the chat runs on, and its effort is kept', async () => {
+    const session = { id: 'chat', agent: 'claude', model: 'claude-haiku-5-5' };
+    const { turns } = await runWith(session);
+    assert.deepEqual(JSON.parse(JSON.stringify(turns.chatModel(session))), {
+        model: 'claude-haiku-5-5',
+    });
+    assert.equal(turns.modelFor(session), 'claude-haiku-5-5');
+});
+
+test('R3.6: a chat whose saved model is gone is not sent: the chat says why, and no CLI is started', async () => {
+    const session = { id: 'chat', agent: 'claude', model: 'claude-removed-9' };
+    const { run, calls, localMessages } = await runWith(session);
+    run.startTurn(session, 'hello');
+    assert.equal(calls.agent.length, 0, 'sendAgentTurn was not called');
+    assert.equal(calls.custom.length, 0, 'sendCustomTurn was not called');
+    const said = localMessages.chat.at(-1);
+    assert.equal(said.role, 'assistant');
+    assert.equal(
+        said.blocks[0].text,
+        'The model claude-removed-9 is no longer available. Pick a model.',
+    );
+});
+
+test('R3.6: a chat whose saved model is gone is not prewarmed, and its effort is null', async () => {
+    const session = {
+        id: 'chat',
+        agent: 'claude',
+        firstAgent: 'claude',
+        model: 'claude-removed-9',
+    };
+    const { run, turns, calls } = await runWith(session);
+    run.prewarmChat('chat');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+        calls.prewarm.length,
+        0,
+        'no CLI is started for a missing model',
+    );
+    assert.equal(turns.effortFor(session), null);
+});
+
+test('R3.6: a custom provider deleted under a chat that used its model blocks the send', async () => {
+    const session = {
+        id: 'chat',
+        agent: 'custom',
+        model: 'custom|providerA::m1',
+    };
+    const { run, calls } = await runWith(session, {
+        catalogue: { custom: [{ value: 'custom|providerB::m2', label: 'm2' }] },
+        ready: { custom: true },
+    });
+    run.startTurn(session, 'hello');
+    assert.equal(calls.custom.length, 0, 'sendCustomTurn was not called');
+});
+
+// R3.3 (plan_next.md): the picker's route change is made in one place, applyPendingSwitch, at once or when the turn ends.
+
+test('R3.3: a route applied from the picker lists the agent the chat has had, and remembers the chat', async () => {
+    const pending = { chat: { agent: 'codex', model: 'gpt-next' } };
+    const { api, session, calls } = await eventsWith(pending);
+    api.applyPendingSwitch('chat');
+    // The module runs in its own realm: the list is compared as JSON.
+    assert.equal(JSON.stringify(session.agents), '["claude","codex"]');
+    assert.equal(calls.remember, 1, 'the chat is remembered with its agents');
+    assert.equal(session.agent, 'codex');
+});
+
+test('R3.3: a pick made during a retry applies when the retry is stopped', async () => {
+    const pending = { chat: { agent: 'codex', model: 'gpt-next' } };
+    const { api, session } = await eventsWith(pending);
+    api.stopOwedTurn('chat');
+    assert.equal(session.agent, 'codex');
+    assert.equal(session.model, 'gpt-next');
+    assert.equal(pending.chat, undefined, 'the pending pick is used up');
+});
+
+// R3.8 (plan_next.md): one rule for the chat's first agent, and for the conversation a turn forgets.
+
+test('R3.8: firstAgentOf names the agent of the first conversation, whichever field keeps it', async () => {
+    const turns = await loadTurns();
+    assert.equal(
+        turns.firstAgentOf({ agent: 'codex', firstAgent: 'claude' }),
+        'claude',
+    );
+    assert.equal(
+        turns.firstAgentOf({ agent: 'codex', source: 'claude' }),
+        'claude',
+    );
+    assert.equal(
+        turns.firstAgentOf({ agent: 'codex', agents: ['claude', 'codex'] }),
+        'claude',
+    );
+    assert.equal(turns.firstAgentOf({ agent: 'codex' }), 'codex');
+});
+
+test('R3.8: forgetUnstartedConversation keeps a started conversation and drops an unstarted one', async () => {
+    const session = {
+        id: 'chat',
+        agent: 'claude',
+        firstAgent: 'claude',
+        agentSession: 's1',
+        agentStarted: false,
+        agentIds: {
+            codex: { id: 'c1', started: false },
+            antigravity: { id: 'a1', started: true },
+        },
+    };
+    const turns = await loadTurns({ sessions: [session] });
+    turns.forgetUnstartedConversation('chat');
+    assert.equal(
+        session.agentSession,
+        undefined,
+        'the unstarted first conversation is forgotten',
+    );
+    assert.equal(session.agentStarted, false);
+
+    session.agentSession = 's2';
+    session.agentStarted = true;
+    turns.forgetUnstartedConversation('chat');
+    assert.equal(session.agentSession, 's2', 'a started conversation is kept');
+
+    turns.forgetUnstartedConversation('chat', 'codex');
+    assert.equal(
+        session.agentIds.codex,
+        undefined,
+        'an unstarted other conversation is dropped',
+    );
+    turns.forgetUnstartedConversation('chat', 'antigravity');
+    assert.equal(
+        session.agentIds.antigravity?.id,
+        'a1',
+        'a started other conversation is kept',
     );
 });

@@ -67,6 +67,7 @@ import {
     failSessionWork,
     hiddenPrompt,
     forgetUnstartedConversation,
+    firstAgentOf,
     isRunning,
     openServedPage,
     queued,
@@ -610,7 +611,8 @@ export function stopOwedTurn(sessionId: string) {
 
 /**
  * A picker change made while the chat's turn ran (D3) becomes the chat's route once its turns have ended. Called where
- * the turn ends for good, after the recovery has decided its route (a retry, a switch of account or of agent).
+ * the turn ends for good, after the recovery has decided its route (a retry, a switch of account or of agent). The picker
+ * calls it too, for a change made while no turn runs (Composer), so every route change goes through here (R3.3).
  */
 export function applyPendingSwitch(sessionId: string) {
     const pick = pendingSwitch[sessionId];
@@ -618,6 +620,17 @@ export function applyPendingSwitch(sessionId: string) {
     delete pendingSwitch[sessionId];
     const session = workspace.sessions.find((item) => item.id === sessionId);
     if (!session) return;
+    // A chat continued with another agent lists every agent it has had (the sidebar shows them stacked).
+    if (session.agent !== pick.agent && !session.draft) {
+        const agents = [
+            ...(session.agents ?? [session.source ?? session.agent]),
+            pick.agent,
+        ];
+        session.agents = agents.filter(
+            (agent, index) => agents.indexOf(agent) === index,
+        );
+        rememberMixed(session);
+    }
     session.agent = pick.agent;
     session.model = pick.model;
     persistLocal();
@@ -1494,12 +1507,7 @@ function handleEventNow(
         // Reset only the provider conversation that failed. A mixed chat's other provider ids remain valid.
         rememberMixed(session);
         const failedAgent = reply?.agent ?? session.agent;
-        const first =
-            session.firstAgent ??
-            session.source ??
-            session.agents?.[0] ??
-            session.agent;
-        if (failedAgent === first) {
+        if (failedAgent === firstAgentOf(session)) {
             session.agentStarted = false;
             session.agentSession = undefined;
         } else {
@@ -1644,11 +1652,7 @@ function handleEventNow(
     // A provider can announce an id before it has persisted anything resumable (Codex's thread.started is one
     // example). Keep that id for history mapping immediately, but mark it resumable only after a real conversation
     // event. Ctrl/Cmd+Enter can otherwise interrupt inside that gap and resume a rollout/session that does not exist.
-    const first =
-        session.firstAgent ??
-        session.source ??
-        session.agents?.[0] ??
-        session.agent;
+    const first = firstAgentOf(session);
     const agent = reply.agent ?? session.agent;
     const confirmsConversation =
         event.kind !== 'session' && event.kind !== 'error';
