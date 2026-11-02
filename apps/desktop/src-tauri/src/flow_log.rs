@@ -375,6 +375,7 @@ fn describe(event: &AgentEvent) -> (&'static str, String) {
                     TaskStatus::Progress => "progress",
                     TaskStatus::Done => "done",
                     TaskStatus::Failed => "failed",
+                    TaskStatus::Stopped => "stopped",
                 },
                 clip(label.as_deref().unwrap_or(""), 80)
             ),

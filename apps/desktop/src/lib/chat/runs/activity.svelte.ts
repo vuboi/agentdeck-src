@@ -622,7 +622,13 @@ export function trackActivity(
             if (event.summary) item.output = event.summary;
             return;
         }
-        item.status = event.status === 'failed' ? 'fail' : 'ok';
+        // A task stopped with its turn (or by the user) is stopped, not a success.
+        item.status =
+            event.status === 'failed'
+                ? 'fail'
+                : event.status === 'stopped'
+                  ? 'stopped'
+                  : 'ok';
         item.output = event.summary ?? item.output;
         item.endedAt = Date.now();
         record(item);

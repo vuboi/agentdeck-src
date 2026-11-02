@@ -40,6 +40,8 @@
         setFallback,
     } from '../../app/platform/automation.svelte';
     import { accountEpoch } from '../../chat/runs/account-epoch.svelte';
+    import { pendingSwitch } from '../../chat/session/turns.svelte';
+    import { credentialScope } from '../../agents/credential-scope';
     import SectionTitle from '../ui/SectionTitle.svelte';
 
     let {
@@ -211,19 +213,22 @@
     );
     // A model that does not take the chosen level falls back to its own default.
     $effect(() => {
-        void accountEpoch[agent];
+        void accountEpoch[credentialScope(agent)];
         const levels = efforts.map((item) => item.value);
         if (!levels.includes(effort))
             effort = (findModel(agent, model)?.defaultEffort ??
                 levels[Math.min(1, levels.length - 1)]) as Effort;
     });
-    $effect(() => {
-        void accountEpoch[agent];
-        if (!modelsReady[currentSource.provider]) return;
-        const available = currentSource.models();
-        if (available.length && !available.some((item) => item.value === model))
-            model = available[0].value;
-    });
+    // The chat's model is no longer offered (its provider was removed, turned off or signed out). The picker says so and
+    // waits for the user's pick: it no longer rewrites the chat to another provider's model (D9).
+    const unavailable = $derived(
+        Boolean(modelsReady[currentSource.provider]) &&
+            !currentSource.models().some((item) => item.value === model),
+    );
+    // A pick made while a turn runs applies when that turn ends (D3).
+    const pending = $derived(
+        workspace.activeId ? pendingSwitch[workspace.activeId] : undefined,
+    );
 
     // The approval modes every agent CLI offers in some form.
     const permissions: {
@@ -266,7 +271,9 @@
         },
     ];
 
-    const modelLabel = $derived(modelName(agent, model));
+    const modelLabel = $derived(
+        unavailable ? 'Provider unavailable' : modelName(agent, model),
+    );
     const effortLabel = $derived(
         efforts.find((item) => item.value === effort)?.label ?? effort,
     );
@@ -339,7 +346,7 @@
             >
             <span
                 class="hidden shrink-0 text-[13px] text-muted-foreground min-[720px]:inline"
-                >· {effortLabel}</span
+                >· {pending ? 'applies after this turn' : effortLabel}</span
             >
         {/if}
         {#if fast}<ZIcon

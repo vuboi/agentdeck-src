@@ -46,6 +46,7 @@
         manuallyStopped,
         turnOptions,
         chatTurnOptions,
+        pendingSwitch,
         workspace,
         type Agent,
         type Effort,
@@ -384,7 +385,7 @@
     // it lacks (agy would ignore it and ask for every command): fall back to asking, the one setting that always exists.
     $effect(() => {
         if (agent === 'antigravity') {
-            const switched = (accountEpoch.antigravity ?? 0) > 0;
+            const switched = (accountEpoch.agy ?? 0) > 0;
             void loadAgyModes(switched);
         }
     });
@@ -409,8 +410,13 @@
         pickerOf = sessionId;
         const saved = pickers[sessionId];
         if (saved) {
-            agent = saved.agent;
-            model = saved.model;
+            // The chat's own agent and model win: a pick that applied when its turn ended (D3) may not be saved yet.
+            const current = workspace.sessions.find(
+                (item) => item.id === sessionId,
+            );
+            const waiting = pendingSwitch[sessionId];
+            agent = waiting?.agent ?? current?.agent ?? saved.agent;
+            model = waiting?.model ?? current?.model ?? saved.model;
             effort = saved.effort;
             fast = saved.fast;
             permission = saved.permission;
@@ -440,6 +446,13 @@
 
     getPref<Record<string, Picker>>('composer.pickers').then((saved) => {
         pickers = saved ?? {};
+        // Every chat's permission and effort, not only the one on screen: a turn that runs in the background (a queued
+        // message, a recovery, a worker) reads its own chat's settings (D7).
+        for (const [id, picked] of Object.entries(pickers))
+            chatTurnOptions[id] ??= {
+                permission: picked.permission,
+                effort: picked.effort,
+            };
         pickersLoaded = true;
         if (workspace.activeId)
             untrack(() => applyPickerFor(workspace.activeId));
@@ -459,21 +472,38 @@
                 sessionId: id,
                 agent: next,
                 model: nextModel,
+                effort: nextEffort,
             } = (
                 event as CustomEvent<{
                     sessionId: string;
                     agent: Agent;
                     model: string;
+                    effort?: string;
                 }>
             ).detail;
-            const saved = pickers[id];
-            if (saved) {
-                pickers[id] = { ...saved, agent: next, model: nextModel };
+            // The fallback's effort comes with its model: it is applied to the picker and saved with the chat (D8).
+            const level = nextEffort as Effort | undefined;
+            // Saved only once the pickers have loaded: an earlier save would overwrite every chat's picker.
+            if (pickersLoaded) {
+                const saved = pickers[id];
+                pickers[id] = {
+                    ...(saved ?? {
+                        agent: next,
+                        model: nextModel,
+                        effort: level ?? 'medium',
+                        fast: true,
+                        permission: chatTurnOptions[id]?.permission ?? 'auto',
+                    }),
+                    agent: next,
+                    model: nextModel,
+                    ...(level ? { effort: level } : {}),
+                };
                 setPref('composer.pickers', pickers);
             }
             if (id === workspace.activeId) {
                 agent = next;
                 model = nextModel;
+                if (level) effort = level;
             }
         };
         window.addEventListener('agentdeck:agent-moved', moved);
@@ -487,9 +517,30 @@
         // Only the picker's own chat is saved: on a switch the fields still hold the previous chat (B8).
         if (!pickersLoaded || !id || pickerOf !== id) return;
         untrack(() => {
+            const session = workspace.sessions.find((item) => item.id === id);
+            // A chat whose turn runs keeps the route of that turn: a new agent or model waits for the turn to end (D3).
+            // The picker keeps the pick and shows that it applies after this turn (see ModelPicker).
+            const waits =
+                Boolean(session) &&
+                isRunning(id) &&
+                (session?.agent !== current.agent ||
+                    session?.model !== current.model);
+            if (waits && session) {
+                pendingSwitch[id] = {
+                    agent: current.agent,
+                    model: current.model,
+                };
+                pickers[id] = {
+                    ...current,
+                    agent: session.agent,
+                    model: session.model,
+                };
+                setPref('composer.pickers', pickers);
+                return;
+            }
+            delete pendingSwitch[id];
             pickers[id] = current;
             setPref('composer.pickers', pickers);
-            const session = workspace.sessions.find((item) => item.id === id);
             if (session) {
                 // A chat continued with another agent lists every agent it has had (the sidebar shows them stacked).
                 if (session.agent !== current.agent && !session.draft) {

@@ -8,6 +8,7 @@ import {
     rotateCredential,
     type CredentialAttempt,
 } from './credential-switch';
+import { customScope } from './credential-scope';
 import { inTauri } from '../app/platform/history';
 import { getPref, setPref } from '../app/platform/prefs';
 import { loadSecret, saveSecret } from '../app/platform/secrets';
@@ -985,10 +986,16 @@ export async function retrySaveAgyAccount(): Promise<boolean> {
 
 export async function switchAgyAccount(account: AgyAccount): Promise<boolean> {
     cancelCredentialRotations('agy');
-    const ok = await task('switch:agy', `Switching to ${account.email}`, () =>
-        exclusiveCredential('agy', () =>
-            call('antigravity_account_switch', { id: account.id }),
-        ),
+    // The epoch is bumped inside the task, before its busy state is released (see switchAccount).
+    const ok = await task(
+        'switch:agy',
+        `Switching to ${account.email}`,
+        async () => {
+            await exclusiveCredential('agy', () =>
+                call('antigravity_account_switch', { id: account.id }),
+            );
+            await accountSwitched('antigravity');
+        },
     );
     if (ok) {
         // The native switch already succeeded. Reflect it immediately so the account picker and quota footer do
@@ -997,7 +1004,6 @@ export async function switchAgyAccount(account: AgyAccount): Promise<boolean> {
             ...item,
             active: item.id === account.id,
         }));
-        accountSwitched('antigravity');
         toast.success(`Now using ${account.email}`);
         void Promise.all([
             refreshAgyAccounts(false, true),
@@ -1308,13 +1314,17 @@ export async function switchAccount(
     account: Account,
 ): Promise<boolean> {
     cancelCredentialRotations(provider);
+    // The epoch is bumped and the CLI kept for the old account is ended inside the task: the busy state is released only
+    // after that, so a send that waits for the switch never reaches the old CLI or the old epoch.
     const ok = await task(
         `switch:${provider}`,
         `Switching to ${account.email}`,
-        () =>
-            exclusiveCredential(provider, () =>
+        async () => {
+            await exclusiveCredential(provider, () =>
                 call('account_switch', { provider, id: account.id }),
-            ),
+            );
+            await accountSwitched(provider);
+        },
     );
     if (ok) {
         // The native switch already succeeded. Reflect it immediately so the account picker and quota footer do
@@ -1325,7 +1335,6 @@ export async function switchAccount(
                 ...item,
                 active: item.id === account.id,
             }));
-        accountSwitched(provider);
         toast.success(`Now using ${account.email}`);
         // A normal refresh is intentionally skipped here: its 60-second cache is for passive polling and would leave
         // the footer stale after a deliberate account switch. The forced read is independent of the switch result.
@@ -1393,7 +1402,7 @@ async function restoreConnectorAccount(
         }
         const active = connectors.accounts.agy.find((item) => item.active)?.id;
         if (active !== before) {
-            accountSwitched('antigravity');
+            await accountSwitched('antigravity');
             await refreshAccountModels('antigravity');
         }
         if (active !== id)
@@ -1418,7 +1427,7 @@ async function restoreConnectorAccount(
             (item) => item.active,
         )?.id;
         if (active !== before) {
-            accountSwitched(connector);
+            await accountSwitched(connector);
             await refreshAccountModels(connector);
         }
         if (active !== id)
@@ -1508,7 +1517,7 @@ async function switchConnectorCandidate(
                 ) {
                     connectors.agyQuota = quota;
                     connectors.accounts.agy = verifiedAccounts;
-                    accountSwitched('antigravity');
+                    await accountSwitched('antigravity');
                     await refreshAccountModels('antigravity');
                     void saveAccountCache();
                     void refreshDetect();
@@ -1599,7 +1608,7 @@ async function switchConnectorCandidate(
                 )
             ) {
                 connectors.accounts[provider] = verified;
-                accountSwitched(provider);
+                await accountSwitched(provider);
                 await refreshAccountModels(provider);
                 void saveAccountCache();
                 void refreshDetect();
@@ -2009,7 +2018,7 @@ export async function autoSwitchProviderKey(
     provider: CustomProvider,
     attempt: CredentialAttempt,
 ): Promise<{ label: string } | null> {
-    return rotateCredential(provider.id, attempt, (signal) => {
+    return rotateCredential(customScope(provider.id), attempt, (signal) => {
         const current = connectors.custom.find(
             (item) => item.id === provider.id,
         );
@@ -2081,6 +2090,13 @@ async function switchProviderCandidate(
                 // Not all provider endpoints expose key quota; the connection probe remains authoritative for auth.
             }
         }
+        // A key with no credit left is never the next key, whatever its model list says.
+        if (
+            quota?.remaining !== null &&
+            quota?.remaining !== undefined &&
+            quota.remaining <= 0
+        )
+            continue;
         if (
             quota?.remaining !== null &&
             quota?.remaining !== undefined &&
@@ -2134,7 +2150,7 @@ export async function scanLocal() {
 }
 
 export function saveProvider(provider: CustomProvider, automatic = false) {
-    if (!automatic) cancelCredentialRotations(provider.id);
+    if (!automatic) cancelCredentialRotations(customScope(provider.id));
     provider = normalizeCustomProvider(provider);
     const index = connectors.custom.findIndex(
         (item) => item.id === provider.id,
@@ -2144,7 +2160,7 @@ export function saveProvider(provider: CustomProvider, automatic = false) {
 }
 
 export function removeProvider(id: string) {
-    cancelCredentialRotations(id);
+    cancelCredentialRotations(customScope(id));
     const removed = connectors.custom.find((item) => item.id === id);
     for (const key of removed?.keys ?? [])
         forgetSecret(`provider-key:${key.id}`);

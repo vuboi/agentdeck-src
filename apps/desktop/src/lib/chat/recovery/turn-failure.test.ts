@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     classifyFailure,
+    credentialScopeOf,
     nextAgent,
     planRecovery,
+    waitUnlessAborted,
     type RecoveryInput,
 } from './turn-failure.ts';
 
@@ -151,4 +153,87 @@ test('the next agent wraps round the chain and skips the ones tried', () => {
         'claude',
     );
     assert.equal(nextAgent(['claude'], 'claude', ['claude']), undefined);
+});
+
+test('a missing conversation is its own kind and is started again at once', () => {
+    assert.equal(
+        classifyFailure('No conversation found with session ID: 3f2a'),
+        'conversation',
+    );
+    assert.equal(classifyFailure('rollout 019 not found'), 'conversation');
+    assert.deepEqual(planRecovery({ ...base, kind: 'conversation' }), {
+        action: 'retry',
+        delayMs: 0,
+    });
+    assert.equal(
+        planRecovery({ ...base, kind: 'conversation', retries: 1 }).action,
+        'fallback',
+    );
+});
+
+test('after a limit no route of the same credential is tried, only another provider', () => {
+    const chain = [
+        'claude|opus|low',
+        'claude|sonnet',
+        'claude|opus',
+        'codex|gpt',
+        'custom-one|m',
+    ];
+    const plan = planRecovery({
+        ...base,
+        kind: 'limit',
+        chain,
+        current: 'claude|opus',
+        tried: ['claude|opus'],
+    });
+    assert.deepEqual(plan, { action: 'fallback', agent: 'codex|gpt' });
+    assert.equal(credentialScopeOf('antigravity|x'), 'agy');
+    assert.equal(credentialScopeOf('custom-one|m'), 'custom-one');
+    assert.equal(
+        planRecovery({
+            ...base,
+            kind: 'auth',
+            chain: ['claude|opus', 'claude|sonnet'],
+            current: 'claude|opus',
+            tried: ['claude|opus'],
+        }).action,
+        'stop',
+    );
+});
+
+test('a passing fault may still try another model of the same provider', () => {
+    const plan = planRecovery({
+        ...base,
+        kind: 'transient',
+        retries: 2,
+        chain: ['claude|opus', 'claude|sonnet'],
+        current: 'claude|opus',
+        tried: ['claude|opus'],
+    });
+    assert.deepEqual(plan, { action: 'fallback', agent: 'claude|sonnet' });
+});
+
+test('a wait ends with true when time passes, and false at once when aborted', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const controller = new AbortController();
+    let done: boolean | undefined;
+    void waitUnlessAborted(3000, controller.signal).then(
+        (value) => (done = value),
+    );
+    t.mock.timers.tick(2999);
+    await Promise.resolve();
+    assert.equal(done, undefined);
+    t.mock.timers.tick(1);
+    await Promise.resolve();
+    assert.equal(done, true);
+
+    const stopped = new AbortController();
+    let after: boolean | undefined;
+    void waitUnlessAborted(12000, stopped.signal).then(
+        (value) => (after = value),
+    );
+    stopped.abort();
+    await Promise.resolve();
+    assert.equal(after, false);
+    t.mock.timers.reset();
 });

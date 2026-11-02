@@ -926,7 +926,9 @@ export function newSession(projectId = NO_PROJECT) {
         projectId,
         title: 'New session',
         agent: start.agent,
-        agentSession: uuid,
+        // Only Claude takes the id we choose. Codex and Copilot name their own conversation: it is stored when the
+        // provider confirms it (AgentEvent::Session), never the Claude uuid (D12). The `claude:` id stays the chat's.
+        agentSession: start.agent === 'claude' ? uuid : undefined,
         model: start.model,
         contextLimit: DEFAULT_CONTEXT_LIMIT,
         gitBranch: projectId === NO_PROJECT ? undefined : base?.gitBranch,

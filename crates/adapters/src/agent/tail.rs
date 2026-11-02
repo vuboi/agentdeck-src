@@ -10,7 +10,7 @@
 //! tail first (`stop`), which waits for an answer in progress and then parks the process for that message. A stop of the
 //! chat interrupts the tail's answer (`interrupt`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Duration;
@@ -22,7 +22,7 @@ use tokio::time::Instant;
 use super::interrupt;
 use super::stall::Watchdog;
 use super::warm::{park, Warm};
-use super::{AgentEvent, Provider};
+use super::{AgentEvent, Provider, TaskStatus};
 
 /// Where the tail's events go: the chat, the turn id of the answer, the event.
 pub type EventSink = Arc<dyn Fn(&str, &str, AgentEvent) + Send + Sync>;
@@ -240,6 +240,51 @@ fn is_content(event: &AgentEvent) -> bool {
     )
 }
 
+/// Holds an event until the answer starts. Full, the buffer keeps a task's end ahead of what it no longer needs: an end
+/// takes the place of the oldest progress held, or of an event that is not a task's end, and that is logged. Otherwise
+/// the new event is the one dropped, and that is logged too.
+fn hold(held: &mut Vec<AgentEvent>, event: AgentEvent, chat: &str) {
+    if held.len() < HELD {
+        held.push(event);
+        return;
+    }
+    let is_end = |event: &AgentEvent| {
+        matches!(
+            event,
+            AgentEvent::Task {
+                status: TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped,
+                ..
+            }
+        )
+    };
+    let is_progress = |event: &AgentEvent| {
+        matches!(
+            event,
+            AgentEvent::Task {
+                status: TaskStatus::Started | TaskStatus::Progress,
+                ..
+            }
+        )
+    };
+    let victim = held
+        .iter()
+        .position(is_progress)
+        .or_else(|| held.iter().position(|kept| !is_end(kept)));
+    match victim {
+        Some(at) if is_end(&event) => {
+            tracing::warn!(
+                chat,
+                "{HELD} events held for an answer; one was dropped to keep a task's end"
+            );
+            held[at] = event;
+        }
+        _ => tracing::warn!(
+            chat,
+            "{HELD} events held for an answer; a new one was dropped"
+        ),
+    }
+}
+
 enum Fate {
     Park,
     Drop,
@@ -259,6 +304,10 @@ async fn run(
     // The turn id of the answer in progress; empty while the CLI is silent.
     let mut turn = String::new();
     let mut held: Vec<AgentEvent> = Vec::new();
+    // The tasks the CLI has started and not ended, by id, with the call that started each: on park or drop they end.
+    let mut open: BTreeMap<String, Option<String>> = BTreeMap::new();
+    // The last turn of this tail, for the events sent after the answer has ended.
+    let mut last_turn = String::new();
     let mut stopping = false;
     // The CLI was asked to stop its answer (by the user, or because a message is waiting for the process).
     let mut asked = false;
@@ -338,9 +387,26 @@ async fn run(
                 event
             };
             let terminal = matches!(event, AgentEvent::Done { .. } | AgentEvent::Error { .. });
+            if let AgentEvent::Task {
+                id,
+                tool_use_id,
+                status,
+                ..
+            } = &event
+            {
+                match status {
+                    TaskStatus::Started | TaskStatus::Progress => {
+                        open.insert(id.clone(), tool_use_id.clone());
+                    }
+                    TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped => {
+                        open.remove(id);
+                    }
+                }
+            }
             if turn.is_empty() {
                 if is_content(&event) {
                     turn = format!("auto-{}", SERIAL.fetch_add(1, Ordering::Relaxed) + 1);
+                    last_turn.clone_from(&turn);
                     super::trace::note(&chat, "tail", format!("the CLI went on by itself: {turn}"));
                     sink(
                         &chat,
@@ -353,8 +419,8 @@ async fn run(
                         sink(&chat, &turn, earlier);
                     }
                     sink(&chat, &turn, event);
-                } else if held.len() < HELD {
-                    held.push(event);
+                } else {
+                    hold(&mut held, event, &chat);
                 }
             } else {
                 sink(&chat, &turn, event);
@@ -386,6 +452,32 @@ async fn run(
             }
         };
         sink(&chat, &turn, closing);
+    }
+    // Task events held for an answer that never came go out, and each task still open ends as stopped: the process
+    // is parked or gone, so nothing will end it, and its card would show it running for good.
+    let closing_turn = if turn.is_empty() {
+        last_turn.clone()
+    } else {
+        turn.clone()
+    };
+    for event in held.drain(..) {
+        if matches!(event, AgentEvent::Task { .. }) {
+            sink(&chat, &closing_turn, event);
+        }
+    }
+    for (id, tool_use_id) in std::mem::take(&mut open) {
+        sink(
+            &chat,
+            &closing_turn,
+            AgentEvent::Task {
+                id,
+                tool_use_id,
+                status: TaskStatus::Stopped,
+                label: None,
+                summary: None,
+                tools: None,
+            },
+        );
     }
     super::trace::note(
         &chat,
@@ -444,6 +536,36 @@ mod tests {
                 .unwrap()
                 .push((chat.to_owned(), turn.to_owned(), event))
         }));
+    }
+
+    #[test]
+    fn a_full_hold_keeps_a_task_end_ahead_of_its_progress() {
+        let task = |id: &str, status| AgentEvent::Task {
+            id: id.into(),
+            tool_use_id: None,
+            status,
+            label: None,
+            summary: None,
+            tools: None,
+        };
+        let mut held = Vec::new();
+        for n in 0..HELD {
+            hold(&mut held, task(&format!("p{n}"), TaskStatus::Progress), "c");
+        }
+        hold(&mut held, task("late", TaskStatus::Progress), "c");
+        assert_eq!(held.len(), HELD, "a progress over the limit is dropped");
+        assert!(!held
+            .iter()
+            .any(|e| matches!(e, AgentEvent::Task { id, .. } if id == "late")));
+        hold(&mut held, task("end", TaskStatus::Done), "c");
+        assert_eq!(held.len(), HELD);
+        assert!(held.iter().any(|e| matches!(e, AgentEvent::Task { id, status: TaskStatus::Done, .. } if id == "end")), "the end is kept");
+        assert!(
+            !held
+                .iter()
+                .any(|e| matches!(e, AgentEvent::Task { id, .. } if id == "p0")),
+            "the oldest progress made room"
+        );
     }
 
     /// A Claude-like provider whose "CLI" is `sh script`.

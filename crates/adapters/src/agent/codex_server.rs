@@ -70,6 +70,9 @@ struct Translate {
     streamed: HashSet<String>,
     /// The last thing shown was answer text: a new answer starts a new paragraph.
     after_text: bool,
+    /// Turns whose failure was already reported: an `error` notification and the `turn/completed` after it both name one
+    /// failure, and the chat must get one `turn.failed` for it.
+    failed: HashSet<String>,
     /// Token counts of the turn: the sum of its model calls.
     input: u64,
     cached: u64,
@@ -167,6 +170,11 @@ fn exec_item(item: &Value) -> Option<Value> {
 impl Translate {
     /// The thread a spawn call's child runs on is named when the call completes; until then a child's notification
     /// belongs under the latest call still waiting for its thread.
+    ///
+    /// Known limit: the protocol does not say which spawn call a child thread came from until that call completes (a
+    /// child's own notifications carry only its thread id, and `thread/started` is not sent for children). With two
+    /// spawns in flight at once, the child's early notifications are drawn under the later spawn. Once the spawn completes
+    /// its `receiverThreadIds` name the child, and from then on its events go to the right card.
     fn parent_of(&self, thread: &str) -> String {
         self.parents
             .get(thread)
@@ -193,6 +201,21 @@ impl Translate {
             summary: summary.filter(|text| !text.is_empty()),
             tools: None,
         })
+    }
+
+    /// The children still open when their parent turn ends: each ends as stopped, so no card stays running for good.
+    /// Sorted by thread id, so the order does not depend on the map.
+    fn close_open_children(&mut self) -> Vec<AgentEvent> {
+        let mut open: Vec<String> = self
+            .parents
+            .keys()
+            .filter(|thread| !self.closed.contains(*thread))
+            .cloned()
+            .collect();
+        open.sort();
+        open.iter()
+            .filter_map(|thread| self.child_end(thread, TaskStatus::Stopped, None))
+            .collect()
     }
 
     /// A `collabAgentToolCall` (an agent starting or waiting for other agents): a tool call in the chat, and the task
@@ -373,6 +396,18 @@ impl Translate {
             .collect()
     }
 
+    /// The `turn.failed` line of a turn, at most once per turn id (see `failed`).
+    fn fail_once(&mut self, params: &Value, message: &str) -> Vec<Value> {
+        let turn = params["turnId"]
+            .as_str()
+            .or_else(|| params["turn"]["id"].as_str())
+            .unwrap_or_default();
+        if !self.failed.insert(turn.to_owned()) {
+            return Vec::new();
+        }
+        vec![json!({ "type": "turn.failed", "error": { "message": message } })]
+    }
+
     /// The exec-format lines one notification stands for (none for most of them).
     fn lines(&mut self, method: &str, params: &Value) -> Vec<Value> {
         match method {
@@ -430,7 +465,7 @@ impl Translate {
                         json!({ "type": "error", "message": format!("Reconnecting... 1/1 ({message})") }),
                     ]
                 } else {
-                    vec![json!({ "type": "turn.failed", "error": { "message": message } })]
+                    self.fail_once(params, message)
                 }
             }
             "turn/completed" => match params["turn"]["status"].as_str() {
@@ -438,11 +473,9 @@ impl Translate {
                     let message = params["turn"]["error"]["message"]
                         .as_str()
                         .unwrap_or("Codex failed");
-                    vec![json!({ "type": "turn.failed", "error": { "message": message } })]
+                    self.fail_once(params, message)
                 }
-                Some("interrupted") => vec![
-                    json!({ "type": "turn.failed", "error": { "message": "Codex stopped the turn" } }),
-                ],
+                Some("interrupted") => self.fail_once(params, "Codex stopped the turn"),
                 _ => vec![json!({ "type": "turn.completed", "usage": {
                     "input_tokens": self.input, "cached_input_tokens": self.cached,
                     "cache_write_input_tokens": self.written, "output_tokens": self.out,
@@ -606,6 +639,13 @@ async fn drain_unread(warm: &mut Warm) -> bool {
     false
 }
 
+/// Ends the children the turn still has open (stopped), before the turn's own end is sent.
+fn end_children(translate: &mut Translate, emit: &mut impl FnMut(AgentEvent)) {
+    for end in translate.close_open_children() {
+        emit(end);
+    }
+}
+
 /// How the turn ended.
 enum Ending {
     Done,
@@ -672,6 +712,7 @@ async fn read_turn(
                     continue;
                 }
                 _ = tokio::time::sleep_until(dog.deadline()) => {
+                    end_children(&mut translate, emit);
                     emit(AgentEvent::Error { message: dog.message() });
                     return Ending::Failed;
                 }
@@ -684,12 +725,14 @@ async fn read_turn(
                         wants_interrupt = true;
                         continue;
                     }
+                    end_children(&mut translate, emit);
                     emit(interrupt::killed(Some(thread)));
                     return Ending::Failed;
                 }
             },
         };
         let Ok(Some(bytes)) = next else {
+            end_children(&mut translate, emit);
             return Ending::Closed;
         };
         dog.touch();
@@ -773,6 +816,9 @@ async fn read_turn(
                 // a Claude process is (warm.rs), and only the turn is over.
                 AgentEvent::Error { .. } => ending = Some(Ending::Done),
                 _ => {}
+            }
+            if ending.is_some() {
+                end_children(&mut translate, emit);
             }
             emit(event);
         }
@@ -964,6 +1010,30 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_turn_reports_turn_failed_once() {
+        let mut translate = Translate::default();
+        let error = translate.lines(
+            "error",
+            &json!({ "error": { "message": "boom" }, "willRetry": false, "turnId": "t1" }),
+        );
+        assert_eq!(error.len(), 1);
+        assert_eq!(error[0]["type"], "turn.failed");
+        let completed = translate.lines(
+            "turn/completed",
+            &json!({ "turn": { "id": "t1", "status": "failed", "error": { "message": "boom" } } }),
+        );
+        assert!(
+            completed.is_empty(),
+            "the turn/completed after an error must not fail it twice"
+        );
+        let next = translate.lines(
+            "turn/completed",
+            &json!({ "turn": { "id": "t2", "status": "interrupted" } }),
+        );
+        assert_eq!(next[0]["type"], "turn.failed");
+    }
+
+    #[test]
     fn answer_text_streams_once_with_paragraphs_between_messages() {
         let codex = Codex::default();
         let mut translate = Translate::default();
@@ -1078,6 +1148,46 @@ mod tests {
             matches!(&events[0], AgentEvent::Task { id, status: TaskStatus::Done, summary: Some(text), tool_use_id: Some(call), .. } if id == "kid" && text == "42" && call == "s")
         );
         assert!(matches!(&events[1], AgentEvent::ToolResult { output, .. } if output == "42"));
+    }
+
+    #[test]
+    fn a_child_still_open_when_its_parent_turn_ends_is_stopped() {
+        let codex = Codex::default();
+        let mut translate = Translate::default();
+        translate.events(&codex, "item/completed", &json!({ "item": { "type": "collabAgentToolCall", "id": "s", "tool": "spawnAgent", "status": "completed", "receiverThreadIds": ["kid", "kid2"], "prompt": "p", "model": "m" } }));
+        let finished = translate.child_events(
+            &codex,
+            "kid",
+            "turn/completed",
+            &json!({ "threadId": "kid", "turn": { "status": "completed" } }),
+        );
+        assert!(
+            matches!(&finished[..], [AgentEvent::Task { id, status: TaskStatus::Done, .. }] if id == "kid"),
+            "{finished:?}"
+        );
+        let ended = translate.close_open_children();
+        assert!(
+            matches!(&ended[..], [AgentEvent::Task { id, status: TaskStatus::Stopped, tool_use_id: Some(call), .. }] if id == "kid2" && call == "s"),
+            "{ended:?}"
+        );
+        assert!(
+            translate.close_open_children().is_empty(),
+            "a child is stopped once"
+        );
+    }
+
+    #[test]
+    fn a_child_seen_before_its_spawn_completes_is_placed_under_the_latest_pending_spawn() {
+        // The documented limit of `parent_of`: two spawns in flight, and the child's first notifications come before its
+        // spawn names it. Once the spawn completes, the receiver is known and the child goes to its own call.
+        let codex = Codex::default();
+        let mut translate = Translate::default();
+        for (id, prompt) in [("s1", "a"), ("s2", "b")] {
+            translate.events(&codex, "item/started", &json!({ "item": { "type": "collabAgentToolCall", "id": id, "tool": "spawnAgent", "status": "inProgress", "receiverThreadIds": [], "prompt": prompt } }));
+        }
+        assert_eq!(translate.parent_of("kid1"), "s2");
+        translate.events(&codex, "item/completed", &json!({ "item": { "type": "collabAgentToolCall", "id": "s1", "tool": "spawnAgent", "status": "completed", "receiverThreadIds": ["kid1"], "prompt": "a", "model": "m" } }));
+        assert_eq!(translate.parent_of("kid1"), "s1");
     }
 
     #[test]

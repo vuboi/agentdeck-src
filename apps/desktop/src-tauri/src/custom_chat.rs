@@ -973,8 +973,8 @@ pub async fn run_turn(
                     summarize_tool_input(&call.name, &args)
                 },
                 change: change_for(&call.name, &args, turn.cwd.as_deref()),
-                background: (crate::delegate::is_tool(&call.name) && args["wait"] == false)
-                    || ag_adapters::agent::delegate_wait(&shown, &args),
+                // Only a blocking delegate call runs on its own while the agent waits: the same rule as the other adapters.
+                background: ag_adapters::agent::delegate_wait(&shown, &args),
             });
             let waits_only = user_tool.is_none()
                 && args.is_object()

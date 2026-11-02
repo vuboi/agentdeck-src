@@ -3,7 +3,7 @@ import {
     credentialBusy,
     waitForCredential,
 } from '../../agents/credential-switch';
-import { parseCustomModel } from '../../agents/models.svelte';
+import { credentialScope } from '../../agents/credential-scope';
 import { type Message } from '../mock';
 import { parseHandoff, agentdeckLead } from '../../tasks/delegate-task';
 import { HANDBACK_HEAD } from '../runs/handback';
@@ -66,10 +66,12 @@ import {
 } from './run.svelte';
 import {
     cancelAutoSwitch,
+    dropRecovery,
     recoveries,
     resumeAutoChoice,
     resumeSince,
     resumes,
+    supersedeOwedTurn,
 } from './events.svelte';
 import {
     beginWorkflowIntegration,
@@ -565,16 +567,22 @@ export function send(
         coordination?: boolean;
         /** A silent send is not queued when a reply already runs: this tells its caller, who puts the work back in line. */
         onDropped?: () => void;
+        /** A recovery's continuation: the generation it was planned under (see the check at the top of send). */
+        recovery?: { generation: number };
     } = {},
 ) {
+    // A continuation of a recovery is dropped when the work moved on since it was planned: a message of the user or a Stop
+    // took its record, or a newer continuation numbered it. Checked again on every deferred re-entry below (A4).
+    if (
+        extra.recovery &&
+        recoveries[sessionId]?.generation !== extra.recovery.generation
+    )
+        return;
     const session = workspace.sessions.find((item) => item.id === sessionId);
     if (!extra.silent) cancelAutoSwitch(sessionId);
-    const credentialScope =
-        session?.agent === 'custom'
-            ? parseCustomModel(session.model)?.providerId
-            : session?.agent === 'antigravity'
-              ? 'agy'
-              : session?.agent;
+    const scope = session
+        ? credentialScope(session.agent, session.model)
+        : undefined;
     // A chat that is not open has its turns only on disk: they are read first, so the turn is told what the chat said
     // (the digest of a model or account change, the missed turns). Nothing shown changes.
     if (session?.path && session.source && !messagesById.has(sessionId)) {
@@ -583,8 +591,8 @@ export function send(
         );
         return;
     }
-    if (credentialScope && credentialBusy(credentialScope)) {
-        void waitForCredential(credentialScope).then(() =>
+    if (scope && credentialBusy(scope)) {
+        void waitForCredential(scope).then(() =>
             send(sessionId, text, images, elements, mentions, extra),
         );
         return;
@@ -622,14 +630,18 @@ export function send(
     }
     const messageId = extra.messageId ?? nextId();
     // Waits behind the account switch of its agent, whole and in order (see switchingAgent).
-    if (switchingAgent(session.agent)) {
-        const waiting = afterSwitch.get(session.agent) ?? [];
+    // Keyed by the credential scope, the same name the switch's busy key has (antigravity's is `agy`).
+    const switchScope = credentialScope(session.agent, session.model);
+    if (switchingAgent(switchScope)) {
+        const waiting = afterSwitch.get(switchScope) ?? [];
         waiting.push(() =>
             send(sessionId, text, images, elements, mentions, extra),
         );
-        afterSwitch.set(session.agent, waiting);
+        afterSwitch.set(switchScope, waiting);
         return;
     }
+    // The send is dispatched now: a failed turn that was held for a retry or a switch is taken over by this one.
+    supersedeOwedTurn(sessionId);
     // The user took over: a wait for a limit to reset is over. (The recovery's own turns are silent.)
     if (!extra.silent) {
         delete resumes[sessionId];
@@ -654,11 +666,11 @@ export function send(
             beginWorkflowIntegration(sessionId, extra.report?.workflowRunId);
         startTurn(
             session,
-            extra.prompt,
-            [],
+            withElements(extra.prompt, elements),
+            images,
             [],
             extra.preface ?? '',
-            [],
+            files,
             extra.silent,
             extra.runGroup,
             false,
@@ -671,8 +683,8 @@ export function send(
     messages.push(
         userMessage(body, images, elements, files, extra.runGroup, messageId),
     );
-    // A new request from the user: retries and agents tried are counted again from here.
-    delete recoveries[sessionId];
+    // A new request from the user: retries and agents tried are counted again from here, and a retry still waiting is dropped.
+    dropRecovery(sessionId);
     const preset = flowMention ? requestedFlow : presetOf(sessionId);
     const workflow =
         inTauri() &&

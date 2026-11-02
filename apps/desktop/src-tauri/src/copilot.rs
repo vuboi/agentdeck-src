@@ -337,6 +337,13 @@ async fn run_session(
                         watchdog.note(&task);
                         out(task);
                     }
+                    // The events that came before this sub-agent's start, now that its call is known.
+                    if event.event_type == "subagent.started" {
+                        for held in children.release(event.agent_id.as_deref().unwrap_or_default()) {
+                            watchdog.note(&held);
+                            out(held);
+                        }
+                    }
                     // A tool a sub-agent starts counts toward its task, as Claude's task progress does.
                     if event.event_type == "tool.execution_start" {
                         if let Some(progress) = children.tool_started(event.agent_id.as_deref()) {
@@ -349,7 +356,7 @@ async fn run_session(
                         let reason = event.data["kind"]["type"].as_str().unwrap_or("notification").to_string();
                         out(AgentEvent::AutoTurn { reason });
                     }
-                    if parent.is_none() {
+                    if root {
                         if event.event_type == "assistant.message_delta" {
                             if let Some(text) = event.data.get("deltaContent").and_then(Value::as_str) { answer.push_str(text); }
                         }
@@ -419,7 +426,12 @@ async fn run_session(
                     };
                     if let Some(mapped) = mapped {
                         watchdog.note(&mapped);
-                        out(scoped(parent, mapped));
+                        match (parent, event.agent_id.as_deref().filter(|id| !id.is_empty())) {
+                            (Some(parent), _) => out(scoped(Some(parent), mapped)),
+                            // A sub-agent's event whose call is not known yet waits for its start event.
+                            (None, Some(agent)) => children.hold(agent, mapped),
+                            (None, None) => out(mapped),
+                        }
                     }
                     if turn_error.is_some() { break; }
                 }
@@ -614,9 +626,36 @@ struct Children {
     parents: HashMap<String, String>,
     /// How many tools each sub-agent has started so far.
     tools: HashMap<String, u32>,
+    /// A sub-agent's events that came before its start named the call that started it: held until it does.
+    pending: HashMap<String, Vec<AgentEvent>>,
 }
 
+/// The most events held for one sub-agent before its start: beyond it the newest are dropped.
+const HELD_PER_AGENT: usize = 64;
+
 impl Children {
+    /// Holds an event of a sub-agent whose call is not known yet (see `release`).
+    fn hold(&mut self, agent: &str, event: AgentEvent) {
+        let held = self.pending.entry(agent.to_owned()).or_default();
+        if held.len() < HELD_PER_AGENT {
+            held.push(event);
+        }
+    }
+
+    /// The events held for a sub-agent, now that its call is known, drawn under that call. Nothing is released while the
+    /// call is unknown: the events are never drawn under the agent's id, which no card has.
+    fn release(&mut self, agent: &str) -> Vec<AgentEvent> {
+        let Some(parent) = self.parents.get(agent).cloned() else {
+            return Vec::new();
+        };
+        self.pending
+            .remove(agent)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|event| scoped(Some(parent.clone()), event))
+            .collect()
+    }
+
     /// A tool a sub-agent started: its running count, as a progress step of the task that started it (Claude's task progress
     /// carries the same count). `None` for the main agent's own tools and for an agent no task was started for.
     fn tool_started(&mut self, agent_id: Option<&str>) -> Option<AgentEvent> {
@@ -634,16 +673,14 @@ impl Children {
         })
     }
 
-    /// The tool call an event with this `agentId` belongs under; `None` for the main agent's own events.
+    /// The tool call an event with this `agentId` belongs under. `None` for the main agent's own events, and for a
+    /// sub-agent's event whose call is not known yet (the caller holds it, see `hold`).
     fn parent_of(&self, agent_id: Option<&str>, data: &Value) -> Option<String> {
-        let agent = agent_id?;
-        Some(
-            self.parents
-                .get(agent)
-                .cloned()
-                .or_else(|| data["parentToolCallId"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| agent.to_owned()),
-        )
+        let agent = agent_id.filter(|id| !id.is_empty())?;
+        self.parents
+            .get(agent)
+            .cloned()
+            .or_else(|| data["parentToolCallId"].as_str().map(str::to_owned))
     }
 
     /// The task event a `subagent.*` event stands for, remembering which call started the sub-agent.
@@ -1135,7 +1172,25 @@ mod tests {
             children.parent_of(Some("a"), &json!({ "parentToolCallId": "call_9" })),
             Some("call_9".into())
         );
-        assert_eq!(children.parent_of(Some("a"), &json!({})), Some("a".into()));
+        // Without a call to name, the event has no parent yet: it is held, never drawn under the agent's own id.
+        assert_eq!(children.parent_of(Some("a"), &json!({})), None);
+    }
+
+    #[test]
+    fn a_sub_agent_event_before_its_start_is_held_until_the_call_is_known() {
+        let mut children = Children::default();
+        let delta = AgentEvent::Delta { text: "hi".into() };
+        children.hold("a", delta.clone());
+        assert!(children.release("a").is_empty(), "no call known yet");
+        children.parents.insert("a".into(), "call_7".into());
+        assert_eq!(
+            children.release("a"),
+            vec![AgentEvent::Scoped {
+                parent: "call_7".into(),
+                event: Box::new(delta),
+            }]
+        );
+        assert!(children.release("a").is_empty(), "released once");
     }
 
     #[test]

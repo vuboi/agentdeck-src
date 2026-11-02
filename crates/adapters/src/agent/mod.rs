@@ -117,6 +117,8 @@ pub enum TaskStatus {
     Progress,
     Done,
     Failed,
+    /// Ended by someone else than the task: its parent turn ended, or the user stopped it.
+    Stopped,
 }
 
 /// The address of the browser's MCP server for one chat: `/mcp?chat=<id>&root=<folder>`. The bridge reads both from it.
@@ -746,6 +748,28 @@ pub fn line_diff(before: &str, after: &str) -> LineDiff {
         removed: old_middle.len() - kept,
         before: cut(&old_middle.join("\n")),
         after: cut(&new_middle.join("\n")),
+    }
+}
+
+#[cfg(test)]
+mod delegate_wait_tests {
+    use super::delegate_wait;
+    use serde_json::json;
+
+    #[test]
+    fn only_a_blocking_delegate_call_is_a_background_call() {
+        let name = "mcp__agentdeck__delegate_task";
+        assert!(delegate_wait(name, &json!({ "task": "x" })));
+        assert!(delegate_wait(name, &json!({ "task": "x", "wait": true })));
+        assert!(!delegate_wait(name, &json!({ "task": "x", "wait": false })));
+        assert!(!delegate_wait(
+            name,
+            &json!({ "task": "x", "wait": "false" })
+        ));
+        assert!(!delegate_wait(
+            "mcp__agentdeck__task_status",
+            &json!({ "task_id": "t" })
+        ));
     }
 }
 

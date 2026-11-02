@@ -62,7 +62,7 @@ export type AgentEvent =
     | { kind: 'auto_turn'; reason: string }
     | { kind: 'raw'; source: string; label: string; line: string };
 
-export type TaskStatus = 'started' | 'progress' | 'done' | 'failed';
+export type TaskStatus = 'started' | 'progress' | 'done' | 'failed' | 'stopped';
 
 /** A tool the CLI would not run without approval. `allow` is what approves exactly this call. */
 export type PermissionRequest = {
@@ -567,14 +567,15 @@ export async function listenDelegateAborts(
     );
 }
 
-/** The answer to a delegation tool call: the text the agent reads, and whether it is an error. */
+/** The answer to a delegation tool call: the text the agent reads, and whether it is an error. Resolves false when
+ *  nothing was waiting for it any more (the call timed out or its connection closed): the answer was not delivered. */
 export async function replyDelegateCall(
     callId: string,
     text: string,
     isError: boolean,
-): Promise<void> {
+): Promise<boolean> {
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('delegate_reply', { callId, text, isError });
+    return invoke<boolean>('delegate_reply', { callId, text, isError });
 }
 
 /** A worker is about to start: true when it may (the asking chat has a free place), false when it is queued until one frees. */
@@ -590,6 +591,18 @@ export async function enterWorkerSlot(
 export async function releaseWorkerSlot(taskId: string): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('delegate_release', { taskId });
+}
+
+/** The blocking call of a task is held (queued, waiting for another task, paused): its time limit stops. */
+export async function holdDelegateCall(callId: string): Promise<boolean> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('delegate_pause', { callId });
+}
+
+/** The task runs: the blocking call's time limit goes on. */
+export async function runDelegateCall(callId: string): Promise<boolean> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('delegate_resume', { callId });
 }
 
 /** A queued task's turn has come: its worker may start. */

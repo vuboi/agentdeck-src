@@ -53,6 +53,7 @@
     } from '../../agents/connectors.svelte';
     import { inTauri } from '../../app/platform/history';
     import { accountEpoch } from '../../chat/runs/account-epoch.svelte';
+    import { credentialScope } from '../../agents/credential-scope';
     import { toast } from '../../app/platform/toast';
     import SectionTitle from '../ui/SectionTitle.svelte';
     import TextEditContextMenu from '../ui/TextEditContextMenu.svelte';
@@ -307,7 +308,7 @@
         }));
     });
     $effect(() => {
-        void accountEpoch[promptProvider];
+        void accountEpoch[credentialScope(promptProvider)];
         const levels = effortTabs.map((item) => item.value);
         if (!levels.includes(effort))
             effort =
@@ -321,7 +322,7 @@
     );
 
     $effect(() => {
-        void accountEpoch[promptProvider];
+        void accountEpoch[credentialScope(promptProvider)];
         if (Object.values(modelsReady).some((ready) => !ready)) return;
         if (!promptModels.some((item) => item.value === promptModel))
             promptModel = promptModels[0]?.value ?? '';
