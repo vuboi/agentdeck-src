@@ -193,11 +193,31 @@ pub fn augmented_path() -> Option<OsString> {
 /// variable as `Path`; preserving that spelling avoids creating a second environment entry for a `.cmd` child.
 pub fn augmented_path_env() -> Option<(OsString, OsString)> {
     let path = augmented_path()?;
+    let list: Vec<PathBuf> = std::env::split_paths(&path).collect();
     let key = std::env::vars_os()
         .find(|(key, _)| key.to_string_lossy().eq_ignore_ascii_case("PATH"))
         .map(|(key, _)| key)
         .unwrap_or_else(|| OsString::from("PATH"));
-    Some((key, path))
+    Some((key, child_path(&list, CHILD_PATH_MAX)))
+}
+
+/// The folders the CLI installs use, for this machine: the same list that resolves agent binaries, for callers that
+/// search a PATH themselves.
+pub fn common_dirs_here() -> Vec<PathBuf> {
+    let env_path = |key: &str| std::env::var_os(key).map(PathBuf::from);
+    let home = env_path("HOME").or_else(|| env_path("USERPROFILE"));
+    let local = env_path("LOCALAPPDATA")
+        .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Local")));
+    let appdata = env_path("APPDATA").or_else(|| {
+        home.as_ref()
+            .map(|path| path.join("AppData").join("Roaming"))
+    });
+    common_dirs(
+        std::env::consts::OS,
+        home.as_deref(),
+        local.as_deref(),
+        appdata.as_deref(),
+    )
 }
 
 /// How long a computed PATH or binary location is reused. The folders it was built from change only when the user
@@ -211,9 +231,6 @@ static PATH_CACHE: PathCache = Mutex::new(None);
 /// installing a CLI is seen on the next turn.
 type BinaryCache = Mutex<Vec<(String, Option<OsString>, Instant, PathBuf)>>;
 static BINARY_CACHE: BinaryCache = Mutex::new(Vec::new());
-
-/// Longest PATH handed to child processes (see build_augmented_path).
-const AUGMENTED_PATH_MAX: usize = 8000;
 
 fn build_augmented_path() -> Option<OsString> {
     let current = std::env::var_os("PATH")
@@ -243,37 +260,88 @@ fn build_augmented_path() -> Option<OsString> {
         })
         .cloned()
         .collect();
-    // cmd.exe reads only the first 8191 characters of PATH. The system folders go first, so `cmd /C` can always find
-    // ping, where and friends; repeated folders are dropped to keep the value short.
-    let mut ordered: Vec<PathBuf> = Vec::new();
+    let mut system: Vec<PathBuf> = Vec::new();
     if cfg!(windows) {
         if let Some(root) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("windir")) {
             let root = PathBuf::from(root);
-            ordered.push(root.join("System32"));
-            ordered.push(root);
+            system.push(root.join("System32"));
+            system.push(root);
         }
     }
-    ordered.extend(dirs);
-    ordered.extend(common);
-    ordered.extend(current);
+    let node_dirs: Vec<PathBuf> = dirs;
+    let full = assemble_path(&system, &node_dirs, &common, &current, cfg!(windows));
+    std::env::join_paths(full).ok()
+}
+
+/// The PATH list in the order it is searched: the folders that hold a `node` executable, the shared CLI folders,
+/// the system folders (so a Windows `curl.exe` or `find.exe` beats a copy installed by scoop or WinGet), and last
+/// the PATH of the parent process. Repeated folders are dropped; on Windows the comparison ignores case and a
+/// trailing separator. Nothing is cut here: the length limit for child processes is applied by [`child_path`].
+fn assemble_path(
+    system: &[PathBuf],
+    node_dirs: &[PathBuf],
+    common: &[PathBuf],
+    current: &[PathBuf],
+    windows: bool,
+) -> Vec<PathBuf> {
+    let key = |dir: &Path| {
+        let text = dir.to_string_lossy();
+        let trimmed = text.trim_end_matches(['\\', '/']);
+        let trimmed = if trimmed.is_empty() {
+            text.as_ref()
+        } else {
+            trimmed
+        };
+        if windows {
+            trimmed.to_lowercase()
+        } else {
+            trimmed.to_string()
+        }
+    };
     let mut seen = std::collections::HashSet::new();
-    let unique: Vec<PathBuf> = ordered
-        .into_iter()
-        .filter(|dir| seen.insert(dir.to_string_lossy().to_lowercase()))
-        .collect();
-    // The whole value stays under cmd.exe's 8191-character PATH limit (and leaves room for the rest of the environment,
-    // which Windows caps at 32767 characters): the folders at the front win, the tail of the parent PATH is dropped.
+    node_dirs
+        .iter()
+        .chain(common)
+        .chain(system)
+        .chain(current)
+        .filter(|dir| !dir.as_os_str().is_empty() && seen.insert(key(dir)))
+        .cloned()
+        .collect()
+}
+
+/// Longest PATH given to a child process, in characters. cmd.exe reads at most 8191 characters of PATH, and the
+/// whole environment is capped at 32767.
+const CHILD_PATH_MAX: usize = 8000;
+
+/// Set once the child PATH has dropped folders, so the log line is written one time per run.
+static CHILD_PATH_TRIMMED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// The PATH value for a child process: only folders that exist, and at most `max` characters. A folder that would
+/// pass the limit is skipped, and shorter folders after it are still kept. Dropped folders are logged once.
+fn child_path(list: &[PathBuf], max: usize) -> OsString {
     let mut kept: Vec<PathBuf> = Vec::new();
     let mut length = 0usize;
-    for dir in unique {
+    let mut dropped = 0usize;
+    for dir in list {
+        if !dir.is_dir() || std::env::join_paths([dir]).is_err() {
+            continue;
+        }
         let next = dir.as_os_str().len() + 1;
-        if length + next > AUGMENTED_PATH_MAX {
-            break;
+        if length + next > max {
+            dropped += 1;
+            continue;
         }
         length += next;
-        kept.push(dir);
+        kept.push(dir.clone());
     }
-    std::env::join_paths(kept).ok()
+    if dropped > 0 && !CHILD_PATH_TRIMMED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!(
+            dropped,
+            "child PATH is longer than {max} characters: some folders are left out"
+        );
+    }
+    std::env::join_paths(kept).unwrap_or_default()
 }
 
 /// The PATH a login shell gives: what the user's terminal sees, which a GUI app on macOS and Linux does not inherit
@@ -323,24 +391,7 @@ pub fn resolve_binary(provider: &dyn Provider) -> OsString {
         let path = std::env::var_os("PATH")?;
         find_in(std::env::split_paths(&path), provider.binary(), os)
     };
-    let from_common = || {
-        let env_path = |key: &str| std::env::var_os(key).map(PathBuf::from);
-        let home = env_path("HOME").or_else(|| env_path("USERPROFILE"));
-        let dirs = common_dirs(
-            os,
-            home.as_deref(),
-            env_path("LOCALAPPDATA")
-                .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Local")))
-                .as_deref(),
-            env_path("APPDATA")
-                .or_else(|| {
-                    home.as_ref()
-                        .map(|path| path.join("AppData").join("Roaming"))
-                })
-                .as_deref(),
-        );
-        find_in(dirs.into_iter(), provider.binary(), os)
-    };
+    let from_common = || find_in(common_dirs_here().into_iter(), provider.binary(), os);
     let from_shell = || {
         find_in(
             std::env::split_paths(&login_shell_path()?),
@@ -496,6 +547,85 @@ mod tests {
             resolve_binary(&moved),
             OsString::from("resolve-cache-test-bin")
         );
+    }
+
+    #[test]
+    fn node_folders_come_first_then_system_then_the_parent_path() {
+        let p = |s: &str| PathBuf::from(s);
+        let out = assemble_path(
+            &[p(r"C:\Win\System32")],
+            &[p(r"C:\nodejs")],
+            &[p(r"C:\scoop\shims"), p(r"C:\nodejs")],
+            &[p(r"C:\parent")],
+            true,
+        );
+        assert_eq!(
+            out,
+            vec![
+                p(r"C:\nodejs"),
+                p(r"C:\scoop\shims"),
+                p(r"C:\Win\System32"),
+                p(r"C:\parent"),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicates_are_folded_per_platform() {
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(
+            assemble_path(&[], &[], &[p(r"C:\A\")], &[p(r"c:\a")], true),
+            vec![p(r"C:\A\")]
+        );
+        assert_eq!(
+            assemble_path(&[], &[], &[p("/opt/A")], &[p("/opt/a")], false),
+            vec![p("/opt/A"), p("/opt/a")]
+        );
+    }
+
+    #[test]
+    fn the_full_list_keeps_a_folder_placed_beyond_9000_characters() {
+        // which() searches the full list: a CLI whose folder sits past 9000 characters of the parent PATH is found.
+        let dir = std::env::temp_dir().join(format!("ag-full-path-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("tool.cmd"), "").unwrap();
+        let mut current: Vec<PathBuf> = (0..100)
+            .map(|i| PathBuf::from(format!(r"C:\long\{i:0>90}")))
+            .collect();
+        current.push(dir.clone());
+        let list = assemble_path(&[], &[], &[], &current, true);
+        assert_eq!(
+            find_in(list.into_iter(), "tool", "windows"),
+            Some(dir.join("tool.cmd"))
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn child_path_drops_a_long_folder_and_keeps_the_short_ones_after_it() {
+        let root = std::env::temp_dir().join(format!("ag-child-path-{}", std::process::id()));
+        let short_a = root.join("a");
+        let short_b = root.join("b");
+        let long = root.join("x".repeat(60));
+        for dir in [&short_a, &short_b, &long] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let list = vec![short_a.clone(), long, short_b.clone()];
+        let max = short_a.as_os_str().len() + short_b.as_os_str().len() + 2 + 10;
+        let out = child_path(&list, max);
+        assert_eq!(
+            std::env::split_paths(&out).collect::<Vec<_>>(),
+            vec![short_a, short_b]
+        );
+        assert!(out.len() <= max);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn child_path_skips_folders_that_do_not_exist() {
+        let missing = std::env::temp_dir().join(format!("ag-missing-{}", std::process::id()));
+        let out = child_path(&[missing], 8000);
+        assert!(out.is_empty());
     }
 
     #[test]
