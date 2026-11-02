@@ -8,7 +8,7 @@ const ts = createRequire(import.meta.url)('typescript');
 const runtimeDefaults = { SvelteMap: Map, SvelteSet: Set, SvelteDate: Date };
 
 /** Executes a real coordinator module with isolated native I/O; unconfigured imports fail on use. */
-async function load(name, bindings) {
+async function load(name, bindings, globals = {}) {
     const source = await readFile(
         new URL(
             `../../src/lib/chat/session/${name}.svelte.ts`,
@@ -58,6 +58,8 @@ async function load(name, bindings) {
         console,
         setTimeout: () => 0,
         clearTimeout() {},
+        // Extra globals a module reads at run time (a test that needs real timers or `window` passes them).
+        ...globals,
     });
     const code = ts.transpileModule(source, {
         compilerOptions: {

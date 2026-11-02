@@ -5,6 +5,7 @@ import {
     fakeData,
     inTauri,
     type HistorySession,
+    type HistorySource,
     listHistory,
     type HistoryMessage,
     clock,
@@ -77,6 +78,7 @@ import {
     resumes,
 } from './events.svelte';
 import { backlog } from './delegate-task.svelte';
+import { mergeTranscripts } from './transcript-merge';
 
 // ---------- real history (Claude Code and Codex, read-only) ----------
 export const chat = $state({
@@ -122,12 +124,17 @@ export async function conversationForExport(
     const session = workspace.sessions.find((item) => item.id === sessionId);
     if (!session) throw new Error('This conversation no longer exists.');
     if (session.source && session.path) {
-        const raw = await loadHistory(session.source, session.path);
-        const own = await restoreArchivedWork(
-            session,
-            await toMessages(session, raw),
-        );
-        const all = assemble(session, own, own[0]?.at);
+        const files = wholeFilesOf(session);
+        let all: Message[];
+        if (files) all = await readWhole(session, files);
+        else {
+            const raw = await loadHistory(session.source, session.path);
+            const own = await restoreArchivedWork(
+                session,
+                await toMessages(session, raw),
+            );
+            all = assemble(session, own, own[0]?.at);
+        }
         return {
             title: session.title,
             messages: await restoreCommandImages(session.id, all),
@@ -173,6 +180,16 @@ type SavedProviderState = Pick<
 > & {
     /** Every provider transcript that has belonged to this AgentDeck chat, including threads replaced by a model edit. */
     providerAliases?: string[];
+    /** The native files of this chat, when it has more than one: each is read and merged by time (see `readTranscript`). */
+    paths?: NativeFile[];
+};
+/** One provider history file of a chat. `updatedAt` and `messageCount` are its index row, which decides the cache. */
+export type NativeFile = {
+    source: HistorySource;
+    path: string;
+    nativeId: string;
+    updatedAt?: string;
+    messageCount?: number;
 };
 const mixed: Record<string, SavedProviderState> = {};
 let mixedHydrated = false;
@@ -187,6 +204,20 @@ const mixedReady = getPref<typeof mixed>('chat.mixed')
     .catch(() => {
         mixedHydrated = true;
     });
+
+/** Whether `a` names the same provider files as `b` (the index values of a file are not compared). */
+function sameFiles(a: NativeFile[] | undefined, b: NativeFile[]): boolean {
+    return (
+        !!a &&
+        a.length === b.length &&
+        b.every((file) =>
+            a.some(
+                (other) =>
+                    other.source === file.source && other.path === file.path,
+            ),
+        )
+    );
+}
 
 /** Replaces the mock workspace with what Claude Code and Codex already saved on this machine. */
 export async function importHistory({ refresh = false } = {}) {
@@ -318,6 +349,40 @@ function applyHistory(all: HistorySession[]) {
         for (const [agent, ids] of Object.entries(item.agentIds ?? {}))
             if (ids?.id) aliasOf.set(`${agent}:${ids.id}`, item.id);
     }
+    // Every native file of a chat, in index order. A chat that went on with another agent has one file per provider:
+    // the first (the newest) is the chat's file, and the rest are read and merged in when the chat is opened.
+    const filesOf = new SvelteMap<string, NativeFile[]>();
+    for (const item of all) {
+        const id = aliasOf.get(item.id) ?? item.id;
+        const files = filesOf.get(id) ?? [];
+        if (
+            !files.some(
+                (file) =>
+                    file.source === item.source && file.path === item.path,
+            )
+        )
+            files.push({
+                source: item.source,
+                path: item.path,
+                nativeId: item.id,
+                updatedAt: item.updated_at ?? undefined,
+                messageCount: item.message_count,
+            });
+        filesOf.set(id, files);
+    }
+    let filesChanged = false;
+    for (const [id, files] of filesOf) {
+        const saved = mixed[id];
+        if (files.length > 1) {
+            if (!sameFiles(saved?.paths, files)) filesChanged = true;
+            mixed[id] ??= {} as SavedProviderState;
+            mixed[id].paths = files;
+        } else if (saved?.paths) {
+            delete saved.paths;
+            filesChanged = true;
+        }
+    }
+    if (filesChanged) void mixedReady.then(() => setPref('chat.mixed', mixed));
     const seen = new SvelteSet<string>();
     const found = all
         .map((item) => {
@@ -526,8 +591,17 @@ let transcriptToken = 0;
 type Transcript = { stamp: string; messages: Message[]; start: number };
 export const transcripts = new SvelteMap<string, Transcript>();
 // The format version leads the stamp: v5 limits persisted transcript pages to 30 messages.
-const stampOf = (session: SessionItem) =>
-    `v5|${session.updatedAt ?? ''}|${session.messageCount ?? 0}`;
+const stampOf = (session: SessionItem) => {
+    // A chat with several files also changes when one of its other files changes in the index.
+    const files = wholeFilesOf(session) ?? [];
+    return `v5|${session.updatedAt ?? ''}|${session.messageCount ?? 0}${files.map((file) => `|${file.path}@${file.updatedAt ?? ''}#${file.messageCount ?? 0}`).join('')}`;
+};
+
+/** The native files of a chat with more than one: such a chat is read whole and merged (see `readWhole`). */
+function wholeFilesOf(session: SessionItem): NativeFile[] | undefined {
+    const files = mixed[session.id]?.paths;
+    return files && files.length > 1 ? files : undefined;
+}
 const MAX_SAVED = 12;
 /** Keep one page in the reload cache; older pages are fetched from the history cursor on demand. */
 const PAGE_LIMIT = 20;
@@ -564,6 +638,8 @@ export function rememberMixed(session: SessionItem) {
             ...current,
             providerAliases: providerAliasesOf(mixed[session.id] ?? current),
         }),
+        // The native files are read from the index, not from the session: saving the provider state keeps them.
+        ...(mixed[session.id]?.paths ? { paths: mixed[session.id].paths } : {}),
     };
     mixed[session.id] = saved;
     if (!mixedHydrated) pendingMixed.set(session.id, saved);
@@ -802,7 +878,19 @@ function mergeWorkMessages(messages: Message[], extras: Message[]): Message[] {
         if (index >= 0) restored[index] = { ...restored[index], ...extra };
         else if (extra.autoTurn) restored.push(extra);
     }
-    return restored.sort((a, b) => (a.at ?? '').localeCompare(b.at ?? ''));
+    return restored.sort(byInstant);
+}
+
+/**
+ * Orders two messages by their instant, so `Z` and an offset (`+07:00`) compare as the times they are. A message
+ * without a time sorts by its text, as it always did.
+ */
+function byInstant(a: Message, b: Message): number {
+    const timeA = Date.parse(a.at ?? '');
+    const timeB = Date.parse(b.at ?? '');
+    if (!Number.isNaN(timeA) && !Number.isNaN(timeB) && timeA !== timeB)
+        return timeA - timeB;
+    return (a.at ?? '').localeCompare(b.at ?? '');
 }
 
 /** Reattaches AgentDeck-only work report metadata that provider history cannot represent. */
@@ -857,9 +945,46 @@ function assemble(
     );
 }
 
+/**
+ * A chat with several native files: each file is read whole, and its turns are merged by time with the turns of the
+ * other agents kept beside them. The chat has no older page then: every turn is in the list.
+ */
+async function readWhole(
+    session: SessionItem,
+    files: NativeFile[],
+): Promise<Message[]> {
+    const gone = new Set(hidden[session.id] ?? []);
+    const out = (message: Message) =>
+        gone.has(message.id) || gone.has(signature(message));
+    const lists = await Promise.all(
+        files.map(async (file) =>
+            (
+                await toMessages(
+                    // A message's agent is the file's provider, which is not the chat's first one.
+                    { ...session, source: file.source },
+                    await loadHistory(file.source, file.path),
+                )
+            ).filter((message) => !out(message)),
+        ),
+    );
+    const others = (otherTurns[session.id] ?? []).filter(
+        (message) => !out(message),
+    );
+    return restoreArchivedWork(session, mergeTranscripts(lists, others));
+}
+
 async function fetchTranscript(
     session: SessionItem,
 ): Promise<{ messages: Message[]; start: number }> {
+    const files = wholeFilesOf(session);
+    if (files)
+        return {
+            messages: await restoreCommandImages(
+                session.id,
+                await readWhole(session, files),
+            ),
+            start: 0,
+        };
     const page = await loadHistoryPage(
         session.source!,
         session.path!,
@@ -953,7 +1078,10 @@ function remember(session: SessionItem, messages: Message[], start: number) {
             const tail = {
                 stamp: '',
                 messages: stripCommandImageData(messages.slice(-SAVED_TAIL)),
-                start: start + Math.max(0, messages.length - SAVED_TAIL),
+                // A chat read whole has nothing older on disk to page to: its saved tail starts at the first message.
+                start: wholeFilesOf(session)
+                    ? 0
+                    : start + Math.max(0, messages.length - SAVED_TAIL),
             };
             // The key list, the new tail and the removal of the chats that fell out go in one batch (one transaction).
             setPrefs([
