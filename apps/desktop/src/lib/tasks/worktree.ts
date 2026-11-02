@@ -44,3 +44,14 @@ export function mergeRootOf(
         ? callerWorktree.path
         : projectPath;
 }
+
+/**
+ * The repository a worktree folder belongs to: `<repo>/.agentdeck/worktrees/<name>` gives `<repo>`. Any other folder comes back
+ * unchanged. A transcript written in a worktree names that folder as its cwd; the chat belongs to the repository.
+ */
+export function repoOfWorktreeFolder(cwd: string): string {
+    const at = cwd.replace(/\\/g, '/').indexOf('/.agentdeck/worktrees/');
+    if (at <= 0) return cwd;
+    // The same separator style as the input, up to the repository folder.
+    return cwd.slice(0, at);
+}

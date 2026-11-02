@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
     WORKTREE_RULE,
+    repoOfWorktreeFolder,
     mergeGate,
     mergeRootOf,
 } from '../src/lib/tasks/worktree.ts';
@@ -56,4 +57,26 @@ test('R5.1: the worker brief adds the worktree rule only for isolation worktree'
         'utf8',
     );
     assert.match(source, /isolated \? ` \$\{WORKTREE_RULE\}` : ''/);
+});
+
+test('R5.5: a worktree folder is read back as its repository, other folders unchanged', () => {
+    assert.equal(
+        repoOfWorktreeFolder('E:\\repo\\.agentdeck\\worktrees\\fix-1a2b'),
+        'E:\\repo',
+    );
+    assert.equal(
+        repoOfWorktreeFolder('E:/repo/.agentdeck/worktrees/fix-1a2b'),
+        'E:/repo',
+    );
+    assert.equal(repoOfWorktreeFolder('E:/repo'), 'E:/repo');
+    assert.equal(repoOfWorktreeFolder(''), '');
+});
+
+test('R5.5: history import keeps a worker worktree and places its chat by the repository', async () => {
+    const source = await readFile(
+        new URL('../src/lib/chat/session/history.svelte.ts', import.meta.url),
+        'utf8',
+    );
+    assert.match(source, /worktree: current\.get\(item\.id\)\?\.worktree/);
+    assert.match(source, /repoOfWorktreeFolder\(item\.cwd\)/);
 });
