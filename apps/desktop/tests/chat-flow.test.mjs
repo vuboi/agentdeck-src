@@ -116,3 +116,43 @@ test('R3.2: a task aborted with its caller leaves no report in the backlog', asy
     assert.equal(api.taskRuns.has('t1'), false, 'the task ended');
     assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
 });
+
+// ---------- R3.3: a picker change made during a turn applies when the chat's turns end ----------
+
+async function eventsWith(pending) {
+    const session = {
+        id: 'chat',
+        title: 'Chat',
+        agent: 'claude',
+        model: 'old-model',
+        status: 'idle',
+        projectId: 'project',
+    };
+    const calls = { persist: 0, cancelAutoSwitch: 0 };
+    const api = await load('events', {
+        workspace: { activeId: 'chat', sessions: [session], projects: [] },
+        pendingSwitch: pending,
+        persistLocal: () => calls.persist++,
+        cancelAutoSwitch: () => calls.cancelAutoSwitch++,
+        getPref: async () => null,
+        setPref() {},
+        logFlow() {},
+        inTauri: () => false,
+    });
+    return { api, session, calls };
+}
+
+test('R3.3: the pick made during the turn is applied once the turns end, and the pending entry is removed', async () => {
+    const pending = { chat: { agent: 'codex', model: 'gpt-next' } };
+    const { api, session, calls } = await eventsWith(pending);
+    api.applyPendingSwitch('chat');
+    assert.equal(session.agent, 'codex');
+    assert.equal(session.model, 'gpt-next');
+    assert.equal(pending.chat, undefined);
+    assert.equal(calls.persist, 1, 'the applied route is saved');
+    assert.equal(
+        calls.cancelAutoSwitch,
+        0,
+        'applying a model does not cancel an account switch',
+    );
+});

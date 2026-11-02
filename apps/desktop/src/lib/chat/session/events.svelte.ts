@@ -583,6 +583,7 @@ function finalizeTurn(
             note: stopped ? undefined : reason,
         });
     }
+    applyPendingSwitch(sessionId);
     sendNextQueued(sessionId);
 }
 
@@ -604,6 +605,22 @@ export function stopOwedTurn(sessionId: string) {
     dropRecovery(sessionId);
     cancelAutoSwitch(sessionId);
     closeOwedTurn(sessionId, true);
+    applyPendingSwitch(sessionId);
+}
+
+/**
+ * A picker change made while the chat's turn ran (D3) becomes the chat's route once its turns have ended. Called where
+ * the turn ends for good, after the recovery has decided its route (a retry, a switch of account or of agent).
+ */
+export function applyPendingSwitch(sessionId: string) {
+    const pick = pendingSwitch[sessionId];
+    if (!pick) return;
+    delete pendingSwitch[sessionId];
+    const session = workspace.sessions.find((item) => item.id === sessionId);
+    if (!session) return;
+    session.agent = pick.agent;
+    session.model = pick.model;
+    persistLocal();
 }
 
 /**
@@ -1904,13 +1921,6 @@ function handleEventNow(
             delete liveReplies[sessionId];
             delete liveAsks[sessionId];
             delete liveHandouts[sessionId];
-            // A picker change made while this turn ran applies now that it has ended (D3).
-            const pick = pendingSwitch[sessionId];
-            if (pick && update.finished) {
-                delete pendingSwitch[sessionId];
-                session.agent = pick.agent;
-                session.model = pick.model;
-            }
             session.status =
                 (sessionLanes[sessionId]?.length ?? 0) > 0 ? 'working' : 'idle';
             persistLocal();
@@ -1923,6 +1933,11 @@ function handleEventNow(
             const responseBlocks = reply.blocks.flatMap((block, index) =>
                 block.kind === 'response' && block.text ? [index] : [],
             );
+            const recoveryTaken =
+                (autoSwitchRequested &&
+                    autoSwitchBlockId &&
+                    event.kind === 'error') ||
+                (recovering && recovery && event.kind === 'error');
             if (
                 autoSwitchRequested &&
                 autoSwitchBlockId &&
@@ -1941,7 +1956,11 @@ function handleEventNow(
                     clipText(event.message, 200),
                     failedAgent,
                 );
-            else if (
+            // A picker change made while this turn ran applies now that it has ended (D3), after the recovery above chose its route.
+            if (update.finished) applyPendingSwitch(sessionId);
+            if (recoveryTaken) {
+                // The recovery carries the chat on: it sends the next turn, or closes this one when no turn follows.
+            } else if (
                 sessionId === workspace.activeId &&
                 responseBlocks.length &&
                 !needsUserInput(sessionId)
