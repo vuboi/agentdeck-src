@@ -241,3 +241,14 @@ export function workerCallsOf(
         isolation: 'worktree',
     }));
 }
+
+/** The arguments of a delegate_task call that starts a worker call (the names parseDelegateArgs reads). */
+export function workerArgsOf(call: WorkerCall) {
+    return {
+        agent: call.agent,
+        model: call.model,
+        task: call.task,
+        wait: call.wait,
+        isolation: call.isolation,
+    };
+}

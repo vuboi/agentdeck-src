@@ -5,8 +5,10 @@ import {
     checkProposal,
     parseProposal,
     proposalOfCommand,
+    workerArgsOf,
     workerCallsOf,
 } from './propose.ts';
+import { planTask } from './delegate-plan.ts';
 
 const task = (
     title: string,
@@ -176,4 +178,51 @@ test('each task becomes one worker call: worktree, wait false, the parent agent,
     assert.match(calls[0].task, /pdf: do the part/);
     assert.match(calls[0].task, /Write only inside: src\/export/);
     assert.match(calls[1].task, /Write only inside: src\/theme/);
+});
+
+test('each split worker passes the same planner as delegate_task: a worktree, not waited for', () => {
+    const proposal = proposalOf(
+        split([task('pdf', ['src/export']), task('dark', ['src/theme'])]),
+    );
+    const planState = {
+        depth: 0,
+        maxDepth: 4,
+        tasks: {},
+        sessions: [],
+        rows: () => [
+            {
+                id: 'claude',
+                label: 'Claude',
+                models: [{ value: 'sonnet-4', label: 'Sonnet 4' }],
+            },
+        ],
+        routesFor: () => [],
+        routedFor: () => undefined,
+        isRunning: () => false,
+        customModelId: (rowId: string, model: string) => `${rowId}/${model}`,
+        agentKindOf: () => 'claude' as const,
+    };
+    const calls = workerCallsOf(proposal, {
+        agent: 'claude',
+        model: 'sonnet-4',
+    });
+    assert.equal(calls.length, 2);
+    for (const call of calls) {
+        const planned = planTask(
+            {
+                call: {
+                    callId: 'split-test',
+                    tool: 'delegate_task',
+                    caller: 'chat',
+                    args: workerArgsOf(call),
+                },
+                caller: { id: 'chat', agent: 'claude', model: 'sonnet-4' },
+            } as never,
+            planState as never,
+        );
+        assert.ok(planned.ok, planned.ok ? '' : planned.error);
+        assert.equal(planned.plan.args.worktree, true);
+        assert.equal(planned.plan.args.wait, false);
+        assert.match(planned.plan.args.task, /Write only inside: src\//);
+    }
 });

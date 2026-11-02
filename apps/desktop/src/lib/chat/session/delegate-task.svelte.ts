@@ -52,7 +52,7 @@ import {
 import { logFlow } from '../../tasks/flow-log';
 import { WORKTREE_RULE, worktreeSlug } from '../../tasks/worktree';
 import { type PlanState, planTask } from '../../tasks/delegate-plan';
-import type { WorkerCall } from '../../tasks/propose';
+import { type WorkerCall, workerArgsOf } from '../../tasks/propose';
 import { inTauri } from '../../app/platform/history';
 import { startPageMemoryBridge } from '../../browser/page-memory-bridge';
 import {
@@ -1700,13 +1700,7 @@ export function startProposalWorker(
             callId: `split-${crypto.randomUUID()}`,
             tool: 'delegate_task',
             caller: callerId,
-            args: {
-                agent: call.agent,
-                model: call.model,
-                task: call.task,
-                wait: call.wait,
-                isolation: call.isolation,
-            },
+            args: workerArgsOf(call),
         },
         answer,
     );
