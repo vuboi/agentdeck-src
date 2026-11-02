@@ -40,7 +40,7 @@
         imagePathsIn,
         loadImagePath,
     } from '../../chat/content/attachments';
-    import { groupState } from '../../app/ui/open-groups.svelte';
+    import { editGroup, groupView } from '../../app/ui/open-groups.svelte';
     import { openProjectFile } from '../../files/file-viewer.svelte';
     import { displayPath, withinRoot } from '../../files/paths';
     import { inTauri } from '../../app/platform/history';
@@ -84,7 +84,8 @@
     } = $props();
 
     // What is open lives outside the list (see open-groups.svelte.ts), so it is still open when the chat comes back.
-    const view = $derived(groupState(stateKey));
+    // Read only here: the entry is created by the click handlers (editGroup), never while the list renders.
+    const view = $derived(groupView(stateKey));
     // A folded part is not built until it is first opened: every tool group of a chat used to build all of its steps,
     // diffs, file previews and show-more boxes while folded, and the chat's virtual list builds a row each time it
     // scrolls into view (profiled as most of a scroll frame). Once opened it stays built, so folding it animates.
@@ -288,7 +289,16 @@
         for (const path of fallbackPaths) void loadGitDiff(path);
     });
     function toggleRow(index: number) {
-        view.rows[index] = !view.rows[index];
+        const group = editGroup(stateKey);
+        group.rows[index] = !group.rows[index];
+    }
+    function toggleOpen() {
+        const group = editGroup(stateKey);
+        group.open = !group.open;
+    }
+    function toggleThinking() {
+        const group = editGroup(stateKey);
+        group.thinking = !group.thinking;
     }
     const canOpenFiles = $derived(
         workspace.projects.some(
@@ -414,7 +424,7 @@
         class="flex h-6 w-fit max-w-full cursor-pointer items-center gap-2 rounded-md text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
         aria-expanded={hasDetails && view.open}
         disabled={!hasDetails}
-        onclick={() => hasDetails && (view.open = !view.open)}
+        onclick={() => hasDetails && toggleOpen()}
     >
         {#if live}
             {#key current.spinner}
@@ -477,7 +487,7 @@
                                 type="button"
                                 class="flex h-9 w-full cursor-pointer items-center gap-2 px-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
                                 aria-expanded={view.thinking}
-                                onclick={() => (view.thinking = !view.thinking)}
+                                onclick={toggleThinking}
                             >
                                 <ZIcon
                                     zType="lucideLightbulb"
