@@ -85,7 +85,14 @@ import {
     takeCoordinationPrompt,
     type SilentCoordinationPrompt,
 } from './orchestration.svelte';
-import { otherTurns, releaseCli, transcripts } from './history.svelte';
+import {
+    loadBackground,
+    messagesById,
+    otherTurns,
+    releaseCli,
+    setMessages,
+    transcripts,
+} from './history.svelte';
 
 /** The main agent finished the turn that got the answers: the run is over. */
 /** Puts the answers into the chat that asked, and runs its agent on them as soon as it is free. */
@@ -401,6 +408,7 @@ export function editMessage(
         transcripts.delete(session.id);
     } else {
         localMessages[session.id] = list;
+        setMessages(session.id, list);
         persistLocal();
     }
     // The CLI's conversation still holds the turns just removed: resumed, the agent would see them (and answer them again).
@@ -567,6 +575,14 @@ export function send(
             : session?.agent === 'antigravity'
               ? 'agy'
               : session?.agent;
+    // A chat that is not open has its turns only on disk: they are read first, so the turn is told what the chat said
+    // (the digest of a model or account change, the missed turns). Nothing shown changes.
+    if (session?.path && session.source && !messagesById.has(sessionId)) {
+        void loadBackground(session).then(() =>
+            send(sessionId, text, images, elements, mentions, extra),
+        );
+        return;
+    }
     if (credentialScope && credentialBusy(credentialScope)) {
         void waitForCredential(credentialScope).then(() =>
             send(sessionId, text, images, elements, mentions, extra),
@@ -948,6 +964,7 @@ export function forkSession(sourceId: string, fromMessageId?: string) {
         (message) => ({ ...message, live: false }),
     );
     localMessages[id] = copy;
+    setMessages(id, copy);
     // Only the copyable fields are kept; the rest describe the source session and are dropped.
     /* eslint-disable @typescript-eslint/no-unused-vars */
     const {

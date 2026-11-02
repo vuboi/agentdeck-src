@@ -64,6 +64,8 @@ export type SessionItem = {
     agent: Agent;
     /** Every agent that took part when an orchestrated chat mixes several; falls back to `[agent]`. */
     agents?: Agent[];
+    /** The agent the chat's first conversation belongs to. Set when the chat first runs, so a later switch cannot change it. */
+    firstAgent?: Agent;
     model: string;
     /** Git branch the session works on, if any. A conversation branch is `parentId`, not this. */
     gitBranch?: string;
@@ -100,6 +102,9 @@ export type SessionItem = {
     agentIds?: Partial<
         Record<Agent, { id: string; started: boolean; epoch?: number }>
     >;
+    /** Per agent: the last ledger turn (1-based position in the chat) its conversation has seen. Set when a turn ends,
+     *  so the next turn of that agent is told only the turns it missed (see binding.ts). */
+    syncedSeq?: Partial<Record<Agent, number>>;
 };
 
 export type SessionPlacementOrigin = 'agentdeck' | 'imported';

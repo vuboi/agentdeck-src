@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-index-migrate"
+description = "Enables the chat_index_migrate command without any pre-configured scope."
+commands.allow = ["chat_index_migrate"]
+
+[[permission]]
+identifier = "deny-chat-index-migrate"
+description = "Denies the chat_index_migrate command without any pre-configured scope."
+commands.deny = ["chat_index_migrate"]

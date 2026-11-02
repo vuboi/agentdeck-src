@@ -1,4 +1,4 @@
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import {
     connectors,
     agentHasRoom,
@@ -464,7 +464,25 @@ async function runRecovery(sessionId: string, plan: Recovery, reason: string) {
     } else {
         const target = recoveryTarget(plan.agent);
         if (!target) return;
+        const from = session.agent;
         moveChatTo(session, target.agent, target.model, target.effort);
+        // The provider changed without the user asking: the chat says so, in its own list, so the agents that answer
+        // next are told it, and the user sees it.
+        const at = new SvelteDate().toISOString();
+        messagesOf(session.id).push({
+            id: nextId(),
+            role: 'assistant',
+            agent: from,
+            time: clock(at),
+            at,
+            blocks: [
+                {
+                    kind: 'response',
+                    text: `> ↻ Moved to ${modelLabel(target.model) || agentLabel(target.agent, target.model)}, automatically: ${reason}`,
+                },
+            ],
+        });
+        persistLocal();
         state.retries = 0;
         state.tried.push(plan.agent);
     }
@@ -1420,6 +1438,9 @@ function handleEventNow(
     // Persist the provider id as soon as the CLI confirms it. A new model/account/edit can replace the current id,
     // but every old and new transcript still belongs to this AgentDeck chat and must alias back to the same owner.
     if (update.agentSession) rememberMixed(session);
+    // A finished turn: this conversation has now seen every turn of the chat, its own reply included (see binding.ts).
+    if (update.finished && event.kind !== 'error' && !ownedRun?.listener)
+        (session.syncedSeq ??= {})[agent] = messagesOf(sessionId).length;
     // A failed turn that can be carried on (retry, another account, the next agent) does not end the work: the chat
     // gets a line saying what happens, and the steps below that close the work (failure, reports) are skipped.
     const failureKind =

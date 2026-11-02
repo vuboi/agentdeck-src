@@ -369,7 +369,12 @@
     let fast = $state(true);
     let permission = $state<Permission>('auto');
 
+    // The chat whose picker the fields above show. It changes only once that chat's picker is applied (`applyPickerFor`):
+    // until then the fields still hold the previous chat's values, which must not reach the new chat (B8).
+    let pickerOf = $state('');
+
     $effect(() => {
+        if (pickerOf !== sessionId) return;
         turnOptions.permission = permission;
         turnOptions.effort = effort;
         chatTurnOptions[sessionId] = { permission, effort };
@@ -401,6 +406,7 @@
     let pickersLoaded = false;
 
     function applyPickerFor(sessionId: string) {
+        pickerOf = sessionId;
         const saved = pickers[sessionId];
         if (saved) {
             agent = saved.agent;
@@ -410,8 +416,11 @@
             permission = saved.permission;
             return;
         }
-        // A chat with nothing saved starts with fast mode on.
+        // A chat with nothing saved starts with fast mode on, and with the defaults: the picker of the chat before
+        // is not carried over (B8).
         fast = true;
+        permission = 'auto';
+        effort = 'medium';
         const session = workspace.sessions.find(
             (item) => item.id === sessionId,
         );
@@ -475,7 +484,8 @@
     $effect(() => {
         const current: Picker = { agent, model, effort, fast, permission };
         const id = workspace.activeId;
-        if (!pickersLoaded || !id) return;
+        // Only the picker's own chat is saved: on a switch the fields still hold the previous chat (B8).
+        if (!pickersLoaded || !id || pickerOf !== id) return;
         untrack(() => {
             pickers[id] = current;
             setPref('composer.pickers', pickers);

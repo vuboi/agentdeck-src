@@ -22,6 +22,7 @@ import { archivedMessages, deleteArchivedMessages } from '../content/archive';
 import { samePath } from '../../files/paths';
 import { CREDIT_PREFIX, baseModel } from '../../agents/credit-model';
 import { getPref, setPref, setPrefs } from '../../app/platform/prefs';
+
 import { splitAttachments, attachmentBlocks } from '../content/attachments';
 import { isHandbackPrompt, stripLead } from '../runs/handback';
 import { joinContinuations } from '../runs/continuations';
@@ -84,6 +85,34 @@ export const chat = $state({
     loadingOlder: false,
 });
 
+/**
+ * Every chat's message list, by chat id. A turn writes to the list of its own chat, whichever chat is open: the open
+ * chat shows `chat.messages`, which is its entry here (see `setMessages`), so a turn in another chat cannot land in it.
+ */
+export const messagesById = new SvelteMap<string, Message[]>();
+
+/** Sets a chat's list. The open chat shows the new list at once; any other chat keeps it for when it is opened. */
+export function setMessages(id: string, list: Message[]) {
+    if (workspace.activeId === id) {
+        chat.messages = list;
+        messagesById.set(id, chat.messages);
+    } else messagesById.set(id, list);
+}
+
+/** Reads a chat that is not open, so a turn in it is told the conversation it has. Nothing shown changes. */
+export async function loadBackground(session: SessionItem) {
+    const id = session.id;
+    let list: Message[] = [];
+    try {
+        const fresh = await fetchTranscript(session);
+        list = withLive(id, mergeWorkMessages(fresh.messages, []));
+    } catch {
+        // The chat keeps what it has: an empty list, which the turn then sends without history.
+    }
+    // A chat that got a list while it was read (its own turn, opened meanwhile) keeps that list.
+    if (!messagesById.has(id)) messagesById.set(id, list);
+}
+
 /** Returns a complete, display-ready conversation without changing which chat is open. */
 export async function conversationForExport(
     sessionId: string,
@@ -138,6 +167,7 @@ type SavedProviderState = Pick<
     | 'agentIds'
     | 'conversationModel'
     | 'source'
+    | 'firstAgent'
 > & {
     /** Every provider transcript that has belonged to this AgentDeck chat, including threads replaced by a model edit. */
     providerAliases?: string[];
@@ -207,7 +237,7 @@ export async function importHistory({ refresh = false } = {}) {
         // the refresh opens a brand-new draft instead of keeping the continued chat active.
         if (workspace.sessions.some((item) => item.id === keep))
             workspace.activeId = keep;
-        else if (refresh && keep && keepSession?.made) {
+        else if (keep && keepSession) {
             // The provider can lag briefly after the first turn writes its transcript. Keep the AgentDeck-created chat
             // visible during this refresh; creating a new draft here clears the active tab and makes the UI jump away.
             if (!workspace.sessions.some((item) => item.id === keep))
@@ -262,7 +292,11 @@ function applyHistory(all: HistorySession[]) {
     for (const [ownerId, saved] of Object.entries(mixed)) {
         for (const providerId of saved.providerAliases ?? [])
             aliasOf.set(providerId, ownerId);
-        const first = saved.source ?? saved.agents?.[0] ?? saved.agent;
+        const first =
+            saved.firstAgent ??
+            saved.source ??
+            saved.agents?.[0] ??
+            saved.agent;
         if (saved.agentSession && first)
             aliasOf.set(`${first}:${saved.agentSession}`, ownerId);
         for (const [agent, ids] of Object.entries(saved.agentIds ?? {}))
@@ -271,7 +305,7 @@ function applyHistory(all: HistorySession[]) {
     for (const item of workspace.sessions) {
         if (item.agentSession)
             aliasOf.set(
-                `${item.source ?? item.agent}:${item.agentSession}`,
+                `${item.firstAgent ?? item.source ?? item.agent}:${item.agentSession}`,
                 item.id,
             );
         for (const [agent, ids] of Object.entries(item.agentIds ?? {}))
@@ -363,8 +397,8 @@ function applyHistory(all: HistorySession[]) {
         workingDirectory: item.cwd || undefined,
         title: item.title,
         agent:
-            mixed[item.id]?.agents?.at(-1) ??
             mixed[item.id]?.agent ??
+            mixed[item.id]?.agents?.at(-1) ??
             item.source,
         // A chat already listed keeps the model the user picked (Claude transcripts record none, so a re-import used to reset it).
         // Sonnet otherwise, unless the chat was changed: the first model of the list is the biggest one.
@@ -386,6 +420,8 @@ function applyHistory(all: HistorySession[]) {
             item.parent_id && ids.has(item.parent_id)
                 ? item.parent_id
                 : knownParent(item.id, ids),
+        firstAgent:
+            mixed[item.id]?.firstAgent ?? current.get(item.id)?.firstAgent,
         source: item.source,
         path: item.path,
         updatedAt: item.updated_at ?? undefined,
@@ -409,10 +445,13 @@ function applyHistory(all: HistorySession[]) {
         (item) => item.id === workspace.activeId && isEmptyDraft(item),
     );
     if (draft) local.push(draft);
-    // The open chat stays open: after F5 it is an imported session, after a send it may still be a local one.
+    // The open chat stays open while it exists: after F5 it is an imported session, after a send it may still be a
+    // local one, and a row missing from one refresh (a file being written) must not move the chat or close its tab.
+    // Only a delete changes the open chat (see `deleteSession`).
     const keepActive =
         ids.has(workspace.activeId) ||
-        local.some((item) => item.id === workspace.activeId)
+        local.some((item) => item.id === workspace.activeId) ||
+        workspace.sessions.some((item) => item.id === workspace.activeId)
             ? workspace.activeId
             : undefined;
     // Folders added by hand stay even with no chat in them yet, right after "This computer".
@@ -503,6 +542,7 @@ export function rememberMixed(session: SessionItem) {
         agentIds: session.agentIds,
         conversationModel: session.conversationModel,
         source: session.source,
+        firstAgent: session.firstAgent,
     });
     const saved: SavedProviderState = {
         ...current,
@@ -608,6 +648,15 @@ async function userAttachments(message: HistoryMessage): Promise<Block[]> {
         : [];
 }
 
+/** A new session of the same conversation opens with a digest of what was said, then the typed text: only that text is shown. */
+function stripDigest(text: string): string {
+    const mark = '\n\n---\nNow the user says:\n';
+    const at = text.indexOf(mark);
+    return text.includes('What was said so far:') && at > 0
+        ? text.slice(at + mark.length)
+        : text;
+}
+
 async function toMessages(
     session: SessionItem,
     all: HistoryMessage[],
@@ -646,7 +695,10 @@ async function toMessages(
                         // The paragraph AgentDeck puts before a prompt (how to open pages, how to delegate) is not the user's text.
                         const typed =
                             message.role === 'user' && block.kind === 'response'
-                                ? { ...block, text: stripLead(block.text) }
+                                ? {
+                                      ...block,
+                                      text: stripDigest(stripLead(block.text)),
+                                  }
                                 : block;
                         return typed.kind === 'response' &&
                             message.role === 'user' &&
@@ -854,7 +906,7 @@ export async function loadOlder(
         );
         // Another chat may have been opened while the page was read: it must not get this chat's older messages.
         if (workspace.activeId !== session.id) return 0;
-        chat.messages = [...added, ...chat.messages];
+        setMessages(session.id, [...added, ...chat.messages]);
         chat.older = page.start;
         const cached = transcripts.get(session.id);
         if (cached)
@@ -951,12 +1003,17 @@ async function readTranscript(session: SessionItem | undefined) {
     if (!session.path || !session.source) {
         // A read of the chat before may still be loading: its result is dropped, so it can no longer clear the flag.
         chat.loading = false;
-        const messages = await restoreCommandImages(
-            session.id,
-            localMessages[session.id] ??
-                (mockIds.has(session.id) ? mockMessages : []),
-        );
-        if (token === transcriptToken) chat.messages = messages;
+        // A list the chat already holds (a turn ran in it while it was not open) is the one to show.
+        const messages =
+            messagesById.get(session.id) ??
+            (await restoreCommandImages(
+                session.id,
+                localMessages[session.id] ??
+                    (mockIds.has(session.id) ? mockMessages : []),
+            ));
+        if (token === transcriptToken) {
+            setMessages(session.id, messages);
+        }
         return;
     }
     // Show the empty chat with its skeleton first and let it paint: reading the saved copy and mounting a long chat
@@ -986,11 +1043,14 @@ async function readTranscript(session: SessionItem | undefined) {
     }
     if (cached) {
         // Show what we have right away; a stale copy is replaced as soon as the fresh one arrives.
-        chat.messages = await restoreCommandImages(
+        setMessages(
             session.id,
-            withLive(
+            await restoreCommandImages(
                 session.id,
-                await restoreArchivedWork(session, cached.messages),
+                withLive(
+                    session.id,
+                    await restoreArchivedWork(session, cached.messages),
+                ),
             ),
         );
         if (token !== transcriptToken) return;
@@ -1009,12 +1069,14 @@ async function readTranscript(session: SessionItem | undefined) {
             fresh.messages,
             cached?.messages ?? [],
         );
-        chat.messages = withLive(session.id, merged);
+        setMessages(session.id, withLive(session.id, merged));
         chat.older = fresh.start;
         remember(session, merged, fresh.start);
     } catch (error) {
         if (token !== transcriptToken) return;
-        if (!cached) chat.messages = [];
+        if (!cached) {
+            setMessages(session.id, []);
+        }
         chat.error = String(error);
     } finally {
         if (token === transcriptToken) chat.loading = false;
@@ -1088,6 +1150,7 @@ async function forgetSessions(removed: SessionItem[]) {
         delete draftFiles[id];
         delete draftElements[id];
         delete localMessages[id];
+        messagesById.delete(id);
         // What the chat kept in memory for its runs, queue and recoveries: nothing reads it again, and it would only grow.
         delete queued[id];
         delete queuePaused[id];
@@ -1100,6 +1163,8 @@ async function forgetSessions(removed: SessionItem[]) {
         delete recoveries[id];
         delete resumes[id];
         delete otherTurns[id];
+        delete mixed[id];
+        pendingMixed.delete(id);
         delete hidden[id];
         transcripts.delete(id);
         backlog.delete(id);
@@ -1109,6 +1174,7 @@ async function forgetSessions(removed: SessionItem[]) {
         forgetSessionPlacement(id);
     }
     saveOtherTurns();
+    void mixedReady.then(() => setPref('chat.mixed', mixed));
     await Promise.all([...gone].map((id) => deleteArchivedMessages(id)));
     patchCache((list) => list.filter((item) => !gone.has(item.id)));
     if (activeGone) {

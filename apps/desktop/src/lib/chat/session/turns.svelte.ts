@@ -651,30 +651,21 @@ export const hiddenPrompt = (message: Message) =>
     );
 
 /**
- * What the other agents of this chat said since this agent last spoke, as text to put before the prompt.
- * Each agent keeps its own conversation, so one that joins (or comes back to) a chat would not know the turns
- * it missed. `list` ends with the message being sent, unless `sent` is false (a hand-back turn has no message of its own:
- * `list` is then all that came before). The newest turns are kept when it is long.
+ * The turns of the chat that a conversation has not seen, as text to put before the prompt: `ledger` is the chat
+ * before the message being sent, `seqs` the 1-based positions the conversation is missing (see `resolveBinding`).
+ * Each agent keeps its own conversation, so one that joins (or comes back to) a chat would not know the turns it
+ * missed. The newest turns are kept when it is long.
  */
 export function missedTurns(
     session: SessionItem,
-    list: Message[],
-    sent = true,
+    ledger: Message[],
+    seqs: number[],
 ): string {
-    const before = sent ? list.slice(0, -1) : list;
     const writer = (message: Message) =>
         message.agent ?? session.source ?? session.agent;
-    let start = 0;
-    for (let index = before.length - 1; index >= 0; index--) {
-        if (
-            before[index].role === 'assistant' &&
-            writer(before[index]) === session.agent
-        ) {
-            start = index + 1;
-            break;
-        }
-    }
-    const missed = before.slice(start);
+    const missed = seqs.flatMap((seq) =>
+        ledger[seq - 1] ? [ledger[seq - 1]] : [],
+    );
     if (!missed.some((message) => message.role === 'assistant')) return '';
     const lines = missed
         .filter((message) => !hiddenPrompt(message))

@@ -4,6 +4,7 @@
 //! (Claude stream-json, ACP, Codex app-server) arrive with M3 and M5.
 
 pub mod agent;
+pub mod chat_index;
 pub mod history;
 pub mod models;
 

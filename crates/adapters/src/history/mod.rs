@@ -2,11 +2,17 @@
 //! (rename, delete to trash). Only `manage` ever writes to those folders. Formats are not documented by the vendors, so the
 //! parsers are tolerant: unknown line types are skipped, never fatal. See PLAN.md section 3b.
 
+mod antigravity;
 mod claude;
 mod codex;
+mod copilot;
+mod export;
 mod manage;
 mod util;
 
+pub use export::{
+    export_chat, ExportBlock, ExportChange, ExportChat, ExportResult, ExportTarget, ExportTurn,
+};
 pub use manage::{delete, rename};
 
 use std::path::{Path, PathBuf};
@@ -19,6 +25,8 @@ use thiserror::Error;
 pub enum Source {
     Claude,
     Codex,
+    Copilot,
+    Antigravity,
 }
 
 /// One session found on disk, enough to draw a row in the sidebar tree.
@@ -122,6 +130,10 @@ pub struct Roots {
     pub codex: PathBuf,
     /// `~/.codex/session_index.jsonl`: Codex's list of chat names.
     pub codex_index: PathBuf,
+    /// `~/.copilot/session-state`: one folder per Copilot CLI session.
+    pub copilot: PathBuf,
+    /// `~/.gemini`: Antigravity keeps one variant folder per app, each with a `brain` folder.
+    pub gemini: PathBuf,
     /// Deleted sessions are moved here, never destroyed.
     pub trash: PathBuf,
 }
@@ -133,6 +145,8 @@ impl Roots {
             claude: home.join(".claude").join("projects"),
             codex: home.join(".codex").join("sessions"),
             codex_index: home.join(".codex").join("session_index.jsonl"),
+            copilot: home.join(".copilot").join("session-state"),
+            gemini: home.join(".gemini"),
             trash: home.join(".agentdeck").join("trash"),
         }
     }
@@ -156,6 +170,16 @@ pub fn list_all(roots: &Roots) -> Vec<HistorySession> {
             .or_insert_with(|| is_project_directory(Path::new(&session.cwd)));
     }
     sessions
+}
+
+/// Sessions of one provider. The sidebar still reads `list_all` (Claude and Codex): the UI cannot show the others yet.
+pub fn list_native(roots: &Roots, source: Source) -> Vec<HistorySession> {
+    match source {
+        Source::Claude => claude::list(&roots.claude),
+        Source::Codex => codex::list(&roots.codex, &roots.codex_index),
+        Source::Copilot => copilot::list(&roots.copilot),
+        Source::Antigravity => antigravity::list(&roots.gemini),
+    }
 }
 
 /// Recognizes a project at the working folder itself; chat instructions alone are not evidence.
@@ -242,6 +266,8 @@ pub fn load(
     let root = match source {
         Source::Claude => &roots.claude,
         Source::Codex => &roots.codex,
+        Source::Copilot => &roots.copilot,
+        Source::Antigravity => &roots.gemini,
     };
     let path = path.canonicalize()?;
     if !path.starts_with(root.canonicalize()?) {
@@ -250,6 +276,8 @@ pub fn load(
     Ok(match source {
         Source::Claude => claude::load(&path)?,
         Source::Codex => codex::load(&path)?,
+        Source::Copilot => copilot::load(&path)?,
+        Source::Antigravity => antigravity::load(&path)?,
     })
 }
 
