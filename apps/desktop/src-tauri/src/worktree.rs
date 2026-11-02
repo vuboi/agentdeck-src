@@ -77,23 +77,51 @@ fn exclude_worktree_dir(top: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The branch name `base` stands for. `HEAD` becomes the branch it names, or the commit when detached, so the
+/// stored base still means the same branch when it is read again later.
+fn resolve_base(top: &Path, base: &str) -> Result<String, String> {
+    if base != "HEAD" {
+        return Ok(base.to_string());
+    }
+    let name = git_ok(top, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let name = String::from_utf8_lossy(&name).trim().to_string();
+    if name != "HEAD" && !name.is_empty() {
+        return Ok(name);
+    }
+    let sha = git_ok(top, &["rev-parse", "HEAD"])?;
+    Ok(String::from_utf8_lossy(&sha).trim().to_string())
+}
+
+/// A path as the user and git show it: no `\\?\` prefix, one separator style (`\` on Windows).
+fn plain_path(path: &Path) -> String {
+    let text = ag_adapters::agent::runner::without_verbatim(path)
+        .to_string_lossy()
+        .to_string();
+    if cfg!(windows) {
+        text.replace('/', "\\")
+    } else {
+        text
+    }
+}
+
 /// Creates a worktree on a new branch from `base`. Returns its path and branch.
 pub fn create(root: &str, slug: &str, base: &str) -> Result<WorktreeInfo, String> {
     let slug = checked_slug(slug)?;
     let top = toplevel(root)?;
     exclude_worktree_dir(&top)?;
+    let base = resolve_base(&top, base)?;
     let name = unique_name(slug);
     let branch = format!("agentdeck/{name}");
     let path = top.join(DIR).join(&name);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let path_text = path.to_string_lossy().to_string();
-    git_ok(&top, &["worktree", "add", "-b", &branch, &path_text, base])?;
+    let path_text = plain_path(&path);
+    git_ok(&top, &["worktree", "add", "-b", &branch, &path_text, &base])?;
     Ok(WorktreeInfo {
         path: path_text,
         branch,
-        base: base.to_string(),
+        base,
     })
 }
 
@@ -450,6 +478,21 @@ mod tests {
         );
         git_ok(&root, &["worktree", "remove", "--force", &outside_text]).ok();
         std::fs::remove_dir_all(&outside).ok();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn create_records_the_base_branch_and_a_plain_path() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let wt = create(&r, "plain", "HEAD").unwrap();
+        // "HEAD" is resolved to the branch it names, so the stored base means the same thing later.
+        assert_eq!(wt.base, "main");
+        assert!(!wt.path.starts_with(r"\\?\"), "{}", wt.path);
+        if cfg!(windows) {
+            assert!(!wt.path.contains('/'), "{}", wt.path);
+        }
+        remove(&r, &wt.path, &wt.branch, false).unwrap();
         std::fs::remove_dir_all(&root).ok();
     }
 
