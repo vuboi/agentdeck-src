@@ -1,3 +1,5 @@
+import type { ProposalState } from '../tasks/propose';
+
 /** A file a tool wrote: lines added and removed, and the text for a small diff. `create` once the result says so. */
 export type FileChange = {
     path: string;
@@ -51,6 +53,7 @@ export type Block =
           /** Work done under this call by a sub-agent: its steps and what it wrote. */ children?: Block[];
           /** Started in the background by its own flag (run_in_background, a sub agent): only such a call takes a task event as a task row. */ background?: boolean;
           /** The model a sub-agent call was given in its input. */ model?: string;
+          /** A propose_session call: the choice made on its card (tasks/propose.ts). Kept with the message. */ proposal?: ProposalState;
           /** A sub-agent or background job this call started, and how far it is. With several tasks (`tasks`), this is
            *  the whole of them: running while any runs. */ task?: TaskRecord;
           /** Every task this call started, by the task's id. A call can start several (one spawn, several agents). */ tasks?: Record<

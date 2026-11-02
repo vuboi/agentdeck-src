@@ -526,8 +526,25 @@ pub fn delegate_wait(name: &str, input: &serde_json::Value) -> bool {
     }
 }
 
+/// Whether a tool is AgentDeck's `propose_session`, under the name each CLI gives it (`toolKindOf` in tasks/delegate-task.ts).
+pub fn is_proposal_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "propose_session"
+            | "mcp__agentdeck__propose_session"
+            | "agentdeck.propose_session"
+            | "agentdeck:propose_session"
+            | "agentdeck/propose_session"
+            | "agentdeck_propose_session"
+    )
+}
+
 /// One line describing a tool call's input: the part a person would look at.
 pub fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
+    // A proposal is read whole: the webview parses its JSON to draw the card, so it is not cut like other input.
+    if is_proposal_tool(name) {
+        return input.to_string();
+    }
     if matches!(name, "TodoWrite" | "update_plan") {
         if let Some(plan) = plan_json(input) {
             return plan;
@@ -777,6 +794,43 @@ mod delegate_wait_tests {
             "mcp__agentdeck__task_status",
             &json!({ "task_id": "t" })
         ));
+    }
+}
+
+#[cfg(test)]
+mod proposal_input_tests {
+    use super::{is_proposal_tool, summarize_tool_input};
+    use serde_json::{json, Value};
+
+    #[test]
+    fn a_proposal_keeps_its_whole_input_and_other_tools_are_still_cut() {
+        let brief = "read the export code and write the pdf writer ".repeat(20);
+        let input = json!({
+            "title": "Export and theme",
+            "tasks": [
+                { "title": "pdf", "brief": brief, "write_scope": ["src/export"] },
+                { "title": "dark", "brief": brief, "write_scope": ["src/theme"] },
+            ],
+        });
+        assert!(input.to_string().chars().count() > 400);
+        for name in [
+            "propose_session",
+            "mcp__agentdeck__propose_session",
+            "agentdeck.propose_session",
+            "agentdeck:propose_session",
+            "agentdeck/propose_session",
+        ] {
+            assert!(is_proposal_tool(name), "{name}");
+            let line = summarize_tool_input(name, &input);
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).expect("the whole JSON"),
+                input,
+                "{name}"
+            );
+        }
+        assert!(!is_proposal_tool("mcp__agentdeck__delegate_task"));
+        let other = summarize_tool_input("mcp__agentdeck__delegate_task", &input);
+        assert!(other.chars().count() <= 401, "{other}");
     }
 }
 

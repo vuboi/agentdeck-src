@@ -12,7 +12,8 @@ export type ToolKind =
     | 'task_status'
     | 'task_stop'
     | 'task_ask'
-    | 'task_answer';
+    | 'task_answer'
+    | 'propose_session';
 
 /** Which of the delegation tools a tool-call name is, whatever the CLI calls it; null for any other tool. */
 export function toolKindOf(name: string): ToolKind | null {
@@ -25,7 +26,8 @@ export function toolKindOf(name: string): ToolKind | null {
         bare === 'task_status' ||
         bare === 'task_stop' ||
         bare === 'task_ask' ||
-        bare === 'task_answer'
+        bare === 'task_answer' ||
+        bare === 'propose_session'
         ? bare
         : null;
 }
@@ -823,7 +825,7 @@ export function cardOf(
  * tool descriptions say the same (src-tauri/src/delegate.rs). Kept short: it is sent with the first turn of every chat.
  */
 export const DELEGATE_HINT =
-    "Delegation (delegate_task, list_agents, task_ask, task_answer): do not wait for the user to ask for sub-agents. For each nontrivial request decide whether independent workstreams would materially improve speed, coverage or quality; if so, delegate those parts and keep ownership of the main task and its integration. Keep ordinary Q&A, a small or single-file edit, a quick command and a simple artifact action in this chat; do not invent work just to delegate. Implementing a larger plan (several files or steps) is delegated too: split it into independent work packages, one worker each on disjoint files, and keep the integration here. Use 1-4 workers for genuinely independent capabilities (investigation, implementation on disjoint files, verification, browser/artifact work); never give two workers overlapping write scopes. Start independent work together with wait:false, carry on with the main task, and use depends_on=[task_id] when a worker must wait for an earlier result. Use wait=true when the caller itself needs the report before continuing. Nested workers may delegate another bounded step. A worker can ask its parent with task_ask and resumes after task_answer; use wait:false for a parent that must answer a child during a longer workflow, because a synchronous parent waiting for that child would deadlock. Give each worker a self-contained goal, paths/resources, constraints and a compact evidence-first handoff. Reuse worker conversations for follow-up: to send a correction to a worker that already answered, call delegate_task with continue=<task_id>; replan only when evidence shows a gap. Never delegate the final answer or merely relay the user's message. Light public work (search, public info, chat, emails, prompts, scripts, small text edits) may go to a FREE TIER agent in list_agents to save paid usage; it may train on what it receives, so send no project source, private or personal data, keys, passwords, tokens, environment variables, internal IPs/host names or secret files (.env, keys, credentials): AgentDeck refuses those, so keep sensitive work with a trusted agent or do it here.";
+    "Delegation (delegate_task, list_agents, task_ask, task_answer): do not wait for the user to ask for sub-agents. For each nontrivial request decide whether independent workstreams would materially improve speed, coverage or quality; if so, delegate those parts and keep ownership of the main task and its integration. Keep ordinary Q&A, a small or single-file edit, a quick command and a simple artifact action in this chat; do not invent work just to delegate. Implementing a larger plan (several files or steps) is delegated too: split it into independent work packages, one worker each on disjoint files, and keep the integration here. Use 1-4 workers for genuinely independent capabilities (investigation, implementation on disjoint files, verification, browser/artifact work); never give two workers overlapping write scopes. Start independent work together with wait:false, carry on with the main task, and use depends_on=[task_id] when a worker must wait for an earlier result. Use wait=true when the caller itself needs the report before continuing. To offer the user a split into parallel sessions, call propose_session (2 to 4 tasks, each with a disjoint write_scope) instead of starting workers yourself; propose only for 2 or more independent parts, never for work of 2 files or fewer. Nested workers may delegate another bounded step. A worker can ask its parent with task_ask and resumes after task_answer; use wait:false for a parent that must answer a child during a longer workflow, because a synchronous parent waiting for that child would deadlock. Give each worker a self-contained goal, paths/resources, constraints and a compact evidence-first handoff. Reuse worker conversations for follow-up: to send a correction to a worker that already answered, call delegate_task with continue=<task_id>; replan only when evidence shows a gap. Never delegate the final answer or merely relay the user's message. Light public work (search, public info, chat, emails, prompts, scripts, small text edits) may go to a FREE TIER agent in list_agents to save paid usage; it may train on what it receives, so send no project source, private or personal data, keys, passwords, tokens, environment variables, internal IPs/host names or secret files (.env, keys, credentials): AgentDeck refuses those, so keep sensitive work with a trusted agent or do it here.";
 
 /** The line the app puts before a prompt: its parts joined into one paragraph that starts with `[AgentDeck] `. */
 export function agentdeckLead(...parts: string[]): string {

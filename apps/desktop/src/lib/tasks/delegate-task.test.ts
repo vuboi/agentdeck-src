@@ -279,3 +279,13 @@ test('a worker never falls back to a free tier, a chat that is not a worker may'
         ['claude', 'codex'],
     );
 });
+
+test('the hint says when to offer a split (propose_session), and stays short', () => {
+    assert.match(DELEGATE_HINT, /propose_session/);
+    assert.match(DELEGATE_HINT, /write_scope/);
+    assert.match(DELEGATE_HINT, /2 or more independent parts/);
+    assert.ok(
+        DELEGATE_HINT.length < 2500,
+        `${DELEGATE_HINT.length} characters`,
+    );
+});

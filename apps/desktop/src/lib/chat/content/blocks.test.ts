@@ -139,3 +139,44 @@ test('2000 deltas into a 20 000 character answer never parse it for questions', 
     );
     assert.equal(counter.calls, 0);
 });
+
+// propose_session: a proposal is a segment of its own, drawn as a card; the steps around it are groups of their own.
+const PROPOSAL = JSON.stringify({
+    title: 'Export and theme',
+    tasks: [
+        { title: 'pdf', brief: 'do pdf', write_scope: ['src/export'] },
+        { title: 'dark', brief: 'do dark', write_scope: ['src/theme'] },
+    ],
+});
+const proposal = (id: string): Block => ({
+    kind: 'command',
+    id,
+    command: `mcp__agentdeck__propose_session ${PROPOSAL}`,
+    output: 'Proposed to the user; wait for their choice.',
+    status: 'ok',
+});
+
+test('a propose_session call is a proposal segment, not a step of the group', () => {
+    const parts = segments([cmd('a'), proposal('p')]);
+    assert.deepEqual(
+        parts.map((part) => part.kind),
+        ['commands', 'proposal'],
+    );
+    const card = parts[1];
+    assert.equal(card.kind === 'proposal' && card.item.id, 'p');
+});
+
+test('the steps before and after a proposal are groups of their own', () => {
+    const parts = segments([cmd('a'), proposal('p'), cmd('b')]);
+    assert.deepEqual(
+        parts.map((part) => part.kind),
+        ['commands', 'proposal', 'commands'],
+    );
+});
+
+test('an unchanged proposal keeps its segment when a delta arrives', () => {
+    const card = proposal('p');
+    const first = segments([cmd('a'), card]);
+    const next = reuseSegments(first, segments([cmd('a'), card, cmd('b')]));
+    assert.equal(next[1], first[1]);
+});

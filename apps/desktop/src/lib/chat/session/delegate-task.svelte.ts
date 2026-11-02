@@ -52,6 +52,7 @@ import {
 import { logFlow } from '../../tasks/flow-log';
 import { WORKTREE_RULE, worktreeSlug } from '../../tasks/worktree';
 import { type PlanState, planTask } from '../../tasks/delegate-plan';
+import { type WorkerCall, workerArgsOf } from '../../tasks/propose';
 import { inTauri } from '../../app/platform/history';
 import { startPageMemoryBridge } from '../../browser/page-memory-bridge';
 import {
@@ -1685,6 +1686,24 @@ async function watchWorkers() {
     } finally {
         watchingWorkers = false;
     }
+}
+
+/** One worker of a split proposal (proposal.svelte.ts): the same path as a delegate_task call of the chat, so every check and
+ *  the worktree apply. `answer` gets the reason when the worker does not start. */
+export function startProposalWorker(
+    callerId: string,
+    call: WorkerCall,
+    answer: (text: string, isError?: boolean) => void,
+) {
+    startTask(
+        {
+            callId: `split-${crypto.randomUUID()}`,
+            tool: 'delegate_task',
+            caller: callerId,
+            args: workerArgsOf(call),
+        },
+        answer,
+    );
 }
 
 /** A call of one of the delegation tools, from the Rust side. */

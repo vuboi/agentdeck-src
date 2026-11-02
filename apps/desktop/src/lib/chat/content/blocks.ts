@@ -36,6 +36,10 @@ export type PlanItem = {
 export type Segment =
     | { kind: 'plan'; items: PlanItem[] }
     | { kind: 'block'; block: Block }
+    | /** A call of propose_session: a card of its own (ProposalCard), read from the call's line and its state. */ {
+          kind: 'proposal';
+          item: CommandBlock;
+      }
     | /** Calls of delegate_task: each is a card of its own, not a line among the steps. */ {
           kind: 'tasks';
           items: CommandBlock[];
@@ -184,6 +188,11 @@ export function segments(blocks: Block[], askOf: AskOf = askAsStep): Segment[] {
             else out.push({ kind: 'tasks', items: [block] });
             continue;
         }
+        if (kindOfCommand(block.command) === 'propose_session') {
+            flush();
+            out.push({ kind: 'proposal', item: block });
+            continue;
+        }
         if (block.task) {
             flush();
             const shown = out.at(-1);
@@ -222,6 +231,8 @@ function unchanged(old: Segment, next: Segment): boolean {
         return old.block === next.block;
     if (old.kind === 'plan' && next.kind === 'plan')
         return sameItems(old.items, next.items);
+    if (old.kind === 'proposal' && next.kind === 'proposal')
+        return old.item === next.item;
     if (old.kind === 'commands' && next.kind === 'commands')
         return (
             sameItems(old.items, next.items) &&

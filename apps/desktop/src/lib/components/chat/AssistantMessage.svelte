@@ -27,6 +27,7 @@
     import CommandGroup from './CommandGroup.svelte';
     import TurnChanges from './TurnChanges.svelte';
     import PlanCard from './PlanCard.svelte';
+    import ProposalCard from './ProposalCard.svelte';
     import TaskCards from '../tasks/TaskCards.svelte';
     import AgentActivityCards from './AgentActivityCards.svelte';
     import LiveStatus from './LiveStatus.svelte';
@@ -108,6 +109,8 @@
             </div>
         {:else if segment.kind === 'plan'}
             <PlanCard items={segment.items} />
+        {:else if segment.kind === 'proposal'}
+            <ProposalCard item={segment.item} sessionId={workspace.activeId} />
         {:else if segment.kind === 'tasks'}
             <TaskCards items={segment.items} />
         {:else if segment.kind === 'agent_activity'}
