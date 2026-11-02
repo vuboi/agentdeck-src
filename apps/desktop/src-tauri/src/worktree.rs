@@ -288,7 +288,6 @@ mod tests {
     fn repo() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("agentdeck-wt-{}", unique_name("t")));
         std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.to_string_lossy().to_string();
         git_ok(&dir, &["init", "-q", "-b", "main"]).unwrap();
         std::fs::write(dir.join("a.txt"), "one\n").unwrap();
         git_ok(&dir, &["add", "."]).unwrap();
@@ -305,7 +304,6 @@ mod tests {
             ],
         )
         .unwrap();
-        let _ = p;
         dir
     }
 

@@ -21,3 +21,11 @@ test('R5.6: terminal, browser and command panels use the chat folder (sessionCwd
         /sessionCwd\(activeSession\(\)\)|sessionCwd\(session\)/,
     );
 });
+
+// The worktree of a worker row is looked up once per row (an @const), not once per use in the markup.
+test('R5.9: DelegateList looks up a row worktree once', async () => {
+    const list = await src('lib/components/tasks/DelegateList.svelte');
+    const lookups = list.match(/worktreeOf\(block\.childId\)/g) ?? [];
+    assert.equal(lookups.length, 1);
+    assert.match(list, /\{@const wt = worktreeOf\(block\.childId\)\}/);
+});

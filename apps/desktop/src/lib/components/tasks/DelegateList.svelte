@@ -202,6 +202,7 @@
             {@const settled = settledOf(block)}
             {@const jumpable = settled !== 'queued' && settled !== 'skipped'}
             {@const expanded = openRows[block.childId] ?? false}
+            {@const wt = worktreeOf(block.childId)}
             <div
                 class="group/row flex w-full items-stretch transition-colors hover:bg-muted/60 {i >
                 0
@@ -225,10 +226,9 @@
                     <span class="shrink-0 font-medium"
                         >{agentDisplayName(block.agent, block.model)}</span
                     >
-                    {#if worktreeOf(block.childId)}<span
+                    {#if wt}<span
                             class="shrink-0 rounded-full bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground"
-                            title={worktreeOf(block.childId)?.path}
-                            >{worktreeOf(block.childId)?.branch}</span
+                            title={wt.path}>{wt.branch}</span
                         >{/if}
                     <span class="min-w-0 flex-1 truncate text-muted-foreground"
                         >{lineOf(block.childId, settled) ||
@@ -274,7 +274,7 @@
                             >{queuedCount(block.childId)} waiting</span
                         >{/if}
                 </button>
-                {#if worktreeOf(block.childId)}
+                {#if wt}
                     <button
                         type="button"
                         class="shrink-0 cursor-pointer px-2 text-xs text-muted-foreground outline-none transition-colors hover:text-primary disabled:opacity-40"
