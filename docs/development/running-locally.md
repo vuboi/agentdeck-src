@@ -2,13 +2,13 @@
 
 Use the root scripts below instead of invoking `tauri dev` directly. `scripts/run-desktop.mjs` keeps the native identity, Vite URL, CSP and debug Preview capability in agreement.
 
-| Command | Purpose | Native identity | Frontend |
-| --- | --- | --- | --- |
-| `pnpm dev` | Native development with hot reload | `dev.agentdeck.desktop.dev` | Loopback Vite server, preferred port 1431 |
-| `pnpm dev:web` | Browser-only frontend development | No native app/backend | A separate free loopback port |
-| `pnpm dev:update` | Native dev with a simulated update dialog | Same Dev identity | Same launcher and port selection as `dev` |
-| `pnpm run:build` | Build and open a local production-mode app | `dev.agentdeck.desktop.local` | Embedded files; no Vite server |
-| `pnpm build` / `pnpm build:win` | Produce normal installers | `dev.agentdeck.desktop` | Embedded files |
+| Command                         | Purpose                                    | Native identity               | Frontend                                  |
+| ------------------------------- | ------------------------------------------ | ----------------------------- | ----------------------------------------- |
+| `pnpm dev`                      | Native development with hot reload         | `dev.agentdeck.desktop.dev`   | Loopback Vite server, preferred port 1431 |
+| `pnpm dev:web`                  | Browser-only frontend development          | No native app/backend         | A separate free loopback port             |
+| `pnpm dev:update`               | Native dev with a simulated update dialog  | Same Dev identity             | Same launcher and port selection as `dev` |
+| `pnpm run:build`                | Build and open a local production-mode app | `dev.agentdeck.desktop.local` | Embedded files; no Vite server            |
+| `pnpm build` / `pnpm build:win` | Produce normal installers                  | `dev.agentdeck.desktop`       | Embedded files                            |
 
 ## Isolation
 
@@ -31,3 +31,14 @@ pnpm run:build --dry-run
 ```
 
 Port probing is advisory: if another process takes the selected port immediately afterwards, startup fails visibly rather than killing that process. Keep existing user terminals running during investigation; do not solve a port conflict by blindly stopping the listener.
+
+## Rust checks on Windows (`whisper-rs-sys`)
+
+Plain `cargo` on Windows can fail in `whisper-rs-sys`: bindgen cannot find MSVC headers, so the bundled stale `bindings.rs` is used. Run cargo through the wrapper, which loads the VS 2022 BuildTools `vcvars64` env, sets `LIBCLANG_PATH` and passes `INCLUDE` to bindgen as `-isystem`:
+
+```powershell
+scripts\win-cargo.cmd check -p agentdeck-desktop
+scripts\win-cargo.cmd clippy --workspace -- -D warnings
+```
+
+Requirements: VS 2022 BuildTools with the C++ workload (`vcvars64.bat` at `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`), and LLVM at `C:\Program Files\LLVM` (`libclang.dll`). Edit the paths at the top of `scripts/win-cargo.cmd` if they differ.
