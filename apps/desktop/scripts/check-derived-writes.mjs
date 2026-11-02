@@ -17,6 +17,10 @@ const WRITERS = [
     { name: 'messagesOf(', use: 'messagesView' },
     { name: 'editGroup(', use: 'groupView' },
     { name: 'groupState(', use: 'groupView' },
+    // Wrappers that reach messagesOf (no read-only twin): a template or $derived must not call them.
+    { name: 'continueCurrentRun(', use: 'a handler in the script' },
+    { name: 'handoffFor(', use: 'a handler in the script' },
+    { name: 'conversationForExport(', use: 'a handler in the script' },
 ];
 const warnings = [];
 
