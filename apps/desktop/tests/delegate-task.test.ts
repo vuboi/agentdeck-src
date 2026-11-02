@@ -539,7 +539,8 @@ test('a delegate_task tool event becomes a command block the card reads', () => 
 
 test('the delegation hint stays short, because it goes with the first turn of every chat', () => {
     // The bound only catches the hint growing into an essay; the exact count moves with every wording change.
-    // 2500: the hint also carries the worktree isolation rule (feat/worktree-delegate); still one short block.
+    // 2500, not 1500: the hint is about 2100 characters (tool names, worker limits, free-tier rule), and that wording is
+    // what agents get today, so it is kept. The hint does not mention worktrees; the worker's brief does (WORKTREE_RULE).
     assert.ok(
         DELEGATE_HINT.length < 2500,
         `${DELEGATE_HINT.length} characters`,
