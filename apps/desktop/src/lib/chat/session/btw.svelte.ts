@@ -1,7 +1,9 @@
+import { SvelteSet } from 'svelte/reactivity';
 import { workspace, localMessages, type SessionItem } from './state.svelte';
 import { send } from './sending.svelte';
 import { askText } from './run.svelte';
 import { chatTurnOptions, stopTurn } from './turns.svelte';
+import { getPref, setPref } from '../../app/platform/prefs';
 
 export { btwQuestionOf } from './btw-command';
 
@@ -9,11 +11,37 @@ export { btwQuestionOf } from './btw-command';
 export const sideOf = (parentId: string) =>
     workspace.sessions.find((item) => item.side?.parentId === parentId);
 
+/**
+ * Transcripts (`claude:<session>`) of closed side chats. Claude Code keeps every session file it writes, so history
+ * would import these as chats of their own. Kept as a pref so the list survives a restart.
+ */
+const IGNORED_PREF = 'btw.ignored';
+const IGNORED_LIMIT = 200;
+const ignored = new SvelteSet<string>();
+export const btwIgnoredReady = getPref<string[]>(IGNORED_PREF).then(
+    (saved) => {
+        for (const key of saved ?? []) ignored.add(key);
+    },
+    () => {},
+);
+/** Whether a history item is the transcript of a closed side chat (its id, as history lists it). */
+export const isBtwTranscript = (historyId: string) => ignored.has(historyId);
+
+function ignoreTranscript(key: string) {
+    ignored.delete(key);
+    ignored.add(key);
+    while (ignored.size > IGNORED_LIMIT)
+        ignored.delete(ignored.values().next().value as string);
+    void btwIgnoredReady.then(() => setPref(IGNORED_PREF, [...ignored]));
+}
+
 /** Closes the side chat of a chat: its run is stopped, then it is removed from the app and never saved. */
 export function dropSide(parentId: string) {
     const side = sideOf(parentId);
     if (!side) return;
     stopTurn(side.id, true);
+    if (side.agentSession)
+        ignoreTranscript(`${side.agent}:${side.agentSession}`);
     workspace.sessions = workspace.sessions.filter(
         (item) => item.id !== side.id,
     );

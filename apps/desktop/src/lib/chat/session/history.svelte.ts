@@ -61,7 +61,7 @@ import {
     withLive,
 } from './run.svelte';
 import { hidden, signature } from './sending.svelte';
-import { dropSide } from './btw.svelte';
+import { btwIgnoredReady, dropSide, isBtwTranscript } from './btw.svelte';
 import {
     lastPrompt,
     queuePaused,
@@ -203,12 +203,14 @@ export async function importHistory({ refresh = false } = {}) {
         addedReady,
         sessionPlacementsReady,
         mixedReady,
+        btwIgnoredReady,
     ]);
     // Show the last known index at once, then refresh it: indexing every file takes a moment.
     if (!refresh)
         try {
-            const cached =
-                (await getPref<HistorySession[]>(HISTORY_INDEX)) ?? [];
+            const cached = (
+                (await getPref<HistorySession[]>(HISTORY_INDEX)) ?? []
+            ).filter((item) => !isBtwTranscript(item.id));
             if (cached.length > 0) {
                 // A stale cache must not replace the restored active id with its first row. That used to make the
                 // subsequent full import preserve the wrong session even when it found the session the user had open.
@@ -227,7 +229,10 @@ export async function importHistory({ refresh = false } = {}) {
         }
     history.loading = true;
     try {
-        const found = await listHistory();
+        // The transcripts of closed /btw side chats are not chats: see btw.svelte.ts.
+        const found = (await listHistory()).filter(
+            (item) => !isBtwTranscript(item.id),
+        );
         const keep = workspace.activeId;
         const keepSession = workspace.sessions.find((item) => item.id === keep);
         const keepIsLocal = localSessions().some((item) => item.id === keep);

@@ -5,7 +5,7 @@ import { btwQuestionOf } from '../src/lib/chat/session/btw-command.ts';
 import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
 
 /** A parent chat on `agent`, and the stubs `btw.svelte.ts` reaches through its imports. */
-async function setup(agent = 'claude') {
+async function setup(agent = 'claude', saved = {}) {
     const parent = {
         id: 'chat',
         agent,
@@ -29,8 +29,12 @@ async function setup(agent = 'claude') {
         stopTurn: (...args) => stops.push(args),
         askText: () => '',
         btwQuestionOf,
+        getPref: async (key) => saved[key],
+        setPref: async (key, value) => {
+            saved[key] = value;
+        },
     });
-    return { api, workspace, chatTurnOptions, sent, stops };
+    return { api, workspace, chatTurnOptions, sent, stops, saved };
 }
 
 test('R4.1: a /btw side chat of Claude runs in plan mode (read-only), with the parent effort', async () => {
@@ -146,4 +150,22 @@ test('R4.3: closing a side chat stops its run before it is removed, and a new /b
         'a new /btw stops the one it replaces',
     );
     assert.equal(sent.length, 3);
+});
+
+test('R4.4: the transcript of a closed side chat is ignored by history, also after a restart', async () => {
+    const { api, sent, stops, saved } = await setup('claude');
+    const side = api.askBtw('chat', 'q').side;
+    api.dropSide('chat');
+    await api.btwIgnoredReady;
+    const key = `claude:${side.agentSession}`;
+    assert.equal(api.isBtwTranscript(key), true);
+    assert.equal(api.isBtwTranscript('claude:someone-else'), false);
+    // Arrays made inside the loaded module come from its own realm: compare copies.
+    assert.deepEqual(Array.from(saved['btw.ignored']), [key]);
+    assert.equal(sent.length, 1);
+    assert.equal(stops.length, 1);
+    // A later start (a new load of the module) reads the same list back.
+    const later = await setup('claude', { ...saved });
+    await later.api.btwIgnoredReady;
+    assert.equal(later.api.isBtwTranscript(key), true);
 });
