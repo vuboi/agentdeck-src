@@ -207,33 +207,8 @@
   const needsLogin = (account: Account) => account.expired || authFailure(account.status);
   const needsAgyLogin = (account: { expired: boolean; status: string | null }, error: string | null | undefined) => account.expired || authFailure(account.status) || authFailure(error);
 
-  type AgyAccountGroup = { key: string; accounts: AgyAccount[] };
-
-  /** Accounts with the same quota shape share a grid so their cards keep the same height. */
-  const agyAccountShape = (account: AgyAccount): string => {
-    const quota = connectors.agyAccountQuotas.find((item) => item.id === account.id)?.quota;
-    if (!quota?.groups.length) return 'no-quota';
-    return quota.groups.map((group) => `${group.id}:${group.windows.map((window) => window.label).join(',')}`).join('|');
-  };
-
-  const agyAccountGroups = $derived.by<AgyAccountGroup[]>(() => {
-    const grouped = new Map<string, AgyAccount[]>();
-    const accounts = [...connectors.accounts.agy].sort((a, b) => Number(b.active) - Number(a.active));
-    for (const account of accounts) {
-      const key = agyAccountShape(account);
-      const group = grouped.get(key);
-      if (group) group.push(account);
-      else grouped.set(key, [account]);
-    }
-
-    const groups = [...grouped.entries()].map(([key, accounts]) => ({ key, accounts }));
-    const activeGroup = groups.find((group) => group.accounts.some((account) => account.active));
-    return [
-      ...(activeGroup ? [activeGroup] : []),
-      ...groups.filter((group) => group !== activeGroup && group.accounts.length > 1),
-      ...groups.filter((group) => group !== activeGroup && group.accounts.length === 1),
-    ];
-  });
+  // Keep one shared grid so accounts with missing or different quota data cannot split the layout.
+  const agyAccounts = $derived([...connectors.accounts.agy].sort((a, b) => Number(b.active) - Number(a.active)));
 
   async function refreshCardAccounts(card: Card) {
     if (isRefreshingCard(card.id)) return;
@@ -471,17 +446,15 @@
                       {:else if connectors.accounts.agy.length === 0}
                         <p class="mb-3 rounded-lg border border-dashed border-border p-3 text-[0.75rem] text-muted-foreground">The signed-in account is being saved to Windows Credential Manager…</p>
                       {:else}
-                        <!-- One card per saved account, as for Codex: its switch button and its own usage, read with its own sign-in. -->
+                        <!-- One shared grid keeps account cards aligned even when quota groups differ. -->
                         {#key refreshGeneration[card.id] ?? 0}
-                          <div class="mb-3 grid gap-2">
-                            {#each agyAccountGroups as group, groupIndex (group.key)}
-                              <ul class="grid gap-2 sm:grid-cols-2">
-                                {#each group.accounts as account, accountIndex (account.id)}
+                          <ul class="mb-3 grid gap-2 sm:grid-cols-2">
+                                {#each agyAccounts as account, accountIndex (account.id)}
                                   {@const quota = connectors.agyAccountQuotas.find((item) => item.id === account.id)}
                                   {@const switching = Boolean(connectors.busy['switch:agy']?.endsWith(account.email))}
                                   {@const authRequired = needsAgyLogin(account, quota?.error)}
                                   {@const accountRefreshing = refreshing === account.id}
-                                  <li class="min-w-0 rounded-lg border p-3 {account.active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}" in:fly={{ y: 18, duration: 300, delay: groupIndex * 120 + accountIndex * 70 }}>
+                                  <li class="min-w-0 self-start rounded-lg border p-3 {account.active ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border'}" in:fly={{ y: 18, duration: 300, delay: accountIndex * 70 }}>
                                   <div class="flex items-center gap-2">
                                     <span class="min-w-0 flex-1 truncate text-sm font-medium" title={account.email}>{account.email}</span>
                                     {#if account.active}<span class="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">IN USE</span>{/if}
@@ -537,9 +510,7 @@
                                   {/if}
                                   </li>
                                 {/each}
-                              </ul>
-                            {/each}
-                          </div>
+                          </ul>
                         {/key}
                       {/if}
                       {#if connectors.errors['switch:agy']}

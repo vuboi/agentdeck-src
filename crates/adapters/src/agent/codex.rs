@@ -37,9 +37,9 @@ struct Turn {
     last_was_text: bool,
     /// Folder the turn runs in: a changed file is read from here.
     cwd: Option<PathBuf>,
-    /// Contents of files as they were when this Codex turn started. This includes pre-existing
-    /// worktree edits, so a later file_change is not mistaken for a new file.
-    baselines: HashMap<PathBuf, String>,
+    /// Contents of files before this turn, advanced after each reported change. File-change events
+    /// are deltas within a turn, matching the history adapter, rather than repeated whole-file snapshots.
+    reported_files: HashMap<PathBuf, String>,
 }
 
 impl Turn {
@@ -67,7 +67,12 @@ pub struct Codex {
 /// That is progress, not the end of the turn: the turn ends with `turn.failed` or `turn.completed`.
 fn is_retry_notice(message: &str) -> bool {
     let rest = message.trim_start().strip_prefix("Reconnecting");
-    rest.is_some_and(|rest| rest.trim_start_matches('.').trim_start_matches('…').trim_start().starts_with(|c: char| c.is_ascii_digit()))
+    rest.is_some_and(|rest| {
+        rest.trim_start_matches('.')
+            .trim_start_matches('…')
+            .trim_start()
+            .starts_with(|c: char| c.is_ascii_digit())
+    })
 }
 
 /// TOML string for a `-c key=value` override.
@@ -176,8 +181,8 @@ fn version_key(path: &Path) -> Vec<u64> {
 fn snapshot(
     cwd: Option<&Path>,
     path: &str,
-    baselines: &HashMap<PathBuf, String>,
-) -> (String, String) {
+    reported_files: &HashMap<PathBuf, String>,
+) -> (PathBuf, String, String) {
     let file = Path::new(path);
     let full = if file.is_relative() {
         match cwd {
@@ -187,7 +192,7 @@ fn snapshot(
                 let from_root = root.join(file);
                 [from_cwd, from_root]
                     .into_iter()
-                    .find(|candidate| baselines.contains_key(candidate) || candidate.exists())
+                    .find(|candidate| reported_files.contains_key(candidate) || candidate.exists())
                     .unwrap_or_else(|| root.join(file))
             }
             None => file.to_path_buf(),
@@ -196,12 +201,12 @@ fn snapshot(
         file.to_path_buf()
     };
     let after = std::fs::read_to_string(&full).unwrap_or_default();
-    let before = baselines
+    let before = reported_files
         .get(&full)
         .cloned()
         .or_else(|| head_snapshot(cwd, &full))
         .unwrap_or_default();
-    (before, after)
+    (full, before, after)
 }
 
 fn repo_root(cwd: &Path) -> Option<PathBuf> {
@@ -220,7 +225,11 @@ fn repo_root(cwd: &Path) -> Option<PathBuf> {
 fn head_snapshot(cwd: Option<&Path>, full: &Path) -> Option<String> {
     let cwd = cwd?;
     let root = repo_root(cwd)?;
-    let relative = full.strip_prefix(&root).ok()?.to_string_lossy().replace('\\', "/");
+    let relative = full
+        .strip_prefix(&root)
+        .ok()?
+        .to_string_lossy()
+        .replace('\\', "/");
     let output = git_command()
         .arg("-C")
         .arg(&root)
@@ -303,9 +312,10 @@ impl Provider for Codex {
 
     fn args(&self, req: &TurnRequest) -> Vec<String> {
         if let Ok(mut turn) = self.turn.lock() {
+            let baselines = worktree_baselines(req.cwd.as_deref());
             *turn = Turn {
                 cwd: req.cwd.clone(),
-                baselines: worktree_baselines(req.cwd.as_deref()),
+                reported_files: baselines,
                 ..Turn::default()
             };
         }
@@ -459,7 +469,9 @@ impl Provider for Codex {
                         Some("delete") => "Delete",
                         _ => "Edit",
                     };
-                    let (before, after) = snapshot(cwd.as_deref(), &path, &turn.baselines);
+                    let (full_path, before, after) =
+                        snapshot(cwd.as_deref(), &path, &turn.reported_files);
+                    turn.reported_files.insert(full_path, after.clone());
                     let diff = line_diff(&before, &after);
                     events.push(AgentEvent::ToolCall {
                         id: call.clone(),
@@ -469,7 +481,7 @@ impl Provider for Codex {
                             path,
                             added: diff.added,
                             removed: diff.removed,
-                            cumulative: true,
+                            cumulative: false,
                             before: diff.before,
                             after: diff.after,
                         }),
@@ -784,10 +796,17 @@ mod tests {
     #[test]
     fn a_reconnect_notice_does_not_end_the_turn() {
         let codex = Codex::default();
-        let notice = codex.parse_line(&json!({"type": "error", "message": "Reconnecting... 2/5 (request timed out)"}).to_string());
-        assert!(matches!(&notice[..], [AgentEvent::Thinking { text }] if text.starts_with("Reconnecting... 2/5")));
+        let notice = codex.parse_line(
+            &json!({"type": "error", "message": "Reconnecting... 2/5 (request timed out)"})
+                .to_string(),
+        );
+        assert!(
+            matches!(&notice[..], [AgentEvent::Thinking { text }] if text.starts_with("Reconnecting... 2/5"))
+        );
         // A real failure that mentions reconnecting is still a failure.
-        let failed = codex.parse_line(&json!({"type": "error", "message": "Reconnecting failed: no network"}).to_string());
+        let failed = codex.parse_line(
+            &json!({"type": "error", "message": "Reconnecting failed: no network"}).to_string(),
+        );
         assert!(matches!(&failed[..], [AgentEvent::Error { .. }]));
     }
 

@@ -55,7 +55,9 @@ fn save_value(prefix: &str, count_target: &str, value: &str) -> Result<(), Strin
 }
 
 fn delete_value(prefix: &str, count_target: &str) -> Result<(), String> {
-    if let Some(count) = secret_load(count_target.to_string()).and_then(|value| value.parse::<usize>().ok()) {
+    if let Some(count) =
+        secret_load(count_target.to_string()).and_then(|value| value.parse::<usize>().ok())
+    {
         for index in 0..count {
             secret_delete(format!("{prefix}:{index}"))?;
         }
@@ -120,7 +122,12 @@ pub(crate) fn enterprise_id() -> Option<String> {
 pub(super) fn logout() -> Result<(), String> {
     delete_value(ACCESS_SECRET, ACCESS_COUNT_SECRET)?;
     delete_value(REFRESH_SECRET, REFRESH_COUNT_SECRET)?;
-    for target in [LEGACY_SECRET, EXPIRY_SECRET, USER_ID_SECRET, ENTERPRISE_ID_SECRET] {
+    for target in [
+        LEGACY_SECRET,
+        EXPIRY_SECRET,
+        USER_ID_SECRET,
+        ENTERPRISE_ID_SECRET,
+    ] {
         secret_delete(target.to_string())?;
     }
     Ok(())
@@ -310,13 +317,25 @@ fn is_model_id(value: &str) -> bool {
 
 fn classify_text(value: &str) -> Option<bool> {
     let value = value.trim().to_ascii_lowercase();
-    if value == "free" || value.ends_with("_free") || value.ends_with("-free") || value.contains("free tier") {
+    if value == "free"
+        || value.ends_with("_free")
+        || value.ends_with("-free")
+        || value.contains("free tier")
+    {
         return Some(true);
     }
-    if ["paid", "premium", "pro", "enterprise", "subscription", "credit"]
-        .iter()
-        .any(|word| value == *word || value.contains(&format!("_{word}")) || value.contains(&format!("-{word}")))
-    {
+    if [
+        "paid",
+        "premium",
+        "pro",
+        "enterprise",
+        "subscription",
+        "credit",
+    ]
+    .iter()
+    .any(|word| {
+        value == *word || value.contains(&format!("_{word}")) || value.contains(&format!("-{word}"))
+    }) {
         return Some(false);
     }
     None
@@ -337,13 +356,29 @@ fn classify_credits(value: &Value) -> Option<bool> {
 }
 
 fn model_free(object: &serde_json::Map<String, Value>) -> Option<bool> {
-    for key in ["credits", "credit", "creditRate", "credit_rate", "creditMultiplier", "credit_multiplier"] {
+    for key in [
+        "credits",
+        "credit",
+        "creditRate",
+        "credit_rate",
+        "creditMultiplier",
+        "credit_multiplier",
+    ] {
         if let Some(value) = object.get(key).and_then(classify_credits) {
             return Some(value);
         }
     }
-    for key in ["free", "isFree", "is_free", "freeTier", "free_tier", "isFreeModel"] {
-        let Some(value) = object.get(key) else { continue };
+    for key in [
+        "free",
+        "isFree",
+        "is_free",
+        "freeTier",
+        "free_tier",
+        "isFreeModel",
+    ] {
+        let Some(value) = object.get(key) else {
+            continue;
+        };
         if let Some(value) = value.as_bool() {
             return Some(value);
         }
@@ -354,8 +389,21 @@ fn model_free(object: &serde_json::Map<String, Value>) -> Option<bool> {
             return Some(value);
         }
     }
-    for key in ["tier", "plan", "pricing", "billing", "billingType", "billing_type", "priceType", "price_type"] {
-        if let Some(value) = object.get(key).and_then(Value::as_str).and_then(classify_text) {
+    for key in [
+        "tier",
+        "plan",
+        "pricing",
+        "billing",
+        "billingType",
+        "billing_type",
+        "priceType",
+        "price_type",
+    ] {
+        if let Some(value) = object
+            .get(key)
+            .and_then(Value::as_str)
+            .and_then(classify_text)
+        {
             return Some(value);
         }
     }
@@ -418,9 +466,8 @@ fn collect_image_models(value: &Value, models: &mut Vec<String>) {
                 .get("tags")
                 .and_then(Value::as_array)
                 .is_some_and(|tags| {
-                    tags.iter().any(|tag| {
-                        matches!(tag.as_str(), Some("text-to-image" | "image-to-image"))
-                    })
+                    tags.iter()
+                        .any(|tag| matches!(tag.as_str(), Some("text-to-image" | "image-to-image")))
                 });
             if is_image_model {
                 for key in ["id", "model", "modelId", "model_id"] {

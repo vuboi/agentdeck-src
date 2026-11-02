@@ -18,7 +18,9 @@ use super::interrupt::{self, Interrupter, Signal, StopToken};
 use super::stall::Watchdog;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use super::warm::{holds, lock_of, park, send, settings_key, start, take_server, InjectSlot, Warm, EXIT_GRACE};
+use super::warm::{
+    holds, lock_of, park, send, settings_key, start, take_server, InjectSlot, Warm, EXIT_GRACE,
+};
 use super::{AgentEvent, Provider, TaskStatus, TurnRequest};
 
 /// A reply to a handshake request that takes longer than this means the server is not coming up.
@@ -89,9 +91,13 @@ struct Translate {
 /// kept: a child's usage, end and errors are not the parent turn's.
 fn scoped(parent: &str, event: AgentEvent) -> Option<AgentEvent> {
     match event {
-        AgentEvent::Delta { .. } | AgentEvent::Thinking { .. } | AgentEvent::ToolCall { .. } | AgentEvent::ToolResult { .. } => {
-            Some(AgentEvent::Scoped { parent: parent.to_owned(), event: Box::new(event) })
-        }
+        AgentEvent::Delta { .. }
+        | AgentEvent::Thinking { .. }
+        | AgentEvent::ToolCall { .. }
+        | AgentEvent::ToolResult { .. } => Some(AgentEvent::Scoped {
+            parent: parent.to_owned(),
+            event: Box::new(event),
+        }),
         _ => None,
     }
 }
@@ -125,8 +131,19 @@ fn exec_item(item: &Value) -> Option<Value> {
         }),
         "agentMessage" => json!({ "id": id, "type": "agent_message", "text": item["text"] }),
         "reasoning" => {
-            let parts = |key: &str| -> Vec<&str> { item[key].as_array().into_iter().flatten().filter_map(Value::as_str).collect() };
-            let text = [parts("summary"), parts("content")].into_iter().find(|list| !list.is_empty()).unwrap_or_default().join("\n\n");
+            let parts = |key: &str| -> Vec<&str> {
+                item[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect()
+            };
+            let text = [parts("summary"), parts("content")]
+                .into_iter()
+                .find(|list| !list.is_empty())
+                .unwrap_or_default()
+                .join("\n\n");
             json!({ "id": id, "type": "reasoning", "text": text })
         }
         "fileChange" => {
@@ -151,11 +168,20 @@ impl Translate {
     /// The thread a spawn call's child runs on is named when the call completes; until then a child's notification
     /// belongs under the latest call still waiting for its thread.
     fn parent_of(&self, thread: &str) -> String {
-        self.parents.get(thread).or_else(|| self.unresolved.last()).cloned().unwrap_or_else(|| thread.to_owned())
+        self.parents
+            .get(thread)
+            .or_else(|| self.unresolved.last())
+            .cloned()
+            .unwrap_or_else(|| thread.to_owned())
     }
 
     /// The end of a child, reported once: from its own `turn/completed` or from the `wait` that collected it.
-    fn child_end(&mut self, thread: &str, status: TaskStatus, summary: Option<String>) -> Option<AgentEvent> {
+    fn child_end(
+        &mut self,
+        thread: &str,
+        status: TaskStatus,
+        summary: Option<String>,
+    ) -> Option<AgentEvent> {
         if !self.closed.insert(thread.to_owned()) {
             return None;
         }
@@ -174,13 +200,28 @@ impl Translate {
     fn collab(&mut self, method: &str, item: &Value) -> Vec<AgentEvent> {
         let id = item["id"].as_str().unwrap_or_default().to_owned();
         let tool = item["tool"].as_str().unwrap_or("agent");
-        let receivers: Vec<&str> = item["receiverThreadIds"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        let receivers: Vec<&str> = item["receiverThreadIds"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
         if method == "item/started" {
             if tool == "spawnAgent" {
                 self.unresolved.push(id.clone());
             }
-            let input = if tool == "spawnAgent" { short(item["prompt"].as_str().unwrap_or_default()) } else { format!("{} agent(s)", receivers.len()) };
-            return vec![AgentEvent::ToolCall { id, name: tool.to_owned(), input, change: None, background: tool == "spawnAgent" }];
+            let input = if tool == "spawnAgent" {
+                short(item["prompt"].as_str().unwrap_or_default())
+            } else {
+                format!("{} agent(s)", receivers.len())
+            };
+            return vec![AgentEvent::ToolCall {
+                id,
+                name: tool.to_owned(),
+                input,
+                change: None,
+                background: tool == "spawnAgent",
+            }];
         }
         let mut events = Vec::new();
         let mut output = String::new();
@@ -210,51 +251,90 @@ impl Translate {
                 let message = state["message"].as_str().unwrap_or_default();
                 let status = match state["status"].as_str() {
                     Some("completed") => Some(TaskStatus::Done),
-                    Some("errored" | "failed" | "interrupted" | "shutdown" | "notFound") => Some(TaskStatus::Failed),
+                    Some("errored" | "failed" | "interrupted" | "shutdown" | "notFound") => {
+                        Some(TaskStatus::Failed)
+                    }
                     _ => None,
                 };
                 if !message.is_empty() {
                     answers.push(message.to_owned());
                 }
-                if let Some(end) = status.and_then(|status| self.child_end(thread, status, Some(message.to_owned()))) {
+                if let Some(end) = status
+                    .and_then(|status| self.child_end(thread, status, Some(message.to_owned())))
+                {
                     events.push(end);
                 }
             }
             output = answers.join("\n");
         }
         let failed = matches!(item["status"].as_str(), Some("failed" | "declined"));
-        events.push(AgentEvent::ToolResult { id, output, is_error: failed, image: None, change: None });
+        events.push(AgentEvent::ToolResult {
+            id,
+            output,
+            is_error: failed,
+            image: None,
+            change: None,
+        });
         events
     }
 
     /// The events of a notification from another thread (a sub-agent): its steps drawn under the call that spawned it,
     /// and its task events. Its own end, usage and errors never end or fail the parent turn.
-    fn child_events(&mut self, provider: &dyn Provider, thread: &str, method: &str, params: &Value) -> Vec<AgentEvent> {
+    fn child_events(
+        &mut self,
+        provider: &dyn Provider,
+        thread: &str,
+        method: &str,
+        params: &Value,
+    ) -> Vec<AgentEvent> {
         match method {
             "turn/completed" => {
                 let (status, summary) = match params["turn"]["status"].as_str() {
-                    Some("failed") => (TaskStatus::Failed, params["turn"]["error"]["message"].as_str().map(str::to_owned)),
+                    Some("failed") => (
+                        TaskStatus::Failed,
+                        params["turn"]["error"]["message"]
+                            .as_str()
+                            .map(str::to_owned),
+                    ),
                     Some("interrupted") => (TaskStatus::Failed, Some("stopped".to_owned())),
                     _ => (TaskStatus::Done, None),
                 };
-                self.child_end(thread, status, summary).into_iter().collect()
+                self.child_end(thread, status, summary)
+                    .into_iter()
+                    .collect()
             }
-            "item/started" | "item/completed" if params["item"]["type"] == "collabAgentToolCall" => {
+            "item/started" | "item/completed"
+                if params["item"]["type"] == "collabAgentToolCall" =>
+            {
                 let parent = self.parent_of(thread);
-                self.collab(method, &params["item"]).into_iter().flat_map(|event| if matches!(event, AgentEvent::Task { .. }) { Some(event) } else { scoped(&parent, event) }).collect()
+                self.collab(method, &params["item"])
+                    .into_iter()
+                    .flat_map(|event| {
+                        if matches!(event, AgentEvent::Task { .. }) {
+                            Some(event)
+                        } else {
+                            scoped(&parent, event)
+                        }
+                    })
+                    .collect()
             }
             "thread/tokenUsage/updated" | "error" => Vec::new(),
             _ => {
                 let parent = self.parent_of(thread);
                 let kid = self.kids.entry(thread.to_owned()).or_default();
-                kid.events(provider, method, params).into_iter().filter_map(|event| scoped(&parent, event)).collect()
+                kid.events(provider, method, params)
+                    .into_iter()
+                    .filter_map(|event| scoped(&parent, event))
+                    .collect()
             }
         }
     }
 
     /// The events one notification stands for: streamed text directly, everything else through `Codex::parse_line`.
     fn events(&mut self, provider: &dyn Provider, method: &str, params: &Value) -> Vec<AgentEvent> {
-        if matches!(method, "item/started" | "item/completed") && params["item"]["type"] == "collabAgentToolCall" {
+        if matches!(method, "item/started" | "item/completed")
+            && params["item"]["type"] == "collabAgentToolCall"
+        {
             return self.collab(method, &params["item"]);
         }
         let item_id = params["itemId"].as_str().unwrap_or_default().to_owned();
@@ -262,18 +342,28 @@ impl Translate {
         match method {
             "item/agentMessage/delta" if !delta.is_empty() => {
                 let first = self.streamed.insert(item_id);
-                let text = if first && self.after_text { format!("\n\n{delta}") } else { delta.to_owned() };
+                let text = if first && self.after_text {
+                    format!("\n\n{delta}")
+                } else {
+                    delta.to_owned()
+                };
                 self.after_text = true;
                 return vec![AgentEvent::Delta { text }];
             }
             "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" if !delta.is_empty() => {
                 self.streamed.insert(item_id);
                 self.after_text = false;
-                return vec![AgentEvent::Thinking { text: delta.to_owned() }];
+                return vec![AgentEvent::Thinking {
+                    text: delta.to_owned(),
+                }];
             }
             // A new part of the reasoning summary is a new paragraph.
-            "item/reasoning/summaryPartAdded" if params["summaryIndex"].as_u64().unwrap_or(0) > 0 => {
-                return vec![AgentEvent::Thinking { text: "\n\n".to_owned() }];
+            "item/reasoning/summaryPartAdded"
+                if params["summaryIndex"].as_u64().unwrap_or(0) > 0 =>
+            {
+                return vec![AgentEvent::Thinking {
+                    text: "\n\n".to_owned(),
+                }];
             }
             _ => {}
         }
@@ -295,21 +385,32 @@ impl Translate {
                 if matches!(kind, "agentMessage" | "reasoning") && self.streamed.contains(id) {
                     return Vec::new();
                 }
-                let Some(item) = exec_item(&params["item"]) else { return Vec::new() };
+                let Some(item) = exec_item(&params["item"]) else {
+                    return Vec::new();
+                };
                 if method == "item/completed" {
                     self.output.remove(id);
                     if kind == "agentMessage" {
                         self.after_text = true;
                     }
                 }
-                let kind = if method == "item/started" { "item.started" } else { "item.completed" };
+                let kind = if method == "item/started" {
+                    "item.started"
+                } else {
+                    "item.completed"
+                };
                 vec![json!({ "type": kind, "item": item })]
             }
             "item/commandExecution/outputDelta" => {
-                let (Some(id), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str()) else { return Vec::new() };
+                let (Some(id), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str())
+                else {
+                    return Vec::new();
+                };
                 let all = self.output.entry(id.to_owned()).or_default();
                 all.push_str(delta);
-                vec![json!({ "type": "item.updated", "item": { "id": id, "type": "command_execution", "aggregated_output": all } })]
+                vec![
+                    json!({ "type": "item.updated", "item": { "id": id, "type": "command_execution", "aggregated_output": all } }),
+                ]
             }
             "thread/tokenUsage/updated" => {
                 let last = &params["tokenUsage"]["last"];
@@ -321,19 +422,27 @@ impl Translate {
                 Vec::new()
             }
             "error" => {
-                let message = params["error"]["message"].as_str().unwrap_or("Codex failed");
+                let message = params["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Codex failed");
                 if params["willRetry"].as_bool().unwrap_or(false) {
-                    vec![json!({ "type": "error", "message": format!("Reconnecting... 1/1 ({message})") })]
+                    vec![
+                        json!({ "type": "error", "message": format!("Reconnecting... 1/1 ({message})") }),
+                    ]
                 } else {
                     vec![json!({ "type": "turn.failed", "error": { "message": message } })]
                 }
             }
             "turn/completed" => match params["turn"]["status"].as_str() {
                 Some("failed") => {
-                    let message = params["turn"]["error"]["message"].as_str().unwrap_or("Codex failed");
+                    let message = params["turn"]["error"]["message"]
+                        .as_str()
+                        .unwrap_or("Codex failed");
                     vec![json!({ "type": "turn.failed", "error": { "message": message } })]
                 }
-                Some("interrupted") => vec![json!({ "type": "turn.failed", "error": { "message": "Codex stopped the turn" } })],
+                Some("interrupted") => vec![
+                    json!({ "type": "turn.failed", "error": { "message": "Codex stopped the turn" } }),
+                ],
                 _ => vec![json!({ "type": "turn.completed", "usage": {
                     "input_tokens": self.input, "cached_input_tokens": self.cached,
                     "cache_write_input_tokens": self.written, "output_tokens": self.out,
@@ -353,22 +462,34 @@ async fn write(warm: &mut Warm, message: &Value) -> std::io::Result<()> {
 async fn request(warm: &mut Warm, method: &str, params: Value) -> Result<Value, String> {
     warm.rpc += 1;
     let id = warm.rpc;
-    write(warm, &json!({ "id": id, "method": method, "params": params })).await.map_err(|error| format!("could not talk to Codex: {error}"))?;
+    write(
+        warm,
+        &json!({ "id": id, "method": method, "params": params }),
+    )
+    .await
+    .map_err(|error| format!("could not talk to Codex: {error}"))?;
     let wait = async {
         loop {
             let Ok(Some(bytes)) = warm.lines.next_segment().await else {
                 return Err("Codex closed before it answered".to_owned());
             };
-            let Ok(reply) = serde_json::from_slice::<Value>(&bytes) else { continue };
+            let Ok(reply) = serde_json::from_slice::<Value>(&bytes) else {
+                continue;
+            };
             if reply["id"] == id && reply.get("method").is_none() {
                 return match reply.get("error") {
-                    Some(error) => Err(error["message"].as_str().unwrap_or("Codex refused the request").to_owned()),
+                    Some(error) => Err(error["message"]
+                        .as_str()
+                        .unwrap_or("Codex refused the request")
+                        .to_owned()),
                     None => Ok(reply["result"].clone()),
                 };
             }
         }
     };
-    tokio::time::timeout(HANDSHAKE, wait).await.unwrap_or_else(|_| Err(format!("Codex did not answer {method}")))
+    tokio::time::timeout(HANDSHAKE, wait)
+        .await
+        .unwrap_or_else(|_| Err(format!("Codex did not answer {method}")))
 }
 
 /// Opens the thread a turn goes to on a running server: a new one, or the one `resume` names.
@@ -394,7 +515,9 @@ async fn thread(warm: &mut Warm, mut params: Value, resume: Option<&str>) -> Res
             request(warm, "thread/start", params).await?
         }
     };
-    let thread = reply["thread"]["id"].as_str().ok_or("Codex gave no thread")?;
+    let thread = reply["thread"]["id"]
+        .as_str()
+        .ok_or("Codex gave no thread")?;
     warm.conversation = Some(thread.to_owned());
     Ok(())
 }
@@ -405,17 +528,35 @@ fn wanted(req: &TurnRequest) -> Option<&str> {
 }
 
 /// The settings key of a request, and the arguments its server starts with.
-fn identity(provider: &dyn Provider, req: &TurnRequest, params: &Value) -> (String, Vec<String>, Vec<(String, String)>) {
+fn identity(
+    provider: &dyn Provider,
+    req: &TurnRequest,
+    params: &Value,
+) -> (String, Vec<String>, Vec<(String, String)>) {
     let env = provider.environment(req);
-    let key = settings_key(provider.id(), &["app-server".to_owned(), params.to_string()], &env);
+    let key = settings_key(
+        provider.id(),
+        &["app-server".to_owned(), params.to_string()],
+        &env,
+    );
     (key, vec!["app-server".to_owned()], env)
 }
 
 /// A server started and opened on the chat's thread.
-async fn launch(binary: OsString, provider: &dyn Provider, req: &TurnRequest, params: &Value, key: &str, args: &[String], env: &[(String, String)]) -> Result<Warm, String> {
+async fn launch(
+    binary: OsString,
+    provider: &dyn Provider,
+    req: &TurnRequest,
+    params: &Value,
+    key: &str,
+    args: &[String],
+    env: &[(String, String)],
+) -> Result<Warm, String> {
     let mut warm = start(binary, provider, args, env, req, key)?;
     request(&mut warm, "initialize", json!({ "clientInfo": { "name": "agentdeck", "title": "AgentDeck", "version": "1" }, "capabilities": { "experimentalApi": true } })).await?;
-    write(&mut warm, &json!({ "method": "initialized" })).await.map_err(|error| error.to_string())?;
+    write(&mut warm, &json!({ "method": "initialized" }))
+        .await
+        .map_err(|error| error.to_string())?;
     thread(&mut warm, params.clone(), wanted(req)).await?;
     Ok(warm)
 }
@@ -423,7 +564,9 @@ async fn launch(binary: OsString, provider: &dyn Provider, req: &TurnRequest, pa
 /// Starts the chat's server before its message is sent (the user is typing), so the first turn does not wait for
 /// Codex, its MCP servers and its thread. Does nothing when the chat already has one that fits.
 pub async fn prewarm(binary: OsString, provider: &dyn Provider, req: &TurnRequest) {
-    let Some(chat) = req.owner.clone() else { return };
+    let Some(chat) = req.owner.clone() else {
+        return;
+    };
     if provider.prepare(req).is_err() {
         return;
     }
@@ -444,7 +587,9 @@ pub async fn prewarm(binary: OsString, provider: &dyn Provider, req: &TurnReques
 /// The notification names a turn, and it is not the current one. Only notifications that carry a turn id are judged
 /// (`turn/*` has it in `turn.id`, the others in `turnId`).
 fn foreign_turn(current: Option<&str>, params: &Value) -> bool {
-    let named = params["turn"]["id"].as_str().or_else(|| params["turnId"].as_str());
+    let named = params["turn"]["id"]
+        .as_str()
+        .or_else(|| params["turnId"].as_str());
     matches!((current, named), (Some(current), Some(named)) if current != named)
 }
 
@@ -471,7 +616,14 @@ enum Ending {
 /// Reads notifications until the turn is over, answering what the server asks of the client. A stop (`stop`) sends
 /// `turn/interrupt` (as soon as the turn's id is known) and keeps reading: the turn ends as interrupted and the server
 /// stays up. One silent for the deadline is given up (`Failed`: the caller ends it).
-async fn read_turn(warm: &mut Warm, provider: &dyn Provider, thread: &str, stop: StopToken, mut inbox: UnboundedReceiver<String>, emit: &mut impl FnMut(AgentEvent)) -> Ending {
+async fn read_turn(
+    warm: &mut Warm,
+    provider: &dyn Provider,
+    thread: &str,
+    stop: StopToken,
+    mut inbox: UnboundedReceiver<String>,
+    emit: &mut impl FnMut(AgentEvent),
+) -> Ending {
     let mut translate = Translate::default();
     let mut stopper = Interrupter::new(stop);
     // The id of this turn (from `turn/start`'s reply or `turn/started`), and the id of the interrupt request once sent.
@@ -491,18 +643,28 @@ async fn read_turn(warm: &mut Warm, provider: &dyn Provider, thread: &str, stop:
                 warm.rpc += 1;
                 steers.insert(warm.rpc, Some(text.clone()));
                 let params = json!({ "threadId": thread, "expectedTurnId": turn_id, "input": [{ "type": "text", "text": text, "text_elements": [] }] });
-                let _ = write(warm, &json!({ "id": warm.rpc, "method": "turn/steer", "params": params })).await;
+                let _ = write(
+                    warm,
+                    &json!({ "id": warm.rpc, "method": "turn/steer", "params": params }),
+                )
+                .await;
             }
         }
         if wants_interrupt && interrupt_id.is_none() {
             if let Some(turn) = &turn {
                 warm.rpc += 1;
                 interrupt_id = Some(warm.rpc);
-                let _ = write(warm, &interrupt::codex_interrupt_request(warm.rpc, thread, turn)).await;
+                let _ = write(
+                    warm,
+                    &interrupt::codex_interrupt_request(warm.rpc, thread, turn),
+                )
+                .await;
             }
         }
         let next = match deadline {
-            Some(at) => tokio::time::timeout_at(at, warm.lines.next_segment()).await.unwrap_or(Ok(None)),
+            Some(at) => tokio::time::timeout_at(at, warm.lines.next_segment())
+                .await
+                .unwrap_or(Ok(None)),
             None => tokio::select! {
                 next = warm.lines.next_segment() => next,
                 _ = warm.child.wait() => {
@@ -527,21 +689,33 @@ async fn read_turn(warm: &mut Warm, provider: &dyn Provider, thread: &str, stop:
                 }
             },
         };
-        let Ok(Some(bytes)) = next else { return Ending::Closed };
+        let Ok(Some(bytes)) = next else {
+            return Ending::Closed;
+        };
         dog.touch();
-        let Ok(message) = serde_json::from_slice::<Value>(&bytes) else { continue };
+        let Ok(message) = serde_json::from_slice::<Value>(&bytes) else {
+            continue;
+        };
         let method = message["method"].as_str().unwrap_or_default();
         if method.is_empty() {
             // The reply to the interrupt: the turn's own end follows as `turn/completed`, so nothing to do.
             if interrupt_id.is_some() && message.get("id").and_then(Value::as_u64) == interrupt_id {
                 continue;
             }
-            if let Some(kind) = message.get("id").and_then(Value::as_u64).and_then(|id| steers.remove(&id)) {
+            if let Some(kind) = message
+                .get("id")
+                .and_then(Value::as_u64)
+                .and_then(|id| steers.remove(&id))
+            {
                 if let (Some(text), Some(_)) = (kind, message.get("error")) {
                     warm.rpc += 1;
                     steers.insert(warm.rpc, None);
                     let params = json!({ "threadId": thread, "input": [{ "type": "text", "text": text, "text_elements": [] }] });
-                    let _ = write(warm, &json!({ "id": warm.rpc, "method": "turn/start", "params": params })).await;
+                    let _ = write(
+                        warm,
+                        &json!({ "id": warm.rpc, "method": "turn/start", "params": params }),
+                    )
+                    .await;
                 }
                 continue;
             }
@@ -550,7 +724,12 @@ async fn read_turn(warm: &mut Warm, provider: &dyn Provider, thread: &str, stop:
             }
             // The reply to `turn/start`: only a refusal matters.
             if let Some(error) = message.get("error") {
-                emit(AgentEvent::Error { message: error["message"].as_str().unwrap_or("Codex refused the message").to_owned() });
+                emit(AgentEvent::Error {
+                    message: error["message"]
+                        .as_str()
+                        .unwrap_or("Codex refused the message")
+                        .to_owned(),
+                });
                 return Ending::Failed;
             }
             continue;
@@ -583,7 +762,11 @@ async fn read_turn(warm: &mut Warm, provider: &dyn Provider, thread: &str, stop:
         let mut ending = None;
         for event in translate.events(provider, method, params) {
             dog.note(&event);
-            let event = if stopper.asked() { interrupt::stopped(event, Some(thread)) } else { event };
+            let event = if stopper.asked() {
+                interrupt::stopped(event, Some(thread))
+            } else {
+                event
+            };
             match &event {
                 AgentEvent::Done { .. } => ending = Some(Ending::Done),
                 // The server reports a failed turn as its own notification and stays up for the next turn: it is kept, as
@@ -601,7 +784,13 @@ async fn read_turn(warm: &mut Warm, provider: &dyn Provider, thread: &str, stop:
 
 /// Runs one turn on the chat's Codex server (starting it if the chat has none that fits). `false`, having emitted
 /// nothing, when the turn has no chat to keep a server for.
-pub async fn drive(binary: OsString, provider: &dyn Provider, req: &TurnRequest, stop: StopToken, mut emit: impl FnMut(AgentEvent)) -> bool {
+pub async fn drive(
+    binary: OsString,
+    provider: &dyn Provider,
+    req: &TurnRequest,
+    stop: StopToken,
+    mut emit: impl FnMut(AgentEvent),
+) -> bool {
     let Some(chat) = req.owner.clone() else {
         return false;
     };
@@ -635,14 +824,17 @@ pub async fn drive(binary: OsString, provider: &dyn Provider, req: &TurnRequest,
                 } else if same {
                     Ok(warm)
                 } else {
-                    thread(&mut warm, params.clone(), wanted(req)).await.map(|()| warm)
+                    thread(&mut warm, params.clone(), wanted(req))
+                        .await
+                        .map(|()| warm)
                 }
             }
             None => Err(String::new()),
         };
         let mut warm = match switched {
             Ok(warm) => warm,
-            Err(_) => match launch(binary.clone(), provider, req, &params, &key, &args, &env).await {
+            Err(_) => match launch(binary.clone(), provider, req, &params, &key, &args, &env).await
+            {
                 Ok(warm) => warm,
                 Err(message) => {
                     emit(AgentEvent::Error { message });
@@ -651,7 +843,9 @@ pub async fn drive(binary: OsString, provider: &dyn Provider, req: &TurnRequest,
             },
         };
         warm.fresh = false;
-        let Some(thread) = warm.conversation.clone() else { return true };
+        let Some(thread) = warm.conversation.clone() else {
+            return true;
+        };
         let mut input = json!({ "threadId": thread, "input": [{ "type": "text", "text": req.prompt, "text_elements": [] }] });
         if let Some(model) = &req.model {
             input["model"] = json!(model);
@@ -666,7 +860,9 @@ pub async fn drive(binary: OsString, provider: &dyn Provider, req: &TurnRequest,
             // A kept server may have ended while it waited: the next round starts a new one.
             Err(_) if was_kept => continue,
             Err(error) => {
-                emit(AgentEvent::Error { message: format!("could not send the message to Codex: {error}") });
+                emit(AgentEvent::Error {
+                    message: format!("could not send the message to Codex: {error}"),
+                });
                 return true;
             }
         }
@@ -674,16 +870,28 @@ pub async fn drive(binary: OsString, provider: &dyn Provider, req: &TurnRequest,
 
     let thread = warm.conversation.clone().unwrap_or_default();
     // The parser's thread id for the final event.
-    for event in provider.parse_line(&json!({ "type": "thread.started", "thread_id": thread }).to_string()) {
+    for event in
+        provider.parse_line(&json!({ "type": "thread.started", "thread_id": thread }).to_string())
+    {
         emit(event);
     }
     match read_turn(&mut warm, provider, &thread, stop, inbox, &mut emit).await {
         Ending::Done => park(chat, warm),
         Ending::Failed => drop(warm),
         Ending::Closed => {
-            let stderr = warm.stderr.lock().map(|kept| String::from_utf8_lossy(&kept).trim().to_owned()).unwrap_or_default();
+            let stderr = warm
+                .stderr
+                .lock()
+                .map(|kept| String::from_utf8_lossy(&kept).trim().to_owned())
+                .unwrap_or_default();
             drop(warm);
-            emit(AgentEvent::Error { message: if stderr.is_empty() { "agent ended without a result".to_owned() } else { stderr } });
+            emit(AgentEvent::Error {
+                message: if stderr.is_empty() {
+                    "agent ended without a result".to_owned()
+                } else {
+                    stderr
+                },
+            });
         }
     }
     true
@@ -715,8 +923,14 @@ mod tests {
         assert!(foreign_turn(Some("t2"), &end("t1")));
         assert!(!foreign_turn(Some("t2"), &end("t2")));
         assert!(!foreign_turn(None, &end("t1")), "the turn is not known yet");
-        assert!(foreign_turn(Some("t2"), &json!({ "turnId": "t1", "error": {} })));
-        assert!(!foreign_turn(Some("t2"), &json!({ "item": {} })), "no turn named");
+        assert!(foreign_turn(
+            Some("t2"),
+            &json!({ "turnId": "t1", "error": {} })
+        ));
+        assert!(
+            !foreign_turn(Some("t2"), &json!({ "item": {} })),
+            "no turn named"
+        );
     }
 
     #[test]
@@ -727,15 +941,25 @@ mod tests {
         assert_eq!(lines[0]["item"]["type"], "command_execution");
         assert_eq!(lines[0]["item"]["status"], "in_progress");
         let delta = json!({ "itemId": "c1", "delta": "hi" });
-        assert_eq!(translate.lines("item/commandExecution/outputDelta", &delta)[0]["item"]["aggregated_output"], "hi");
+        assert_eq!(
+            translate.lines("item/commandExecution/outputDelta", &delta)[0]["item"]
+                ["aggregated_output"],
+            "hi"
+        );
         for total in [10, 5] {
             translate.lines("thread/tokenUsage/updated", &json!({ "tokenUsage": { "last": { "inputTokens": total, "cachedInputTokens": 2, "outputTokens": 1 } } }));
         }
-        let done = translate.lines("turn/completed", &json!({ "turn": { "status": "completed" } }));
+        let done = translate.lines(
+            "turn/completed",
+            &json!({ "turn": { "status": "completed" } }),
+        );
         assert_eq!(done[0]["type"], "turn.completed");
         assert_eq!(done[0]["usage"]["input_tokens"], 15);
         assert_eq!(done[0]["usage"]["cached_input_tokens"], 4);
-        let failed = translate.lines("turn/completed", &json!({ "turn": { "status": "failed", "error": { "message": "no" } } }));
+        let failed = translate.lines(
+            "turn/completed",
+            &json!({ "turn": { "status": "failed", "error": { "message": "no" } } }),
+        );
         assert_eq!(failed[0]["error"]["message"], "no");
     }
 
@@ -751,10 +975,25 @@ mod tests {
                 }
             }
         };
-        said("item/agentMessage/delta", json!({ "itemId": "a", "delta": "one" }), &mut translate);
-        said("item/completed", json!({ "item": { "type": "agentMessage", "id": "a", "text": "one" } }), &mut translate);
-        said("item/agentMessage/delta", json!({ "itemId": "b", "delta": "two" }), &mut translate);
-        assert_eq!(text, "one\n\ntwo", "streamed once, the finished copy is not repeated");
+        said(
+            "item/agentMessage/delta",
+            json!({ "itemId": "a", "delta": "one" }),
+            &mut translate,
+        );
+        said(
+            "item/completed",
+            json!({ "item": { "type": "agentMessage", "id": "a", "text": "one" } }),
+            &mut translate,
+        );
+        said(
+            "item/agentMessage/delta",
+            json!({ "itemId": "b", "delta": "two" }),
+            &mut translate,
+        );
+        assert_eq!(
+            text, "one\n\ntwo",
+            "streamed once, the finished copy is not repeated"
+        );
     }
 
     /// The shape of live2-codex-A-orch: a spawn call, its child on another thread, then a `wait` that collects it.
@@ -765,28 +1004,66 @@ mod tests {
         let started = json!({ "item": { "type": "collabAgentToolCall", "id": "spawn-1", "tool": "spawnAgent", "status": "inProgress",
             "receiverThreadIds": [], "prompt": "Compute 2+2. Reply only with the result.", "model": "" }, "threadId": "main" });
         let events = translate.events(&codex, "item/started", &started);
-        assert!(matches!(&events[0], AgentEvent::ToolCall { id, name, background: true, .. } if id == "spawn-1" && name == "spawnAgent"));
+        assert!(
+            matches!(&events[0], AgentEvent::ToolCall { id, name, background: true, .. } if id == "spawn-1" && name == "spawnAgent")
+        );
         let completed = json!({ "item": { "type": "collabAgentToolCall", "id": "spawn-1", "tool": "spawnAgent", "status": "completed",
             "receiverThreadIds": ["kid"], "prompt": "Compute 2+2. Reply only with the result.", "model": "gpt-5.6-luna" }, "threadId": "main" });
         let events = translate.events(&codex, "item/completed", &completed);
-        assert!(matches!(&events[0], AgentEvent::Task { id, tool_use_id: Some(call), status: TaskStatus::Started, label: Some(label), .. }
-            if id == "kid" && call == "spawn-1" && label == "gpt-5.6-luna: Compute 2+2. Reply only with the result."));
+        assert!(
+            matches!(&events[0], AgentEvent::Task { id, tool_use_id: Some(call), status: TaskStatus::Started, label: Some(label), .. }
+            if id == "kid" && call == "spawn-1" && label == "gpt-5.6-luna: Compute 2+2. Reply only with the result.")
+        );
         assert!(matches!(&events[1], AgentEvent::ToolResult { id, .. } if id == "spawn-1"));
 
-        let said = translate.child_events(&codex, "kid", "item/agentMessage/delta", &json!({ "threadId": "kid", "itemId": "m", "delta": "4" }));
-        assert_eq!(said, vec![AgentEvent::Scoped { parent: "spawn-1".into(), event: Box::new(AgentEvent::Delta { text: "4".into() }) }]);
+        let said = translate.child_events(
+            &codex,
+            "kid",
+            "item/agentMessage/delta",
+            &json!({ "threadId": "kid", "itemId": "m", "delta": "4" }),
+        );
+        assert_eq!(
+            said,
+            vec![AgentEvent::Scoped {
+                parent: "spawn-1".into(),
+                event: Box::new(AgentEvent::Delta { text: "4".into() })
+            }]
+        );
         let ran = translate.child_events(&codex, "kid", "item/started", &json!({ "threadId": "kid", "item": { "type": "commandExecution", "id": "c1", "command": "echo hi", "status": "inProgress" } }));
-        assert!(matches!(&ran[0], AgentEvent::Scoped { parent, event } if parent == "spawn-1" && matches!(**event, AgentEvent::ToolCall { .. })));
-        assert!(translate.child_events(&codex, "kid", "thread/tokenUsage/updated", &json!({ "threadId": "kid", "tokenUsage": { "last": { "inputTokens": 9 } } })).is_empty());
-        assert_eq!(translate.input, 0, "a child's tokens are not the parent turn's");
+        assert!(
+            matches!(&ran[0], AgentEvent::Scoped { parent, event } if parent == "spawn-1" && matches!(**event, AgentEvent::ToolCall { .. }))
+        );
+        assert!(translate
+            .child_events(
+                &codex,
+                "kid",
+                "thread/tokenUsage/updated",
+                &json!({ "threadId": "kid", "tokenUsage": { "last": { "inputTokens": 9 } } })
+            )
+            .is_empty());
+        assert_eq!(
+            translate.input, 0,
+            "a child's tokens are not the parent turn's"
+        );
 
-        let ended = translate.child_events(&codex, "kid", "turn/completed", &json!({ "threadId": "kid", "turn": { "status": "completed" } }));
-        assert!(matches!(&ended[..], [AgentEvent::Task { id, status: TaskStatus::Done, .. }] if id == "kid"), "a child's end is a task ending, not a Done");
+        let ended = translate.child_events(
+            &codex,
+            "kid",
+            "turn/completed",
+            &json!({ "threadId": "kid", "turn": { "status": "completed" } }),
+        );
+        assert!(
+            matches!(&ended[..], [AgentEvent::Task { id, status: TaskStatus::Done, .. }] if id == "kid"),
+            "a child's end is a task ending, not a Done"
+        );
 
         let waited = json!({ "item": { "type": "collabAgentToolCall", "id": "wait-1", "tool": "wait", "status": "completed",
             "receiverThreadIds": ["kid"], "agentsStates": { "kid": { "status": "completed", "message": "4" } } }, "threadId": "main" });
         let events = translate.events(&codex, "item/completed", &waited);
-        assert!(matches!(&events[..], [AgentEvent::ToolResult { id, output, .. }] if id == "wait-1" && output == "4"), "the child's end is reported once");
+        assert!(
+            matches!(&events[..], [AgentEvent::ToolResult { id, output, .. }] if id == "wait-1" && output == "4"),
+            "the child's end is reported once"
+        );
     }
 
     #[test]
@@ -797,7 +1074,9 @@ mod tests {
         let waited = json!({ "item": { "type": "collabAgentToolCall", "id": "w", "tool": "wait", "status": "completed",
             "receiverThreadIds": ["kid"], "agentsStates": { "kid": { "status": "completed", "message": "42" } } } });
         let events = translate.events(&codex, "item/completed", &waited);
-        assert!(matches!(&events[0], AgentEvent::Task { id, status: TaskStatus::Done, summary: Some(text), tool_use_id: Some(call), .. } if id == "kid" && text == "42" && call == "s"));
+        assert!(
+            matches!(&events[0], AgentEvent::Task { id, status: TaskStatus::Done, summary: Some(text), tool_use_id: Some(call), .. } if id == "kid" && text == "42" && call == "s")
+        );
         assert!(matches!(&events[1], AgentEvent::ToolResult { output, .. } if output == "42"));
     }
 
@@ -805,9 +1084,23 @@ mod tests {
     fn a_child_failure_fails_its_task_only() {
         let codex = Codex::default();
         let mut translate = Translate::default();
-        let ended = translate.child_events(&codex, "kid", "turn/completed", &json!({ "turn": { "status": "failed", "error": { "message": "no quota" } } }));
-        assert!(matches!(&ended[..], [AgentEvent::Task { status: TaskStatus::Failed, summary: Some(text), .. }] if text == "no quota"));
-        assert!(translate.child_events(&codex, "kid", "error", &json!({ "error": { "message": "x" } })).is_empty());
+        let ended = translate.child_events(
+            &codex,
+            "kid",
+            "turn/completed",
+            &json!({ "turn": { "status": "failed", "error": { "message": "no quota" } } }),
+        );
+        assert!(
+            matches!(&ended[..], [AgentEvent::Task { status: TaskStatus::Failed, summary: Some(text), .. }] if text == "no quota")
+        );
+        assert!(translate
+            .child_events(
+                &codex,
+                "kid",
+                "error",
+                &json!({ "error": { "message": "x" } })
+            )
+            .is_empty());
     }
 
     #[test]
@@ -815,7 +1108,11 @@ mod tests {
         let mut other = req("acceptEdits");
         other.model = Some("n".into());
         other.effort = Some("low".into());
-        assert_eq!(thread_params(&req("acceptEdits")), thread_params(&other), "a new model or effort keeps the server");
+        assert_eq!(
+            thread_params(&req("acceptEdits")),
+            thread_params(&other),
+            "a new model or effort keeps the server"
+        );
         let auto = thread_params(&req("auto"));
         assert_eq!(auto["approvalsReviewer"], "auto_review");
         assert_eq!(auto["sandbox"], "workspace-write");

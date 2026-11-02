@@ -40,7 +40,11 @@ const QUIET: Duration = Duration::from_secs(20 * 60);
 const QUIET_WITH_TASKS: Duration = Duration::from_secs(8 * 60 * 60);
 /// How long a new message waits for an answer the CLI is giving on its own before that answer is interrupted: it is a
 /// report on finished work, so it is short, and the user is waiting.
-const HANDOVER: Duration = if cfg!(test) { Duration::from_millis(300) } else { Duration::from_secs(15) };
+const HANDOVER: Duration = if cfg!(test) {
+    Duration::from_millis(300)
+} else {
+    Duration::from_secs(15)
+};
 /// The longest `stop` can take: the wait, the interrupt, the CLI's time to obey, and a little for the bookkeeping.
 const HANDOVER_MAX: Duration = Duration::from_secs(15 + 30 + 5);
 /// Events held while waiting for the first one that is part of an answer (token counts come before the text).
@@ -71,25 +75,36 @@ pub(super) fn available() -> bool {
 
 /// How many tails are reading a process now.
 pub fn count() -> usize {
-    TAILS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).len()
+    TAILS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .len()
 }
 
 /// Whether a tail reads this chat's process now.
 pub(super) fn holds(chat: &str) -> bool {
-    TAILS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).contains_key(chat)
+    TAILS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .contains_key(chat)
 }
 
 /// Ends every tail, or the tails of one agent, together with the process each one reads: after an account switch a CLI
 /// that goes on running would keep the sign-in it started with.
 pub(super) fn discard(agent: Option<&str>) {
     let gone: Vec<Tail> = {
-        let mut tails = TAILS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut tails = TAILS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let chats: Vec<String> = tails
             .iter()
             .filter(|(_, tail)| agent.is_none_or(|agent| tail.agent == agent))
             .map(|(chat, _)| chat.clone())
             .collect();
-        chats.into_iter().filter_map(|chat| tails.remove(&chat)).collect()
+        chats
+            .into_iter()
+            .filter_map(|chat| tails.remove(&chat))
+            .collect()
     };
     for tail in gone {
         tail.discard.store(true, Ordering::Relaxed);
@@ -122,7 +137,10 @@ pub fn interrupt(chat: &str) -> bool {
 /// interrupted, and the process is parked. Returns `false` when the caller's own stop came first: the caller is being
 /// replaced and must not wait. The wait is bounded either way, so a message never waits behind a tail for ever.
 pub(super) async fn stop(chat: &str, token: &mut interrupt::StopToken) -> bool {
-    let tail = TAILS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(chat);
+    let tail = TAILS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(chat);
     let Some(Tail { stop, done, .. }) = tail else {
         return true;
     };
@@ -139,9 +157,12 @@ pub(super) fn background_open(line: &str) -> Option<bool> {
         return None;
     }
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
-    (value["subtype"] == "background_tasks_changed").then(|| value["tasks"].as_array().is_some_and(|tasks| !tasks.is_empty()))
+    (value["subtype"] == "background_tasks_changed").then(|| {
+        value["tasks"]
+            .as_array()
+            .is_some_and(|tasks| !tasks.is_empty())
+    })
 }
-
 
 /// Whether a line of the CLI's output says that a sub-agent (not a shell left running) is still open. A delegated worker
 /// waits for its sub-agents, whose answer it is asked for, but not for a dev server: that never ends.
@@ -151,9 +172,13 @@ pub(super) fn agents_open(line: &str) -> Option<bool> {
     }
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     (value["subtype"] == "background_tasks_changed").then(|| {
-        value["tasks"]
-            .as_array()
-            .is_some_and(|tasks| tasks.iter().any(|task| task["task_type"].as_str().is_some_and(|kind| kind.contains("agent"))))
+        value["tasks"].as_array().is_some_and(|tasks| {
+            tasks.iter().any(|task| {
+                task["task_type"]
+                    .as_str()
+                    .is_some_and(|kind| kind.contains("agent"))
+            })
+        })
     })
 }
 pub(super) fn start(chat: String, warm: Warm, provider: Arc<dyn Provider>) {
@@ -166,7 +191,9 @@ pub(super) fn start(chat: String, warm: Warm, provider: Arc<dyn Provider>) {
     let (done_tx, done_rx) = oneshot::channel();
     let discard = Arc::new(AtomicBool::new(false));
     {
-        let mut tails = TAILS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut tails = TAILS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if tails.len() >= MAX_TAILS && !tails.contains_key(&chat) {
             drop(tails);
             park(chat, warm);
@@ -174,11 +201,30 @@ pub(super) fn start(chat: String, warm: Warm, provider: Arc<dyn Provider>) {
         }
         tails.insert(
             chat.clone(),
-            Tail { agent: provider.id(), discard: Arc::clone(&discard), stop: stop_tx, interrupt: interrupt_tx, done: done_rx },
+            Tail {
+                agent: provider.id(),
+                discard: Arc::clone(&discard),
+                stop: stop_tx,
+                interrupt: interrupt_tx,
+                done: done_rx,
+            },
         );
     }
-    super::trace::note(&chat, "tail", format!("started, background work open={}", warm.open_tasks));
-    tokio::spawn(run(chat, warm, provider, sink, stop_rx, interrupt_rx, done_tx, discard));
+    super::trace::note(
+        &chat,
+        "tail",
+        format!("started, background work open={}", warm.open_tasks),
+    );
+    tokio::spawn(run(
+        chat,
+        warm,
+        provider,
+        sink,
+        stop_rx,
+        interrupt_rx,
+        done_tx,
+        discard,
+    ));
 }
 
 /// A moment that never comes, for a timer branch that is switched off.
@@ -188,7 +234,10 @@ fn far() -> Instant {
 
 /// An event that is part of what the CLI says, not bookkeeping around it.
 fn is_content(event: &AgentEvent) -> bool {
-    !matches!(event, AgentEvent::Usage { .. } | AgentEvent::Raw { .. } | AgentEvent::Task { .. })
+    !matches!(
+        event,
+        AgentEvent::Usage { .. } | AgentEvent::Raw { .. } | AgentEvent::Task { .. }
+    )
 }
 
 enum Fate {
@@ -283,13 +332,23 @@ async fn run(
         }
         let mut ended = false;
         for event in provider.parse_line(line) {
-            let event = if asked { interrupt::stopped(event, warm.conversation.as_deref()) } else { event };
+            let event = if asked {
+                interrupt::stopped(event, warm.conversation.as_deref())
+            } else {
+                event
+            };
             let terminal = matches!(event, AgentEvent::Done { .. } | AgentEvent::Error { .. });
             if turn.is_empty() {
                 if is_content(&event) {
                     turn = format!("auto-{}", SERIAL.fetch_add(1, Ordering::Relaxed) + 1);
                     super::trace::note(&chat, "tail", format!("the CLI went on by itself: {turn}"));
-                    sink(&chat, &turn, AgentEvent::AutoTurn { reason: "background work finished".to_owned() });
+                    sink(
+                        &chat,
+                        &turn,
+                        AgentEvent::AutoTurn {
+                            reason: "background work finished".to_owned(),
+                        },
+                    );
                     for earlier in held.drain(..) {
                         sink(&chat, &turn, earlier);
                     }
@@ -320,7 +379,11 @@ async fn run(
         let closing = if asked || stopping {
             interrupt::killed(warm.conversation.as_deref())
         } else {
-            AgentEvent::Error { message: failure.clone().unwrap_or_else(|| "agent ended without a result".to_owned()) }
+            AgentEvent::Error {
+                message: failure
+                    .clone()
+                    .unwrap_or_else(|| "agent ended without a result".to_owned()),
+            }
         };
         sink(&chat, &turn, closing);
     }
@@ -329,16 +392,26 @@ async fn run(
         "tail",
         format!(
             "ended: {} (answer open={}, stopping={stopping}, asked={asked}){}",
-            if matches!(fate, Fate::Park) { "process parked" } else { "process dropped, its children end with it" },
+            if matches!(fate, Fate::Park) {
+                "process parked"
+            } else {
+                "process dropped, its children end with it"
+            },
             !turn.is_empty(),
-            failure.as_deref().map(|why| format!(" why: {why}")).unwrap_or_default()
+            failure
+                .as_deref()
+                .map(|why| format!(" why: {why}"))
+                .unwrap_or_default()
         ),
     );
     match fate {
         Fate::Park if !discard.load(Ordering::Relaxed) => park(chat.clone(), warm),
         Fate::Park | Fate::Drop => drop(warm),
     }
-    TAILS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&chat);
+    TAILS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&chat);
     let _ = done.send(());
 }
 
@@ -365,7 +438,12 @@ mod tests {
     }
 
     fn listen() {
-        set_sink(Arc::new(|chat, turn, event| HEARD.lock().unwrap().push((chat.to_owned(), turn.to_owned(), event))));
+        set_sink(Arc::new(|chat, turn, event| {
+            HEARD
+                .lock()
+                .unwrap()
+                .push((chat.to_owned(), turn.to_owned(), event))
+        }));
     }
 
     /// A Claude-like provider whose "CLI" is `sh script`.
@@ -395,12 +473,15 @@ mod tests {
             Claude.parse_line(line)
         }
         fn tail_provider(&self) -> Option<Arc<dyn Provider>> {
-            Some(Arc::new(Fake { script: self.script.clone() }))
+            Some(Arc::new(Fake {
+                script: self.script.clone(),
+            }))
         }
     }
 
     fn script(name: &str, body: &str) -> (std::path::PathBuf, Fake) {
-        let path = std::env::temp_dir().join(format!("agentdeck-tail-{name}-{}.sh", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("agentdeck-tail-{name}-{}.sh", std::process::id()));
         std::fs::write(&path, body).unwrap();
         let script = path.to_string_lossy().replace('\\', "/");
         (path, Fake { script })
@@ -440,9 +521,19 @@ read more
 
     async fn first_turn(provider: &Fake, chat: &str) {
         let mut own = Vec::new();
-        let ran = drive_warm_turn_with("sh".into(), provider, &request(chat), StopToken::never(), |event| own.push(event)).await;
+        let ran = drive_warm_turn_with(
+            "sh".into(),
+            provider,
+            &request(chat),
+            StopToken::never(),
+            |event| own.push(event),
+        )
+        .await;
         assert!(ran);
-        assert!(matches!(own.last(), Some(AgentEvent::Done { .. })), "the turn ends at its first result, holding no lock");
+        assert!(
+            matches!(own.last(), Some(AgentEvent::Done { .. })),
+            "the turn ends at its first result, holding no lock"
+        );
     }
 
     async fn until(mut done: impl FnMut() -> bool) -> bool {
@@ -460,18 +551,40 @@ read more
         listen();
         let (path, provider) = script("report", &format!("{FIRST_RESULT}{FINAL_RESULT}"));
         first_turn(&provider, "chat-tail").await;
-        let ended = until(|| heard_of("chat-tail").iter().any(|(_, event)| matches!(event, AgentEvent::Done { .. }))).await;
+        let ended = until(|| {
+            heard_of("chat-tail")
+                .iter()
+                .any(|(_, event)| matches!(event, AgentEvent::Done { .. }))
+        })
+        .await;
         let _ = std::fs::remove_file(&path);
-        assert!(ended, "no answer of its own arrived: {:?}", heard_of("chat-tail"));
+        assert!(
+            ended,
+            "no answer of its own arrived: {:?}",
+            heard_of("chat-tail")
+        );
         let told = heard_of("chat-tail");
-        assert!(matches!(told.first(), Some((_, AgentEvent::AutoTurn { .. }))), "{told:?}");
-        assert!(told.iter().any(|(_, event)| matches!(event, AgentEvent::Delta { text } if text == "report")), "{told:?}");
-        assert!(matches!(told.last(), Some((_, AgentEvent::Done { .. }))), "{told:?}");
+        assert!(
+            matches!(told.first(), Some((_, AgentEvent::AutoTurn { .. }))),
+            "{told:?}"
+        );
+        assert!(
+            told.iter()
+                .any(|(_, event)| matches!(event, AgentEvent::Delta { text } if text == "report")),
+            "{told:?}"
+        );
+        assert!(
+            matches!(told.last(), Some((_, AgentEvent::Done { .. }))),
+            "{told:?}"
+        );
         assert!(told.iter().all(|(turn, _)| turn.starts_with("auto-")));
 
         // The answer over, the process goes back to the pool for the chat's next message.
         let key = settings_key("faketail", &provider.args(&request("chat-tail")), &[]);
-        assert!(until(|| holds("chat-tail", &key, Some("s1"), false)).await, "the process was not parked after the answer");
+        assert!(
+            until(|| holds("chat-tail", &key, Some("s1"), false)).await,
+            "the process was not parked after the answer"
+        );
         // Only this chat's process: `reset` would end the other tests' tails too (they share the agent id).
         let _ = crate::agent::warm::take("chat-tail", &key, None);
     }
@@ -482,13 +595,26 @@ read more
         // The CLI starts an answer and carries on until it is interrupted, as a long report would.
         let (path, provider) = script("handover", &format!("{FIRST_RESULT}{OBEY_INTERRUPT}"));
         first_turn(&provider, "chat-handover").await;
-        assert!(until(|| heard_of("chat-handover").iter().any(|(_, event)| matches!(event, AgentEvent::Delta { .. }))).await, "the answer never started");
+        assert!(
+            until(|| heard_of("chat-handover")
+                .iter()
+                .any(|(_, event)| matches!(event, AgentEvent::Delta { .. })))
+            .await,
+            "the answer never started"
+        );
 
         let started = std::time::Instant::now();
         let mut token = StopToken::never();
-        assert!(stop("chat-handover", &mut token).await, "the process came back");
+        assert!(
+            stop("chat-handover", &mut token).await,
+            "the process came back"
+        );
         let _ = std::fs::remove_file(&path);
-        assert!(started.elapsed() < Duration::from_secs(10), "the message waited {:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the message waited {:?}",
+            started.elapsed()
+        );
 
         let told = heard_of("chat-handover");
         assert!(
@@ -496,7 +622,10 @@ read more
             "the interrupted answer is closed as a stopped one, not left working: {told:?}"
         );
         let key = settings_key("faketail", &provider.args(&request("chat-handover")), &[]);
-        assert!(holds("chat-handover", &key, Some("s1"), false), "the process is parked for the message");
+        assert!(
+            holds("chat-handover", &key, Some("s1"), false),
+            "the process is parked for the message"
+        );
         // Only this chat's process: `reset` would end the other tests' tails too (they share the agent id).
         let _ = crate::agent::warm::take("chat-handover", &key, None);
     }
@@ -507,7 +636,12 @@ read more
         // This CLI never obeys an interrupt: only the caller's own stop can end the wait.
         let (path, provider) = script("deaf", &format!("{FIRST_RESULT}sleep 3\n"));
         first_turn(&provider, "chat-deaf").await;
-        assert!(until(|| heard_of("chat-deaf").iter().any(|(_, event)| matches!(event, AgentEvent::Delta { .. }))).await);
+        assert!(
+            until(|| heard_of("chat-deaf")
+                .iter()
+                .any(|(_, event)| matches!(event, AgentEvent::Delta { .. })))
+            .await
+        );
 
         let (handle, mut token) = crate::agent::interrupt::StopHandle::new();
         let waiter = tokio::spawn(async move { stop("chat-deaf", &mut token).await });
@@ -515,7 +649,10 @@ read more
         handle.stop();
         let answered = tokio::time::timeout(Duration::from_secs(5), waiter).await;
         let _ = std::fs::remove_file(&path);
-        assert!(matches!(answered, Ok(Ok(false))), "the wait did not end with the caller's stop: {answered:?}");
+        assert!(
+            matches!(answered, Ok(Ok(false))),
+            "the wait did not end with the caller's stop: {answered:?}"
+        );
         // Only this chat's process: `reset` would end the other tests' tails too (they share the agent id).
         let key = settings_key("faketail", &provider.args(&request("chat-deaf")), &[]);
         let _ = crate::agent::warm::take("chat-deaf", &key, None);

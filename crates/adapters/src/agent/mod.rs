@@ -559,7 +559,7 @@ pub fn begin_file_snapshot(
     Some(FileSnapshot { path: raw_path.to_owned(), full_path, before })
 }
 
-/// Finish a before-image after a successful write and return only the changed lines.
+/// Finish a before-image after a successful write and return only that write's changed lines.
 pub fn finish_file_snapshot(snapshot: FileSnapshot) -> Option<FileChange> {
     let after = if snapshot.full_path.exists() { read_change_text(&snapshot.full_path)? } else { String::new() };
     let before = snapshot.before.as_deref().unwrap_or_default();
@@ -569,7 +569,7 @@ pub fn finish_file_snapshot(snapshot: FileSnapshot) -> Option<FileChange> {
         path: snapshot.path,
         added: diff.added,
         removed: diff.removed,
-        cumulative: true,
+        cumulative: false,
         before: diff.before,
         after: diff.after,
     })

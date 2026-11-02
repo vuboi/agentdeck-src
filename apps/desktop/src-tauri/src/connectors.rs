@@ -659,8 +659,12 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
     let handles: Vec<_> = detect_tools(only)
         .into_iter()
         .map(|id| {
-            let found = which(id);
             tauri::async_runtime::spawn(async move {
+                let found = match which(id) {
+                    Some(path) => Some(path),
+                    None if id == "codex" => npm_global_binary("codex").await,
+                    None => None,
+                };
                 let version = match &found {
                     Some(path) => version_of(path).await,
                     None => None,
@@ -728,6 +732,34 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
         workbuddy,
         muse_code,
     }
+}
+
+/// Finds an npm global executable when its configured prefix is outside the usual CLI search paths.
+async fn npm_global_binary(name: &str) -> Option<PathBuf> {
+    let npm = which("npm")?;
+    let output = capture(&npm, &["config", "get", "prefix"], Duration::from_secs(5))
+        .await
+        .ok()?;
+    if !output.ok {
+        return None;
+    }
+    let prefix = PathBuf::from(output.stdout.trim());
+    if prefix.as_os_str().is_empty() {
+        return None;
+    }
+    let suffixes: &[&str] = if cfg!(windows) {
+        &[".cmd", ".exe", ".bat"]
+    } else {
+        &[""]
+    };
+    [prefix.clone(), prefix.join("bin")]
+        .into_iter()
+        .flat_map(|directory| {
+            suffixes
+                .iter()
+                .map(move |suffix| directory.join(format!("{name}{suffix}")))
+        })
+        .find(|path| path.is_file())
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -939,33 +971,40 @@ async fn connector_login_inner(app: AppHandle, id: String) -> Result<(), String>
             )
             .await
         }
-        "codex" => match (which("codex-auth"), which("codex")) {
-            (Some(auth), _) => {
-                run_logged_with_idle_timeout(
-                    &app,
-                    &id,
-                    &auth,
-                    &["login"],
-                    limit,
-                    idle_limit,
-                    Some("codex"),
-                )
-                .await
+        "codex" => {
+            let auth = which("codex-auth");
+            let codex = match which("codex") {
+                Some(path) => Some(path),
+                None => npm_global_binary("codex").await,
+            };
+            match (auth, codex) {
+                (Some(auth), _) => {
+                    run_logged_with_idle_timeout(
+                        &app,
+                        &id,
+                        &auth,
+                        &["login"],
+                        limit,
+                        idle_limit,
+                        Some("codex"),
+                    )
+                    .await
+                }
+                (None, Some(codex)) => {
+                    run_logged_with_idle_timeout(
+                        &app,
+                        &id,
+                        &codex,
+                        &["login"],
+                        limit,
+                        idle_limit,
+                        Some("codex"),
+                    )
+                    .await
+                }
+                (None, None) => Err("Codex is not installed".to_string()),
             }
-            (None, Some(codex)) => {
-                run_logged_with_idle_timeout(
-                    &app,
-                    &id,
-                    &codex,
-                    &["login"],
-                    limit,
-                    idle_limit,
-                    Some("codex"),
-                )
-                .await
-            }
-            (None, None) => Err("Codex is not installed".to_string()),
-        },
+        }
         "opencode" => {
             let opencode = which("opencode").ok_or("OpenCode is not installed")?;
             // AgentDeck has no interactive TTY. Passing the OpenAI integration skips OpenCode's provider picker, and

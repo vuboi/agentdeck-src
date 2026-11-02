@@ -154,6 +154,7 @@ export function connectorLogo(id: string): string | undefined {
     case 'workbuddy':
       return WORKBUDDY_LOGO;
     case 'muse':
+    case 'muse-code':
       return MUSE_LOGO;
     case 'commandcode':
       return COMMAND_CODE_LOGO;

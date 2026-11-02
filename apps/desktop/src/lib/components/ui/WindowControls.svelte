@@ -50,7 +50,7 @@
 </script>
 
 <!-- Pinned to the top-right corner, over the header row of whichever pane sits there. -->
-<div class="absolute top-0 right-0 z-50 flex h-[39px] items-center gap-0.5 pr-[5.5px]" aria-label="Window controls">
+<div class="absolute top-0 right-0 z-50 flex h-[39px] items-center gap-1 pr-[5.5px]" aria-label="Window controls">
   <ZButton zWave={false} zType="ghost" zSize="sm" class="size-8! p-0 items-center justify-center rounded-md !bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary" aria-label="Minimize window" onclick={() => windowAction('minimize')}>
     <ZIcon zType="lucideMinus" class="size-4" zStrokeWidth={1.5} />
   </ZButton>

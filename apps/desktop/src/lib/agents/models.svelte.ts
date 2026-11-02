@@ -160,8 +160,7 @@ const chattable = () =>
         (provider) => provider.enabled && provider.kind !== 'anthropic',
     );
 
-// Claude's own models, as the CLI lists them. The catalogue's Claude list is these, then, while a Console API key is
-// saved, the same models billed to the API credit (`credit:` ids, after a "Claude credit" divider in the pickers).
+// Claude's local account models remain available; Console API credit variants are added with `credit:` IDs.
 let claudeOwn = $state<ModelOption[]>([...catalog.claude]);
 
 $effect.root(() => {

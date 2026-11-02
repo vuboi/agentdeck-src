@@ -398,15 +398,16 @@ impl Provider for OpenCode {
                 if first {
                     let tool = part["tool"].as_str().unwrap_or("tool");
                     let input = &part["state"]["input"];
-                    let change = super::file_change(tool, input);
-                    if change.is_none() {
-                        let root = self.root.lock().ok().and_then(|root| root.clone());
-                        if let Some(snapshot) = super::begin_file_snapshot(root.as_deref(), tool, input) {
-                            if let Ok(mut snapshots) = self.file_snapshots.lock() {
-                                snapshots.insert(id.clone(), snapshot);
-                            }
+                    let root = self.root.lock().ok().and_then(|root| root.clone());
+                    let snapshot = super::begin_file_snapshot(root.as_deref(), tool, input);
+                    let change = if let Some(snapshot) = snapshot {
+                        if let Ok(mut snapshots) = self.file_snapshots.lock() {
+                            snapshots.insert(id.clone(), snapshot);
                         }
-                    }
+                        None
+                    } else {
+                        super::file_change(tool, input)
+                    };
                     events.push(AgentEvent::ToolCall {
                         id: id.clone(),
                         name: tool.to_owned(),

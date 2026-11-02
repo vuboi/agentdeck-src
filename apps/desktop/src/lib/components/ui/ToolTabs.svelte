@@ -63,12 +63,12 @@
     </ZButton>
     </span>
   {/each}
+  <ZButton zWave={false} zType="ghost" zSize="sm" class="size-8! shrink-0 p-0 !bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary" aria-label={layout.toolsOnLeft ? 'Move content to the right' : 'Move content to the left'} title={layout.toolsOnLeft ? 'Content right · chat left' : 'Content left · chat right'} onclick={() => (layout.toolsOnLeft = !layout.toolsOnLeft)}>
+    <ZIcon zType={layout.toolsOnLeft ? 'lucideArrowRightLeft' : 'lucideArrowLeftRight'} class="size-4" />
+  </ZButton>
   {#if hiddenTabs.length > 0}
     <div class="flex items-center [&_button]:size-7! [&_button]:p-0 [&_button]:!bg-transparent [&_button]:!text-muted-foreground [&_button:hover]:!bg-primary/10 [&_button:hover]:!text-primary [&_button[aria-expanded=true]]:!bg-primary/15 [&_button[aria-expanded=true]]:!text-primary [&_button]:outline-none [&_button]:focus-visible:ring-0">
     <MenuButton items={menuItems} icon="lucideMenu" label="More tools" width={200} />
     </div>
   {/if}
-  <ZButton zWave={false} zType="ghost" zSize="sm" class="size-8! shrink-0 p-0 !bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary" aria-label={layout.toolsOnLeft ? 'Move content to the right' : 'Move content to the left'} title={layout.toolsOnLeft ? 'Content right · chat left' : 'Content left · chat right'} onclick={() => (layout.toolsOnLeft = !layout.toolsOnLeft)}>
-    <ZIcon zType={layout.toolsOnLeft ? 'lucideArrowRightLeft' : 'lucideArrowLeftRight'} class="size-4" />
-  </ZButton>
 </div>

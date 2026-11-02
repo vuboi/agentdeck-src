@@ -50,7 +50,11 @@ mod tests {
     fn a_long_text_keeps_both_ends_and_fits_the_limit() {
         let text = format!("START{}END", "x".repeat(5000));
         let out = trim_middle(&text, 300, 50);
-        assert!(out.chars().count() <= 300, "{} characters", out.chars().count());
+        assert!(
+            out.chars().count() <= 300,
+            "{} characters",
+            out.chars().count()
+        );
         assert!(out.starts_with("START"));
         assert!(out.ends_with("END"));
         assert!(out.contains("characters pruned"));

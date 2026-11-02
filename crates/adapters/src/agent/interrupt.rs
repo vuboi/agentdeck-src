@@ -93,7 +93,11 @@ pub struct Interrupter {
 
 impl Interrupter {
     pub fn new(token: StopToken) -> Interrupter {
-        Interrupter { token, deadline: INTERRUPT_DEADLINE, kill_at: None }
+        Interrupter {
+            token,
+            deadline: INTERRUPT_DEADLINE,
+            kill_at: None,
+        }
     }
 
     /// Whether the CLI was asked to stop (the turn it reports next is a stopped one).
@@ -133,14 +137,23 @@ pub fn codex_interrupt_request(id: u64, thread: &str, turn: &str) -> Value {
 /// failed turn (Codex): after a stop that is not a failure, and the conversation goes on.
 pub fn stopped(event: AgentEvent, conversation: Option<&str>) -> AgentEvent {
     match event {
-        AgentEvent::Error { .. } => AgentEvent::Done { session_id: conversation.map(str::to_owned), text: String::new(), cost_usd: None },
+        AgentEvent::Error { .. } => AgentEvent::Done {
+            session_id: conversation.map(str::to_owned),
+            text: String::new(),
+            cost_usd: None,
+        },
         other => other,
     }
 }
 
 /// The closing event for a turn that had to be killed.
 pub fn killed(conversation: Option<&str>) -> AgentEvent {
-    stopped(AgentEvent::Error { message: String::new() }, conversation)
+    stopped(
+        AgentEvent::Error {
+            message: String::new(),
+        },
+        conversation,
+    )
 }
 
 #[cfg(test)]
@@ -168,8 +181,20 @@ mod tests {
 
     #[test]
     fn a_stopped_turn_ends_as_done_not_as_a_failure() {
-        let event = stopped(AgentEvent::Error { message: "x".into() }, Some("s1"));
-        assert_eq!(event, AgentEvent::Done { session_id: Some("s1".into()), text: String::new(), cost_usd: None });
+        let event = stopped(
+            AgentEvent::Error {
+                message: "x".into(),
+            },
+            Some("s1"),
+        );
+        assert_eq!(
+            event,
+            AgentEvent::Done {
+                session_id: Some("s1".into()),
+                text: String::new(),
+                cost_usd: None
+            }
+        );
         let delta = AgentEvent::Delta { text: "a".into() };
         assert_eq!(stopped(delta.clone(), Some("s1")), delta);
     }

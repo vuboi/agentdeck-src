@@ -1,15 +1,16 @@
-//! Claude Code, driven headless: `claude -p <prompt> --output-format stream-json`.
+//! Claude Code, driven through Anthropic's Claude Agent SDK with stream-json events.
 //!
 //! One process per turn. Context across turns comes from the conversation id: the first turn passes
 //! `--session-id <uuid>`, later turns pass `--resume <uuid>`.
 
 use std::path::PathBuf;
 
+use base64::Engine as _;
 use serde_json::Value;
 
 use super::{
-    allow_entry, file_change, summarize_tool_input, AgentEvent, PermissionRequest, Provider, TaskStatus,
-    TurnRequest,
+    allow_entry, file_change, summarize_tool_input, AgentEvent, PermissionRequest, Provider,
+    TaskStatus, TurnRequest,
 };
 
 pub struct Claude;
@@ -69,19 +70,94 @@ fn candidates_for(os: &str, home: Option<PathBuf>, appdata: Option<PathBuf>) -> 
     found
 }
 
+/// The SDK delegates Claude Code's local authentication and model execution to this installed binary.
+pub fn claude_code_binary() -> Option<PathBuf> {
+    let env_path = |key: &str| std::env::var_os(key).map(PathBuf::from);
+    let home = env_path("HOME").or_else(|| env_path("USERPROFILE"));
+    let mut candidates = candidates_for(std::env::consts::OS, home, env_path("APPDATA"));
+    let executable = if cfg!(windows) { "claude.exe" } else { "claude" };
+    if let Some(path) = env_path("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|directory| directory.join(executable)));
+        #[cfg(windows)]
+        candidates.extend(std::env::split_paths(&path).map(|directory| directory.join("claude.cmd")));
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn sdk_runner() -> PathBuf {
+    std::env::var_os("AGENTDECK_CLAUDE_SDK_RUNNER")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/desktop/src/agent/claude-sdk-runner.mjs")
+        })
+}
+
+fn sdk_args(req: &TurnRequest, mode: &str) -> Vec<String> {
+    let bridge = std::env::var("AGENTDECK_BRIDGE").ok();
+    let mut system_prompt = format!("{APP_CONTEXT}{ASK_CONTEXT}");
+    system_prompt.push_str(" In the z-ui workspace, start the app the user asked for with its own script: `pnpm start:svelte` for the Svelte 5 app (default http://localhost:4301) and `pnpm start:angular` for the Angular app (default http://localhost:4200). Never open the Angular server when the user asks for Svelte, Svelte 5 or z-ui-svelte.");
+
+    let mut allowed_tools = req.allowed_tools.clone();
+    let mcp_servers = if let Some(bridge) = bridge {
+        system_prompt.push_str(" You CAN see and operate the page open in the Preview panel yourself, with the agentdeck tools: browser_screenshot to look, browser_click / browser_fill (form fields; browser_type only when the page reacts to each keystroke) / browser_key / browser_scroll / browser_hover to act as a user would (coordinates are CSS pixels of the screenshot; browser_eval with getBoundingClientRect() finds an element's point), browser_eval and browser_dom to read the page, browser_console and browser_network for errors. Never tell the user you cannot click or test in Preview, and do not ask them to do it for you. Test step by step: look, act, look again, check the console and network.");
+        system_prompt.push_str(&format!(" The same actions are plain HTTP too if a tool is missing: curl {bridge}/help."));
+        allowed_tools.push("mcp__agentdeck".to_string());
+        serde_json::json!({
+            "agentdeck": {
+                "type": "http",
+                "url": super::mcp_url(&bridge, req.owner.as_deref(), req.cwd.as_deref())
+            }
+        })
+    } else {
+        serde_json::json!({})
+    };
+
+    let permission = super::permission::Mode::parse(req.permission_mode.as_deref());
+    let mut config = serde_json::json!({
+        "cwd": req.cwd.as_ref().map(|path| path.to_string_lossy()),
+        "model": req.model,
+        "effort": req.effort,
+        // This keeps headless Ask mode non-interactive. The SDK reports denials in its result, which
+        // AgentDeck turns into its existing permission card and retries with the user's approved rule.
+        "permissionMode": permission.claude().unwrap_or("dontAsk"),
+        "allowedTools": allowed_tools,
+        "disallowedTools": super::guard::claude_denied_tools()
+            .into_iter()
+            .chain(std::iter::once("AskUserQuestion".to_string()))
+            .collect::<Vec<_>>(),
+        "systemPrompt": system_prompt,
+        "mcpServers": mcp_servers,
+    });
+    if let Some(id) = &req.session_id {
+        if req.resume {
+            config["resume"] = serde_json::Value::String(id.clone());
+        } else {
+            config["sessionId"] = serde_json::Value::String(id.clone());
+        }
+    }
+
+    vec![
+        sdk_runner().to_string_lossy().into_owned(),
+        mode.to_string(),
+        base64::engine::general_purpose::STANDARD.encode(config.to_string()),
+    ]
+}
+
 impl Provider for Claude {
     fn id(&self) -> &'static str {
         "claude"
     }
 
     fn binary(&self) -> &'static str {
-        "claude"
+        "node"
     }
 
     fn candidates(&self) -> Vec<PathBuf> {
-        let env_path = |key: &str| std::env::var_os(key).map(PathBuf::from);
-        let home = env_path("HOME").or_else(|| env_path("USERPROFILE"));
-        candidates_for(std::env::consts::OS, home, env_path("APPDATA"))
+        std::env::var_os("AGENTDECK_CLAUDE_SDK_NODE")
+            .map(PathBuf::from)
+            .into_iter()
+            .collect()
     }
 
     fn prompt_on_stdin(&self) -> bool {
@@ -91,7 +167,10 @@ impl Provider for Claude {
     fn environment(&self, req: &TurnRequest) -> Vec<(String, String)> {
         // No auto-update check, telemetry or feature-flag fetch on start-up: measured on a cold start, the first answer
         // comes 0.4 to 1.3 s sooner and the process ends faster. (It also turns Remote Control off: not used here.)
-        let mut env = vec![("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(), "1".to_string())];
+        let mut env = vec![(
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(),
+            "1".to_string(),
+        )];
         // An API key wins over the signed-in plan in Claude Code's sign-in order: the turn spends Console credit.
         env.extend(
             req.api_key
@@ -103,89 +182,17 @@ impl Provider for Claude {
     }
 
     fn args(&self, req: &TurnRequest) -> Vec<String> {
-        // `-p` with no prompt argument reads the prompt from stdin (see `prompt_on_stdin`).
-        let mut args = vec![
-            "-p".to_string(),
-            "--output-format".to_string(),
-            "stream-json".to_string(),
-            "--verbose".to_string(),
-            // Token-level deltas, so text appears while it is written.
-            "--include-partial-messages".to_string(),
-        ];
-        if let Some(id) = &req.session_id {
-            args.push(
-                if req.resume {
-                    "--resume"
-                } else {
-                    "--session-id"
-                }
-                .to_string(),
-            );
-            args.push(id.clone());
-        }
-        if let Some(model) = &req.model {
-            args.push("--model".to_string());
-            args.push(model.clone());
-        }
-        // AgentDeck has its own browser; the agent is told to hand pages over to it instead of opening one itself.
-        args.push("--append-system-prompt".to_string());
-        let mut context = APP_CONTEXT.to_string();
-        context.push_str(ASK_CONTEXT);
-        let bridge = std::env::var("AGENTDECK_BRIDGE").ok();
-        // In the z-ui workspace the two apps have their own start scripts (the bare `pnpm start` asks interactively).
-        context.push_str(" In the z-ui workspace, start the app the user asked for with its own script: `pnpm start:svelte` for the Svelte 5 app (default http://localhost:4301) and `pnpm start:angular` for the Angular app (default http://localhost:4200). Never open the Angular server when the user asks for Svelte, Svelte 5 or z-ui-svelte.");
-        if let Some(bridge) = &bridge {
-            context.push_str(" You CAN see and operate the page open in the Preview panel yourself, with the agentdeck tools: browser_screenshot to look, browser_click / browser_fill (form fields; browser_type only when the page reacts to each keystroke) / browser_key / browser_scroll / browser_hover to act as a user would (coordinates are CSS pixels of the screenshot; browser_eval with getBoundingClientRect() finds an element's point), browser_eval and browser_dom to read the page, browser_console and browser_network for errors. Never tell the user you cannot click or test in Preview, and do not ask them to do it for you. Test step by step: look, act, look again, check the console and network.");
-            context.push_str(&format!(
-                " The same actions are plain HTTP too if a tool is missing: curl {bridge}/help."
-            ));
-        }
-        args.push(context);
-        // The AgentDeck browser as real tools (an MCP server served by the app), allowed without asking.
-        if let Some(bridge) = &bridge {
-            args.push("--mcp-config".to_string());
-            args.push(
-                serde_json::json!({ "mcpServers": { "agentdeck": { "type": "http", "url": super::mcp_url(bridge, req.owner.as_deref(), req.cwd.as_deref()) } } })
-                    .to_string(),
-            );
-            args.push("--allowedTools".to_string());
-            args.push("mcp__agentdeck".to_string());
-        }
-        if let Some(effort) = &req.effort {
-            args.push("--effort".to_string());
-            args.push(effort.clone());
-        }
-        if let Some(mode) = super::permission::Mode::parse(req.permission_mode.as_deref()).claude() {
-            args.push("--permission-mode".to_string());
-            args.push(mode.to_string());
-        }
-        for tool in &req.allowed_tools {
-            args.push("--allowedTools".to_string());
-            args.push(tool.clone());
-        }
-        // Claude runs its own commands, so the guard cannot look at them: its CLI refuses the heaviest ones by their start.
-        for tool in super::guard::claude_denied_tools() {
-            args.push("--disallowedTools".to_string());
-            args.push(tool);
-        }
-        // Claude's own question tool waits for a click that no AgentDeck card can give: the agentdeck-ask block replaces it.
-        args.push("--disallowedTools".to_string());
-        args.push("AskUserQuestion".to_string());
-        args
+        sdk_args(req, "--once")
     }
 
-    /// The same settings, with each message read as a JSON line: `-p` keeps the conversation going for every line.
+    /// The SDK query remains open between turns and receives messages through its streaming input.
     fn warm_args(&self, req: &TurnRequest) -> Option<Vec<String>> {
-        let mut args = self.args(req);
-        args.push("--input-format".to_string());
-        args.push("stream-json".to_string());
-        // The CLI reads each message of the user back when it takes it: how a turn knows an injected one was read.
-        args.push("--replay-user-messages".to_string());
-        Some(args)
+        Some(sdk_args(req, "--warm"))
     }
 
     fn warm_message(&self, prompt: &str) -> String {
-        serde_json::json!({ "type": "user", "message": { "role": "user", "content": prompt } }).to_string()
+        serde_json::json!({ "type": "user", "message": { "role": "user", "content": prompt } })
+            .to_string()
     }
 
     fn interrupt_mode(&self) -> super::interrupt::InterruptMode {
@@ -216,12 +223,20 @@ impl Provider for Claude {
         let events = self.parse_value(&value, line);
         // A line of a sub-agent carries the id of the tool call that started it: its text and tools belong under that
         // card, not in the main answer.
-        match value["parent_tool_use_id"].as_str().filter(|id| !id.is_empty()) {
+        match value["parent_tool_use_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+        {
             Some(parent) => events
                 .into_iter()
                 .map(|event| match event {
-                    AgentEvent::Usage { .. } | AgentEvent::Raw { .. } | AgentEvent::Task { .. } => event,
-                    inner => AgentEvent::Scoped { parent: parent.to_owned(), event: Box::new(inner) },
+                    AgentEvent::Usage { .. } | AgentEvent::Raw { .. } | AgentEvent::Task { .. } => {
+                        event
+                    }
+                    inner => AgentEvent::Scoped {
+                        parent: parent.to_owned(),
+                        event: Box::new(inner),
+                    },
                 })
                 .collect(),
             None => events,
@@ -315,19 +330,33 @@ impl Claude {
                 .collect(),
             // A sub-agent or a background job starts, reports on its way, and ends.
             Some("system")
-                if matches!(value["subtype"].as_str(), Some("task_started" | "task_progress" | "task_notification")) =>
+                if matches!(
+                    value["subtype"].as_str(),
+                    Some("task_started" | "task_progress" | "task_notification")
+                ) =>
             {
-                let text = |key: &str| value[key].as_str().filter(|text| !text.is_empty()).map(str::to_owned);
+                let text = |key: &str| {
+                    value[key]
+                        .as_str()
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_owned)
+                };
                 let (status, summary) = match value["subtype"].as_str() {
                     Some("task_started") => (TaskStatus::Started, None),
                     Some("task_progress") => (TaskStatus::Progress, text("description")),
                     _ => (
-                        if matches!(value["status"].as_str(), Some("completed")) { TaskStatus::Done } else { TaskStatus::Failed },
+                        if matches!(value["status"].as_str(), Some("completed")) {
+                            TaskStatus::Done
+                        } else {
+                            TaskStatus::Failed
+                        },
                         text("summary"),
                     ),
                 };
                 let label = match (text("subagent_type"), text("description")) {
-                    (Some(kind), Some(what)) if status == TaskStatus::Started => Some(format!("{kind}: {what}")),
+                    (Some(kind), Some(what)) if status == TaskStatus::Started => {
+                        Some(format!("{kind}: {what}"))
+                    }
                     (Some(kind), _) => Some(kind),
                     (None, what) => what.filter(|_| status == TaskStatus::Started),
                 };
@@ -337,13 +366,18 @@ impl Claude {
                     status,
                     label,
                     summary,
-                    tools: value["usage"]["tool_uses"].as_u64().and_then(|count| u32::try_from(count).ok()),
+                    tools: value["usage"]["tool_uses"]
+                        .as_u64()
+                        .and_then(|count| u32::try_from(count).ok()),
                 }]
             }
             // The CLI moved a turn to another model (a refusal, an overload, a model that is gone). Passed on as it is:
             // the chat says so and, when the whole session moved (`scope` other than "local"), follows the new model.
             Some("system")
-                if matches!(value["subtype"].as_str(), Some("model_refusal_fallback" | "model_fallback")) =>
+                if matches!(
+                    value["subtype"].as_str(),
+                    Some("model_refusal_fallback" | "model_fallback")
+                ) =>
             {
                 vec![AgentEvent::Raw {
                     source: "claude".to_string(),
@@ -414,14 +448,20 @@ mod tests {
     }
 
     #[test]
-    fn an_api_key_reaches_the_cli_as_its_environment() {
-        let quiet = ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(), "1".to_string());
+    fn an_api_key_reaches_the_claude_runtime_as_its_environment() {
+        let quiet = (
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(),
+            "1".to_string(),
+        );
         assert_eq!(Claude.environment(&req(false)), vec![quiet.clone()]);
         let mut with_key = req(false);
         with_key.api_key = Some("sk-ant-test".into());
         assert_eq!(
             Claude.environment(&with_key),
-            vec![quiet, ("ANTHROPIC_API_KEY".to_string(), "sk-ant-test".to_string())]
+            vec![
+                quiet,
+                ("ANTHROPIC_API_KEY".to_string(), "sk-ant-test".to_string())
+            ]
         );
     }
 
@@ -484,8 +524,12 @@ mod tests {
     #[test]
     fn a_model_fallback_is_passed_on_and_other_system_lines_are_not() {
         let line = r#"{"type":"system","subtype":"model_refusal_fallback","direction":"retry","scope":"local","original_model":"opus","fallback_model":"sonnet"}"#;
-        assert!(matches!(Claude.parse_line(line).as_slice(), [AgentEvent::Raw { label, .. }] if label == "model_refusal_fallback"));
-        assert!(Claude.parse_line(r#"{"type":"system","subtype":"init"}"#).is_empty());
+        assert!(
+            matches!(Claude.parse_line(line).as_slice(), [AgentEvent::Raw { label, .. }] if label == "model_refusal_fallback")
+        );
+        assert!(Claude
+            .parse_line(r#"{"type":"system","subtype":"init"}"#)
+            .is_empty());
     }
 
     #[test]
@@ -542,10 +586,16 @@ mod tests {
 
     #[test]
     fn delegate_waits_are_background_but_non_waiting_calls_are_not() {
-        for (input, expected) in [(serde_json::json!({"task":"x"}), true), (serde_json::json!({"wait":true}), true), (serde_json::json!({"wait":false}), false)] {
+        for (input, expected) in [
+            (serde_json::json!({"task":"x"}), true),
+            (serde_json::json!({"wait":true}), true),
+            (serde_json::json!({"wait":false}), false),
+        ] {
             for name in ["mcp__agentdeck__delegate_task", "delegate_task"] {
                 let line = serde_json::json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"x","name":name,"input":input}]}}).to_string();
-                assert!(matches!(&Claude.parse_line(&line)[0], AgentEvent::ToolCall { background, .. } if *background == expected));
+                assert!(
+                    matches!(&Claude.parse_line(&line)[0], AgentEvent::ToolCall { background, .. } if *background == expected)
+                );
             }
         }
     }
@@ -655,7 +705,10 @@ mod tests {
             other => panic!("expected a scoped tool call, got {other:?}"),
         }
         let top = r#"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#;
-        assert!(matches!(Claude.parse_line(top).as_slice(), [AgentEvent::ToolCall { .. }]));
+        assert!(matches!(
+            Claude.parse_line(top).as_slice(),
+            [AgentEvent::ToolCall { .. }]
+        ));
     }
 
     #[test]
@@ -666,7 +719,14 @@ mod tests {
             [AgentEvent::Task { status: TaskStatus::Started, label: Some(label), tool_use_id: Some(_), .. }] if label == "Explore: Scan docs"
         ));
         let progress = r#"{"type":"system","subtype":"task_progress","task_id":"a1","tool_use_id":"toolu_agent","description":"Reading","usage":{"tool_uses":3}}"#;
-        assert!(matches!(Claude.parse_line(progress).as_slice(), [AgentEvent::Task { status: TaskStatus::Progress, tools: Some(3), .. }]));
+        assert!(matches!(
+            Claude.parse_line(progress).as_slice(),
+            [AgentEvent::Task {
+                status: TaskStatus::Progress,
+                tools: Some(3),
+                ..
+            }]
+        ));
         let done = r#"{"type":"system","subtype":"task_notification","task_id":"a1","tool_use_id":"toolu_agent","status":"completed","summary":"Found 4 files"}"#;
         assert!(matches!(
             Claude.parse_line(done).as_slice(),
@@ -677,8 +737,16 @@ mod tests {
     #[test]
     fn open_background_work_is_read_from_the_task_list() {
         use crate::agent::tail::background_open;
-        assert_eq!(background_open(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a"}]}"#), Some(true));
-        assert_eq!(background_open(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#), Some(false));
+        assert_eq!(
+            background_open(
+                r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a"}]}"#
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            background_open(r#"{"type":"system","subtype":"background_tasks_changed","tasks":[]}"#),
+            Some(false)
+        );
         assert_eq!(background_open(r#"{"type":"result"}"#), None);
     }
 }

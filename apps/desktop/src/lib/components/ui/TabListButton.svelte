@@ -34,7 +34,7 @@
     zWave={false}
     zType="ghost"
     zSize="sm"
-    class="size-7! shrink-0 p-0 {open
+    class="size-8! shrink-0 p-0 {open
         ? TRIGGER_ON
         : '!bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary'}"
     aria-label={label}

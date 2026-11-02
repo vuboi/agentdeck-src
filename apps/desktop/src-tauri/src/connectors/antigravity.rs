@@ -443,16 +443,20 @@ fn save_agy_account(sign_in: &Value, email: String) -> Result<(), String> {
     let serialized = serde_json::to_string(sign_in).map_err(|error| error.to_string())?;
     write_secret(&agy_secret_target(&email), &serialized)?;
     let mut accounts = read_agy_accounts();
-    if let Some(account) = accounts.iter_mut().find(|account| account.email == email) {
-        account.active = true;
-    } else {
+    let found = accounts.iter().any(|account| account.email == email);
+    if !found {
         accounts.push(AgyAccount {
             id: email.clone(),
-            email,
-            active: true,
+            email: email.clone(),
+            active: false,
             expired: false,
             status: None,
         });
+    }
+    // There is one shared agy login. Saving another login must not leave older rows marked active,
+    // since quota refresh uses the active row to choose between agy's token and the per-account token.
+    for account in &mut accounts {
+        account.active = account.email == email;
     }
     write_agy_accounts(&accounts)
 }
@@ -497,6 +501,33 @@ pub async fn antigravity_account_switch(id: String) -> Result<(), String> {
 /// The quota as Antigravity's own servers say it now: the buckets (`<model group>-<window>`, e.g. `gemini-5h`) with the
 /// fraction left and when each resets. Uses the access token agy already holds; it is not renewed here, so one that ran
 /// out is reported, and agy renews it the next time it runs.
+async fn fetch_agy_summary_endpoint(
+    client: &reqwest::Client,
+    url: &str,
+    access: &str,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let response = client
+        .post(url)
+        .timeout(timeout)
+        .bearer_auth(access)
+        .header(
+            reqwest::header::USER_AGENT,
+            "antigravity/2.25.0 (aidev_client; os_type=windows; arch=amd64; cl=1003475615)",
+        )
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Antigravity's servers answered {}",
+            response.status()
+        ));
+    }
+    response.json().await.map_err(|error| error.to_string())
+}
+
 async fn fetch_agy_summary(sign_in: &Value) -> Result<(i64, Value), String> {
     let token = &sign_in["token"];
     let access = token["access_token"]
@@ -517,81 +548,67 @@ async fn fetch_agy_summary(sign_in: &Value) -> Result<(i64, Value), String> {
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|error| error.to_string())?;
-    let mut urls = Vec::with_capacity(1 + ENDPOINTS.antigravity.quota_fallbacks.len());
-    urls.push(ENDPOINTS.antigravity.quota.as_str());
-    urls.extend(
-        ENDPOINTS
-            .antigravity
-            .quota_fallbacks
-            .iter()
-            .map(String::as_str),
-    );
+    let primary = fetch_agy_summary_endpoint(
+        &client,
+        ENDPOINTS.antigravity.quota.as_str(),
+        access,
+        Duration::from_secs(6),
+    )
+    .await;
     let mut best: Option<(usize, Value)> = None;
     let mut last_error = None;
-    for url in urls {
-        let response = match client
-            .post(url)
-            .bearer_auth(access)
-            .header(
-                reqwest::header::USER_AGENT,
-                "antigravity/2.25.0 (aidev_client; os_type=windows; arch=amd64; cl=1003475615)",
-            )
-            .json(&serde_json::json!({}))
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                last_error = Some(error.to_string());
-                continue;
+    let inspect = |summary: &Value| {
+        let buckets = summary["groups"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|group| group["buckets"].as_array().into_iter().flatten());
+        let mut bucket_count = 0;
+        let mut has_gemini = false;
+        let mut has_third_party = false;
+        for bucket in buckets {
+            if bucket["bucketId"].as_str().is_some()
+                && bucket["remainingFraction"].as_f64().is_some()
+            {
+                bucket_count += 1;
             }
-        };
-        if !response.status().is_success() {
-            last_error = Some(format!(
-                "Antigravity's servers answered {}",
-                response.status()
-            ));
-            continue;
+            if let Some(id) = bucket["bucketId"].as_str() {
+                has_gemini |= id.starts_with("gemini-");
+                has_third_party |= id.starts_with("3p-");
+            }
         }
-        let summary: Value = match response.json().await {
+        (bucket_count, has_gemini, has_third_party)
+    };
+
+    match primary {
+        Ok(summary) => {
+            let (bucket_count, has_gemini, has_third_party) = inspect(&summary);
+            // A complete summary contains both shared pools. A partial 200 response must not stop
+            // fallback discovery because the primary endpoint can omit one model group.
+            if has_gemini && has_third_party {
+                return Ok((now, summary));
+            }
+            best = Some((bucket_count, summary));
+        }
+        Err(error) => last_error = Some(error),
+    }
+
+    // Keep the primary endpoint first and single-shot. Only when it fails or omits a pool do we
+    // spend requests on fallbacks, concurrently, instead of serially waiting up to 15s per URL.
+    let fallbacks = ENDPOINTS.antigravity.quota_fallbacks.iter();
+    let fallback_summaries = futures_util::future::join_all(fallbacks.map(|url| async {
+        fetch_agy_summary_endpoint(&client, url, access, Duration::from_secs(8)).await
+    }))
+    .await;
+    for result in fallback_summaries {
+        let summary = match result {
             Ok(summary) => summary,
             Err(error) => {
-                last_error = Some(error.to_string());
+                last_error = Some(error);
                 continue;
             }
         };
-        let bucket_count = summary["groups"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .flat_map(|group| group["buckets"].as_array().into_iter().flatten())
-            .filter(|bucket| {
-                bucket["bucketId"].as_str().is_some()
-                    && bucket["remainingFraction"].as_f64().is_some()
-            })
-            .count();
-        let has_gemini = summary["groups"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .flat_map(|group| group["buckets"].as_array().into_iter().flatten())
-            .any(|bucket| {
-                bucket["bucketId"]
-                    .as_str()
-                    .is_some_and(|id| id.starts_with("gemini-"))
-            });
-        let has_third_party = summary["groups"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .flat_map(|group| group["buckets"].as_array().into_iter().flatten())
-            .any(|bucket| {
-                bucket["bucketId"]
-                    .as_str()
-                    .is_some_and(|id| id.starts_with("3p-"))
-            });
-        // A complete summary contains both shared pools. A partial 200 response must not stop the
-        // search because the daily endpoint has been observed to omit the Gemini group.
+        let (bucket_count, has_gemini, has_third_party) = inspect(&summary);
         if has_gemini && has_third_party {
             return Ok((now, summary));
         }
@@ -701,7 +718,10 @@ async fn read_agy_quotas(account_id: Option<&str>) -> Vec<AgyAccountQuota> {
     let reads = accounts.into_iter().map(|account| {
         let active = active.clone();
         async move {
-            let is_active = active.as_deref() == Some(account.email.as_str()) || account.active;
+            // The JSON `active` bit can be stale after an older add-account flow. Only the account
+            // matching agy's current sign-in may use the shared token; every other row must use its
+            // own Credential Manager entry or all accounts will display the current account's quota.
+            let is_active = active.as_deref() == Some(account.email.as_str());
             #[cfg(windows)]
             let sign_in = if is_active {
                 agy_sign_in().or_else(|| {

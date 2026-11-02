@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ticker } from '../../app/platform/clock.svelte';
   import { inTauri } from '../../app/platform/history';
   import { customProviderOf } from '../../agents/provider-registry';
   import { onUsage, shortCount, totalTokens, usageLog, usd } from '../../chat/runs/usage';
@@ -187,11 +188,22 @@
 
   function quotaAgeText(timestamp: number | null) {
     if (timestamp === null) return '';
-    const minutes = Math.max(
-      0,
-      Math.floor((Date.now() / 1000 - timestamp) / 60),
-    );
-    return minutes < 1 ? 'updated just now' : `updated ${minutes}m ago`;
+    let seconds = Math.max(0, Math.floor(ticker.sec / 1000 - timestamp));
+    if (seconds < 1) return 'updated just now';
+    const days = Math.floor(seconds / 86_400);
+    seconds %= 86_400;
+    const hours = Math.floor(seconds / 3_600);
+    seconds %= 3_600;
+    const minutes = Math.floor(seconds / 60);
+    seconds %= 60;
+    const age = days
+      ? `${days}d${hours ? ` ${hours}h` : ''}`
+      : hours
+        ? `${hours}h${minutes ? ` ${minutes}m` : ''}`
+        : minutes
+          ? `${minutes}m ${String(seconds).padStart(2, '0')}s`
+          : `${seconds}s`;
+    return `updated ${age} ago`;
   }
 </script>
 

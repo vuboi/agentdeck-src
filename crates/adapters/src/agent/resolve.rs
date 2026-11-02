@@ -79,7 +79,10 @@ fn common_dirs(
             push(under(local, &["Volta", "bin"]));
             push(under(local, &["Microsoft", "WinGet", "Links"]));
             push(std::env::var_os("ProgramFiles").map(|path| PathBuf::from(path).join("nodejs")));
-            push(std::env::var_os("ProgramFiles(x86)").map(|path| PathBuf::from(path).join("nodejs")));
+            push(
+                std::env::var_os("ProgramFiles(x86)")
+                    .map(|path| PathBuf::from(path).join("nodejs")),
+            );
             push(Some(PathBuf::from(r"C:\ProgramData\chocolatey\bin")));
             push(under(home, &[".volta", "bin"]));
             push(under(home, &[".bun", "bin"]));
@@ -116,7 +119,10 @@ fn common_dirs(
                 push(Some(PathBuf::from("/opt/homebrew/sbin")));
                 push(Some(PathBuf::from("/usr/local/sbin")));
                 push(under(home, &["Library", "pnpm"]));
-                push(under(home, &["Library", "Application Support", "mise", "shims"]));
+                push(under(
+                    home,
+                    &["Library", "Application Support", "mise", "shims"],
+                ));
             } else {
                 push(Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin")));
                 push(under(home, &[".linuxbrew", "bin"]));
@@ -199,9 +205,10 @@ fn build_augmented_path() -> Option<OsString> {
     let local = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Local")));
-    let appdata = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Roaming")));
+    let appdata = std::env::var_os("APPDATA").map(PathBuf::from).or_else(|| {
+        home.as_ref()
+            .map(|path| path.join("AppData").join("Roaming"))
+    });
     let common = common_dirs(
         std::env::consts::OS,
         home.as_deref(),
@@ -210,7 +217,10 @@ fn build_augmented_path() -> Option<OsString> {
     );
     let mut dirs: Vec<PathBuf> = common
         .iter()
-        .filter(|dir| dir.join(if cfg!(windows) { "node.exe" } else { "node" }).is_file())
+        .filter(|dir| {
+            dir.join(if cfg!(windows) { "node.exe" } else { "node" })
+                .is_file()
+        })
         .cloned()
         .collect();
     dirs.extend(common);
@@ -275,7 +285,10 @@ pub fn resolve_binary(provider: &dyn Provider) -> OsString {
                 .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Local")))
                 .as_deref(),
             env_path("APPDATA")
-                .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Roaming")))
+                .or_else(|| {
+                    home.as_ref()
+                        .map(|path| path.join("AppData").join("Roaming"))
+                })
                 .as_deref(),
         );
         find_in(dirs.into_iter(), provider.binary(), os)
@@ -379,7 +392,10 @@ mod tests {
         assert_eq!(resolve_binary(&moved), file.clone().into_os_string());
         // A removed file is not returned from the cache.
         std::fs::remove_file(&file).unwrap();
-        assert_eq!(resolve_binary(&moved), OsString::from("resolve-cache-test-bin"));
+        assert_eq!(
+            resolve_binary(&moved),
+            OsString::from("resolve-cache-test-bin")
+        );
     }
 
     #[test]

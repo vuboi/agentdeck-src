@@ -2,7 +2,6 @@
   import { windowDrag } from '../../app/platform/window-drag';
   import Menu from '../ui/Menu.svelte';
   import { closeOnScroll } from '../../app/ui/close-on-scroll';
-  import { customProviderName } from '../../agents/models.svelte';
   import { agentDisplayName } from '../../agents/provider-registry';
   import { tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -12,6 +11,7 @@
   import Logo from '../ui/Logo.svelte';
   import { toast } from '../../app/platform/toast';
   import AgentStack from './AgentStack.svelte';
+  import AgentLogo from '../ui/AgentLogo.svelte';
   import { contentTabs, openNewChatTab, showSession } from '../../app/ui/content-tabs.svelte';
   import SearchPalette from './SearchPalette.svelte';
   import DockZone from '../ui/DockZone.svelte';
@@ -42,7 +42,6 @@
     prefetchTranscript,
     renameSession,
     workspace,
-    type Agent,
     DEFAULT_VIEW,
     type SessionItem,
     type SidebarView,
@@ -632,17 +631,6 @@
 
   const statusColor = { working: 'bg-success', waiting: 'bg-warning', idle: 'bg-muted-foreground/40' } as const;
   const dotFallback = { working: 'var(--color-success, #22c55e)', waiting: 'var(--color-warning, #f59e0b)', idle: undefined } as const;
-  const agentLabel = (agent: string) => agent[0].toUpperCase() + agent.slice(1);
-  // Each agent has its own tint so rows are readable at a glance.
-  const agentTag: Record<Agent, string> = {
-    claude: 'bg-orange-500/15 text-orange-500',
-    codex: 'bg-emerald-500/15 text-emerald-500',
-    antigravity: 'bg-sky-500/15 text-sky-500',
-    opencode: 'bg-foreground/10 text-foreground',
-    workbuddy: 'bg-blue-500/15 text-blue-500',
-    copilot: 'bg-foreground/10 text-foreground',
-    custom: 'bg-violet-500/15 text-violet-500',
-  } as const;
   import { openSettings, warnings } from '../../agents/connectors.svelte';
   import { ticker } from '../../app/platform/clock.svelte';
   const limitWarnings = $derived(warnings(ticker.min));
@@ -711,7 +699,9 @@
       {#if (session.agents?.length ?? 1) > 1}
         <AgentStack agents={session.agents!} models={{ [session.agent]: session.model, ...session.agentModels }} />
       {:else}
-        <span class="block rounded px-1.5 py-px text-[10px] font-medium {agentTag[session.agent]}">{(session.agent === 'custom' && customProviderName(session.model)) || agentLabel(session.agent)}</span>
+        <span class="grid size-4 place-items-center" title={agentDisplayName(session.agent, session.model)} aria-label={agentDisplayName(session.agent, session.model)}>
+          <AgentLogo agent={session.agent} model={session.model} class="size-3.5" />
+        </span>
       {/if}
     </span>
   </span>

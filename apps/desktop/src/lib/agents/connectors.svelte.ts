@@ -851,6 +851,9 @@ export async function refreshAgyQuota(duringSwitch = false, force = false) {
     if (!force && !duringSwitch && fresh(accountCacheAt.agy)) return;
     if (agyQuotaRefresh) return agyQuotaRefresh;
     const run = task('quota:agy', 'Refreshing Antigravity quota', async () => {
+        // Account listing may adopt a CLI login that was never saved. Finish that before reading
+        // per-account quotas so the first refresh cannot race and return an empty account set.
+        await refreshAgyAccounts(duringSwitch, force);
         // The local status-line cache is immediate; do not leave the Usage cards blank while the live API request waits.
         if (!connectors.agyQuota) {
             try {
@@ -862,19 +865,15 @@ export async function refreshAgyQuota(duringSwitch = false, force = false) {
             }
         }
         try {
-            const live = await call<AgyQuota | null>('antigravity_quota');
-            if (live) {
-                connectors.agyQuota = live;
-                void saveAccountCache();
-            }
-        } catch {
-            // Preserve saved figures when the live quota endpoint is unavailable.
-        }
-        try {
-            connectors.agyAccountQuotas = await call<AgyAccountQuota[]>(
+            const quotas = await call<AgyAccountQuota[]>(
                 'antigravity_quotas',
                 { force: force || duringSwitch },
             );
+            connectors.agyAccountQuotas = quotas;
+            const activeQuota = quotas.find((item) => item.active)?.quota;
+            // The all-account response already includes the active account. Reuse it instead of
+            // making a second live request through `antigravity_quota`.
+            if (activeQuota) connectors.agyQuota = activeQuota;
             accountCacheAt.agy = Date.now();
             void saveAccountCache();
         } catch {

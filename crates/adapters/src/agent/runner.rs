@@ -245,6 +245,9 @@ pub async fn drive_turn(
     // A sub-agent is still open, and the result the CLI printed before it ended (kept, in case nothing follows).
     let mut agents_open = false;
     let mut early_done: Option<AgentEvent> = None;
+    // Some provider protocols describe a full Write payload as the change itself. Snapshot the real
+    // project file around those calls so realtime counts describe the actual edit and can be summed.
+    let mut file_snapshots = std::collections::HashMap::new();
     let mut watchdog = Watchdog::new(provider.stall_limit());
     // Set once the CLI has exited, with the time after which its pipe is no longer read.
     let mut exited: Option<(std::io::Result<std::process::ExitStatus>, tokio::time::Instant)> = None;
@@ -280,7 +283,28 @@ pub async fn drive_turn(
                 agents_open = open;
                 watchdog.set_background(open);
             }
-            for event in provider.parse_line(line) {
+            for mut event in provider.parse_line(line) {
+                match &mut event {
+                    AgentEvent::ToolCall { id, name, change, .. } if change.is_some() => {
+                        let path = change.as_ref().map(|change| change.path.clone());
+                        if let Some(snapshot) = path.and_then(|path| {
+                            super::begin_file_snapshot(
+                                req.cwd.as_deref(),
+                                name,
+                                &serde_json::json!({ "path": path }),
+                            )
+                        }) {
+                            file_snapshots.insert(id.clone(), snapshot);
+                            *change = None;
+                        }
+                    }
+                    AgentEvent::ToolResult { id, is_error, change, .. } => {
+                        if let Some(snapshot) = file_snapshots.remove(id) {
+                            *change = if *is_error { None } else { super::finish_file_snapshot(snapshot) };
+                        }
+                    }
+                    _ => {}
+                }
                 watchdog.note(&event);
                 // A worker is asked for the answer of the work it handed to sub-agents: the CLI's first result comes
                 // while they still run, and it goes on by itself when they end. That second result is the answer.

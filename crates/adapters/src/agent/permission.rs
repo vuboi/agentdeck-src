@@ -148,6 +148,4 @@ mod tests {
         assert_eq!(verdict(Mode::Plan, Write), Verdict::Refuse);
         assert_eq!(verdict(Mode::Plan, Shell), Verdict::Refuse);
     }
-
 }
-

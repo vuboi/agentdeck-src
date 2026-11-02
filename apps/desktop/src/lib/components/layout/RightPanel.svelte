@@ -22,7 +22,7 @@
 <aside class="relative flex h-full w-full min-w-0 flex-1 flex-col bg-sidebar" aria-label="Tools panel">
   <!-- Header row: the tool tabs, left-aligned; on the right, next to the window controls (which sit over the right
        edge), the button that tears the open tool out into its own window. -->
-  <div class="flex h-10 shrink-0 items-center gap-1 border-b border-border pl-1.5 {layout.toolsOnLeft ? 'pr-1.5' : 'pr-[100px]'}" {@attach windowDrag}>
+  <div class="flex h-10 shrink-0 items-center gap-1 border-b border-border pl-1.5 {layout.toolsOnLeft ? 'pr-1.5' : 'pr-[114px]'}" {@attach windowDrag}>
     <div class="flex min-w-0 flex-1 justify-start" bind:clientWidth={tabsWidth}>
       <ToolTabs room={tabsWidth ? tabsWidth - 4 : undefined} />
     </div>
@@ -36,7 +36,7 @@
         title="Open {current.label} in a window"
         onclick={detachTools}
       >
-        <ZIcon zType="lucideMaximize2" class="size-3.5" />
+        <ZIcon zType="lucideAppWindow" class="size-3.5" />
       </ZButton>
     {/if}
   </div>

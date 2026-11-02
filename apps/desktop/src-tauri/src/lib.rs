@@ -2486,6 +2486,27 @@ pub fn run() {
         .setup(|app| {
             // First: every folder and MCP name below depends on which build this is.
             channel::init(&app.config().identifier);
+            let resource_sdk = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(|directory| directory.join("claude-agent"));
+            let packaged_node = if cfg!(windows) { "node.exe" } else { "node" };
+            if let Some(directory) = resource_sdk.filter(|directory| {
+                directory.join("runner.mjs").is_file() && directory.join(packaged_node).is_file()
+            }) {
+                std::env::set_var("AGENTDECK_CLAUDE_SDK_RUNNER", directory.join("runner.mjs"));
+                std::env::set_var("AGENTDECK_CLAUDE_SDK_NODE", directory.join(packaged_node));
+            } else {
+                let source_runner = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../src/agent/claude-sdk-runner.mjs");
+                if source_runner.is_file() {
+                    std::env::set_var("AGENTDECK_CLAUDE_SDK_RUNNER", source_runner);
+                }
+            }
+            if let Some(claude) = ag_adapters::agent::claude::claude_code_binary() {
+                std::env::set_var("AGENTDECK_CLAUDE_CODE_BINARY", claude);
+            }
             claude_bash::install();
             flow_log::install(app.handle());
             // Create the main webview with the same WebView2 extension setting used by Preview child views.

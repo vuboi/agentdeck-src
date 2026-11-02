@@ -21,15 +21,22 @@ fn extra_dirs() -> Vec<PathBuf> {
     let local = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Local")));
-    let roaming = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|path| path.join("AppData").join("Roaming")));
+    let roaming = std::env::var_os("APPDATA").map(PathBuf::from).or_else(|| {
+        home.as_ref()
+            .map(|path| path.join("AppData").join("Roaming"))
+    });
     push(home.as_ref().map(|path| path.join(".local").join("bin")));
     push(home.as_ref().map(|path| path.join(".cargo").join("bin")));
     push(home.as_ref().map(|path| path.join(".volta").join("bin")));
     push(home.as_ref().map(|path| path.join(".bun").join("bin")));
-    push(home.as_ref().map(|path| path.join(".local").join("share").join("pnpm")));
-    push(home.as_ref().map(|path| path.join(".local").join("share").join("mise").join("shims")));
+    push(
+        home.as_ref()
+            .map(|path| path.join(".local").join("share").join("pnpm")),
+    );
+    push(
+        home.as_ref()
+            .map(|path| path.join(".local").join("share").join("mise").join("shims")),
+    );
     push(home.as_ref().map(|path| path.join(".asdf").join("shims")));
     push(std::env::var_os("PNPM_HOME").map(PathBuf::from));
     push(std::env::var_os("NVM_BIN").map(PathBuf::from));
@@ -42,9 +49,17 @@ fn extra_dirs() -> Vec<PathBuf> {
     push(local.as_ref().map(|path| path.join("pnpm")));
     push(local.as_ref().map(|path| path.join("agy").join("bin")));
     push(local.as_ref().map(|path| path.join("Volta").join("bin")));
-    push(local.as_ref().map(|path| path.join("Microsoft").join("WinGet").join("Links")));
+    push(
+        local
+            .as_ref()
+            .map(|path| path.join("Microsoft").join("WinGet").join("Links")),
+    );
     push(local.as_ref().map(|path| path.join("mise").join("shims")));
-    push(local.as_ref().map(|path| path.join("mise").join("installs").join("node")));
+    push(
+        local
+            .as_ref()
+            .map(|path| path.join("mise").join("installs").join("node")),
+    );
     if let Some(local) = local.as_ref() {
         for parent in [
             local.join("mise").join("installs").join("node"),
@@ -60,11 +75,19 @@ fn extra_dirs() -> Vec<PathBuf> {
     if let Some(home) = home.as_ref() {
         for parent in [
             home.join(".nvm").join("versions").join("node"),
-            home.join(".local").join("share").join("mise").join("installs").join("node"),
+            home.join(".local")
+                .join("share")
+                .join("mise")
+                .join("installs")
+                .join("node"),
         ] {
             if let Ok(entries) = std::fs::read_dir(parent) {
                 for entry in entries.flatten() {
-                    push(Some(entry.path().join(if cfg!(windows) { "" } else { "bin" })));
+                    push(Some(entry.path().join(if cfg!(windows) {
+                        ""
+                    } else {
+                        "bin"
+                    })));
                 }
             }
         }
@@ -90,7 +113,10 @@ fn extra_dirs() -> Vec<PathBuf> {
         push(home.as_ref().map(|path| path.join("Library").join("pnpm")));
     } else {
         push(Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin")));
-        push(home.as_ref().map(|path| path.join(".linuxbrew").join("bin")));
+        push(
+            home.as_ref()
+                .map(|path| path.join(".linuxbrew").join("bin")),
+        );
         push(Some(PathBuf::from("/usr/local/bin")));
         push(Some(PathBuf::from("/usr/bin")));
         push(Some(PathBuf::from("/bin")));

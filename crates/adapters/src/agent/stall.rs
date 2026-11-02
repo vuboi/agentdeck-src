@@ -128,17 +128,38 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_running_tool_is_not_taken_for_a_hang() {
         let mut dog = Watchdog::new(Duration::from_secs(60));
-        dog.note(&AgentEvent::ToolCall { id: "t".into(), name: "Bash".into(), input: "cargo test".into(), change: None, background: false });
+        dog.note(&AgentEvent::ToolCall {
+            id: "t".into(),
+            name: "Bash".into(),
+            input: "cargo test".into(),
+            change: None,
+            background: false,
+        });
         tokio::time::advance(Duration::from_secs(30 * 60)).await;
         assert!(!dog.expired(), "a long build is not a stall");
-        dog.note(&AgentEvent::ToolResult { id: "t".into(), output: String::new(), is_error: false, image: None, change: None });
-        assert!(dog.expired(), "after the tool the ordinary limit applies again");
+        dog.note(&AgentEvent::ToolResult {
+            id: "t".into(),
+            output: String::new(),
+            is_error: false,
+            image: None,
+            change: None,
+        });
+        assert!(
+            dog.expired(),
+            "after the tool the ordinary limit applies again"
+        );
     }
 
     #[tokio::test(start_paused = true)]
     async fn a_sub_agent_that_says_nothing_is_stuck_long_before_an_ordinary_tool_would_be() {
         let mut dog = Watchdog::new(Duration::from_secs(10 * 60));
-        dog.note(&AgentEvent::ToolCall { id: "a".into(), name: "Agent".into(), input: "scan".into(), change: None, background: true });
+        dog.note(&AgentEvent::ToolCall {
+            id: "a".into(),
+            name: "Agent".into(),
+            input: "scan".into(),
+            change: None,
+            background: true,
+        });
         tokio::time::advance(Duration::from_secs(19 * 60)).await;
         assert!(!dog.expired(), "a sub-agent may think for a while");
         tokio::time::advance(Duration::from_secs(2 * 60)).await;
@@ -151,8 +172,20 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn an_ordinary_tool_beside_a_sub_agent_keeps_the_long_limit() {
         let mut dog = Watchdog::new(Duration::from_secs(10 * 60));
-        dog.note(&AgentEvent::ToolCall { id: "a".into(), name: "Agent".into(), input: String::new(), change: None, background: true });
-        dog.note(&AgentEvent::ToolCall { id: "b".into(), name: "Bash".into(), input: "cargo build".into(), change: None, background: false });
+        dog.note(&AgentEvent::ToolCall {
+            id: "a".into(),
+            name: "Agent".into(),
+            input: String::new(),
+            change: None,
+            background: true,
+        });
+        dog.note(&AgentEvent::ToolCall {
+            id: "b".into(),
+            name: "Bash".into(),
+            input: "cargo build".into(),
+            change: None,
+            background: false,
+        });
         tokio::time::advance(Duration::from_secs(60 * 60)).await;
         assert!(!dog.expired());
     }
@@ -160,11 +193,28 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn open_tasks_and_background_work_allow_a_longer_silence_than_none() {
         let mut dog = Watchdog::new(Duration::from_secs(10 * 60));
-        dog.note(&AgentEvent::Task { id: "t".into(), tool_use_id: None, status: TaskStatus::Started, label: None, summary: None, tools: None });
+        dog.note(&AgentEvent::Task {
+            id: "t".into(),
+            tool_use_id: None,
+            status: TaskStatus::Started,
+            label: None,
+            summary: None,
+            tools: None,
+        });
         tokio::time::advance(Duration::from_secs(15 * 60)).await;
         assert!(!dog.expired());
-        dog.note(&AgentEvent::Task { id: "t".into(), tool_use_id: None, status: TaskStatus::Done, label: None, summary: None, tools: None });
-        assert!(dog.expired(), "once the task ended the ordinary limit applies");
+        dog.note(&AgentEvent::Task {
+            id: "t".into(),
+            tool_use_id: None,
+            status: TaskStatus::Done,
+            label: None,
+            summary: None,
+            tools: None,
+        });
+        assert!(
+            dog.expired(),
+            "once the task ended the ordinary limit applies"
+        );
         dog.touch();
         dog.set_background(true);
         tokio::time::advance(Duration::from_secs(15 * 60)).await;

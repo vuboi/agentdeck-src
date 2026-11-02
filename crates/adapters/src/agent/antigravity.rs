@@ -561,16 +561,17 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                 }
             }
             if turn.started.insert(index) {
-                let change = super::file_change(&name, parameters);
-                if change.is_none() {
-                    if let Some(snapshot) = super::begin_file_snapshot(
-                        turn.root.as_deref(),
-                        raw_name,
-                        parameters,
-                    ) {
-                        turn.file_snapshots.insert(index, snapshot);
-                    }
-                }
+                let snapshot = super::begin_file_snapshot(
+                    turn.root.as_deref(),
+                    raw_name,
+                    parameters,
+                );
+                let change = if let Some(snapshot) = snapshot {
+                    turn.file_snapshots.insert(index, snapshot);
+                    None
+                } else {
+                    super::file_change(&name, parameters)
+                };
                 let background = is_subagent_tool(raw_name) || super::delegate_wait(&name, if raw_name == "call_mcp_tool" { &parameters["Arguments"] } else { parameters });
                 events.push(AgentEvent::ToolCall {
                     id: index.to_string(),

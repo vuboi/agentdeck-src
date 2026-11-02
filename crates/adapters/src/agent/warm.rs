@@ -23,9 +23,9 @@ use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use super::interrupt::{self, InterruptMode, Interrupter, Signal, StopToken};
-use super::stall::Watchdog;
 use super::resolve::augmented_path_env;
 use super::runner::{command_for, drain_stderr, kill_tree};
+use super::stall::Watchdog;
 use super::{AgentEvent, Provider, TurnRequest};
 
 /// An idle process ends after this long, so a chat left open does not keep a CLI (and its memory) for ever.
@@ -76,10 +76,13 @@ impl Drop for Warm {
 /// One lock per chat: a conversation has one writer, so a turn waits for the previous turn of the chat to end (a stopped
 /// one is still being interrupted) and a server started ahead (`prewarm`) does not race the turn that needs it. The turn
 /// holds its chat's lock until it ends.
-static LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = LazyLock::new(Default::default);
+static LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(Default::default);
 
 pub(super) fn lock_of(chat: &str) -> Arc<tokio::sync::Mutex<()>> {
-    let mut locks = LOCKS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut locks = LOCKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     // A lock nobody holds or waits for (only the map owns it) belongs to a turn that is over: it goes, so the map does
     // not keep one entry for every chat and worker the app ever ran.
     locks.retain(|key, lock| key == chat || Arc::strong_count(lock) > 1);
@@ -88,14 +91,19 @@ pub(super) fn lock_of(chat: &str) -> Arc<tokio::sync::Mutex<()>> {
 
 /// Where a message written while a turn runs is handed to that turn, by chat. Only a turn on a kept Claude process
 /// registers here: Claude's stream-json input takes a message at any time.
-static INJECT: LazyLock<Mutex<HashMap<String, UnboundedSender<String>>>> = LazyLock::new(Default::default);
+static INJECT: LazyLock<Mutex<HashMap<String, UnboundedSender<String>>>> =
+    LazyLock::new(Default::default);
 
 /// Hands a message to the turn running for `chat`, which writes it to the CLI at once. The CLI reads it at its next step
 /// (between two tool calls) in the same turn, or, when the turn is only writing text, as the turn that follows. False
 /// when the chat has no such turn: the caller keeps the message for after the turn.
 pub fn inject(chat: &str, prompt: &str) -> bool {
-    let senders = INJECT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    senders.get(chat).is_some_and(|sender| sender.send(prompt.to_owned()).is_ok())
+    let senders = INJECT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    senders
+        .get(chat)
+        .is_some_and(|sender| sender.send(prompt.to_owned()).is_ok())
 }
 
 /// Registers a turn to take injected messages, and takes the registration back when the turn ends.
@@ -106,14 +114,20 @@ impl InjectSlot {
     /// reads it between its steps; a message `inject` reports as taken must be read.
     pub fn open(chat: &str) -> (InjectSlot, UnboundedReceiver<String>) {
         let (sender, receiver) = unbounded_channel();
-        INJECT.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(chat.to_owned(), sender);
+        INJECT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(chat.to_owned(), sender);
         (InjectSlot(chat.to_owned()), receiver)
     }
 }
 
 impl Drop for InjectSlot {
     fn drop(&mut self) {
-        INJECT.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&self.0);
+        INJECT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.0);
     }
 }
 
@@ -194,7 +208,10 @@ pub fn reset(agent: Option<&str>) {
             })
             .map(|(chat, _)| chat.clone())
             .collect();
-        chats.into_iter().filter_map(|chat| pool.remove(&chat)).collect()
+        chats
+            .into_iter()
+            .filter_map(|chat| pool.remove(&chat))
+            .collect()
     };
     drop(gone);
     // A process a tail is reading keeps its sign-in too.
@@ -211,7 +228,9 @@ pub fn reset_chat(chat: &str) {
             .filter(|key| key.starts_with(&prefix))
             .cloned()
             .collect();
-        keys.into_iter().filter_map(|key| pool.remove(&key)).collect()
+        keys.into_iter()
+            .filter_map(|key| pool.remove(&key))
+            .collect()
     };
     drop(gone);
     super::tail::discard_chat(chat);
@@ -242,9 +261,16 @@ pub(super) fn take_server(chat: &str, key: &str) -> Option<Warm> {
 
 /// Whether the chat already keeps a process that would take this turn, or (`any_conversation`) any process with these
 /// settings. Nothing is taken or ended.
-pub(super) fn holds(chat: &str, key: &str, conversation: Option<&str>, any_conversation: bool) -> bool {
+pub(super) fn holds(
+    chat: &str,
+    key: &str,
+    conversation: Option<&str>,
+    any_conversation: bool,
+) -> bool {
     let mut pool = pool();
-    let Some(warm) = pool.get_mut(&slot(chat, key)) else { return false };
+    let Some(warm) = pool.get_mut(&slot(chat, key)) else {
+        return false;
+    };
     if any_conversation {
         warm.key == key && matches!(warm.child.try_wait(), Ok(None))
     } else {
@@ -263,7 +289,11 @@ pub(super) fn park(chat: String, mut warm: Warm) {
         evicted.extend(pool.insert(chat.clone(), warm));
         while pool.len() > MAX_IDLE {
             // A process started ahead and never used goes first: it was a guess, the others were somebody's chat.
-            let Some(oldest) = pool.iter().min_by_key(|(_, warm)| (!warm.fresh, warm.serial)).map(|(chat, _)| chat.clone()) else {
+            let Some(oldest) = pool
+                .iter()
+                .min_by_key(|(_, warm)| (!warm.fresh, warm.serial))
+                .map(|(chat, _)| chat.clone())
+            else {
                 break;
             };
             evicted.extend(pool.remove(&oldest));
@@ -286,7 +316,14 @@ pub(super) fn park(chat: String, mut warm: Warm) {
 }
 
 /// Starts the CLI as a per-turn run would (same environment, folder, PATH and process group), reading JSON lines.
-pub(super) fn start(binary: OsString, provider: &dyn Provider, args: &[String], env: &[(String, String)], req: &TurnRequest, key: &str) -> Result<Warm, String> {
+pub(super) fn start(
+    binary: OsString,
+    provider: &dyn Provider,
+    args: &[String],
+    env: &[(String, String)],
+    req: &TurnRequest,
+    key: &str,
+) -> Result<Warm, String> {
     let mut command = command_for(binary, args);
     command
         .envs(env.iter().cloned())
@@ -311,7 +348,9 @@ pub(super) fn start(binary: OsString, provider: &dyn Provider, args: &[String], 
     if let (Some(pid), Some(chat)) = (child.id(), req.owner.as_deref()) {
         super::runner::claim_pid(pid, chat);
     }
-    let (Some(stdin), Some(stdout), Some(stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
+    let (Some(stdin), Some(stdout), Some(stderr)) =
+        (child.stdin.take(), child.stdout.take(), child.stderr.take())
+    else {
         return Err(format!("could not talk to {}", provider.binary()));
     };
     let kept = Arc::new(Mutex::new(Vec::new()));
@@ -349,11 +388,24 @@ enum Ending {
 /// Reads the turn's lines until its result. The process stays up afterwards. A stop (`stop`) sends the CLI its interrupt
 /// message and keeps reading: the result that follows ends the turn as a stopped one and the process is kept. A CLI
 /// without an interrupt message, or one silent for the deadline, is given up (`Failed`: the caller ends it).
-async fn read_turn(warm: &mut Warm, provider: &dyn Provider, stop: StopToken, mut inject: Option<UnboundedReceiver<String>>, chat: &str, emit: &mut impl FnMut(AgentEvent)) -> Ending {
+async fn read_turn(
+    warm: &mut Warm,
+    provider: &dyn Provider,
+    stop: StopToken,
+    mut inject: Option<UnboundedReceiver<String>>,
+    chat: &str,
+    emit: &mut impl FnMut(AgentEvent),
+) -> Ending {
     let conversation = warm.conversation.clone();
     let began = std::time::Instant::now();
     let mut first_line = true;
-    let Warm { lines, child, stdin, open_tasks, .. } = warm;
+    let Warm {
+        lines,
+        child,
+        stdin,
+        open_tasks,
+        ..
+    } = warm;
     let mut stopper = Interrupter::new(stop);
     let mut requests = 0u32;
     let mut deadline: Option<tokio::time::Instant> = None;
@@ -365,7 +417,9 @@ async fn read_turn(warm: &mut Warm, provider: &dyn Provider, stop: StopToken, mu
     let mut injected = 0u32;
     loop {
         let next = match deadline {
-            Some(at) => tokio::time::timeout_at(at, lines.next_segment()).await.unwrap_or(Ok(None)),
+            Some(at) => tokio::time::timeout_at(at, lines.next_segment())
+                .await
+                .unwrap_or(Ok(None)),
             None => tokio::select! {
                 next = lines.next_segment() => next,
                 _ = child.wait() => {
@@ -403,10 +457,19 @@ async fn read_turn(warm: &mut Warm, provider: &dyn Provider, stop: StopToken, mu
                 }
             },
         };
-        let Ok(Some(bytes)) = next else { return Ending::Closed };
+        let Ok(Some(bytes)) = next else {
+            return Ending::Closed;
+        };
         dog.touch();
         if std::mem::take(&mut first_line) {
-            super::trace::note(chat, "first line", format!("{} ms after the message was sent", began.elapsed().as_millis()));
+            super::trace::note(
+                chat,
+                "first line",
+                format!(
+                    "{} ms after the message was sent",
+                    began.elapsed().as_millis()
+                ),
+            );
         }
         let text = String::from_utf8_lossy(&bytes);
         let line = text.strip_suffix('\r').unwrap_or(&text);
@@ -422,12 +485,20 @@ async fn read_turn(warm: &mut Warm, provider: &dyn Provider, stop: StopToken, mu
         }
         for event in provider.parse_line(line) {
             dog.note(&event);
-            let event = if stopper.asked() { interrupt::stopped(event, conversation.as_deref()) } else { event };
+            let event = if stopper.asked() {
+                interrupt::stopped(event, conversation.as_deref())
+            } else {
+                event
+            };
             match &event {
                 // The end of a part of the work while an injected message is still unread: the CLI goes on with it as the
                 // next turn, so this result is not the end and is not shown as one.
                 AgentEvent::Done { .. } if injected > 0 && unread > 0 => continue,
-                AgentEvent::Done { session_id, .. } => ending = Some(Ending::Done(session_id.clone().or_else(|| conversation.clone()))),
+                AgentEvent::Done { session_id, .. } => {
+                    ending = Some(Ending::Done(
+                        session_id.clone().or_else(|| conversation.clone()),
+                    ))
+                }
                 // A stream-json CLI reports a failed turn as its own result and waits for the next message: the process
                 // is kept. Any other CLI may be left in a state the next turn should not inherit, so it is not.
                 AgentEvent::Error { .. } => {
@@ -479,13 +550,24 @@ pub async fn prewarm(binary: OsString, provider: &dyn Provider, req: &TurnReques
 
 /// Runs one turn on a kept process (starting it if the chat has none that fits). Returns `false`, having started and
 /// emitted nothing, when this provider or request does not keep processes: the caller then runs a per-turn process.
-pub async fn drive_warm_turn(binary: OsString, provider: &dyn Provider, req: &TurnRequest, emit: impl FnMut(AgentEvent)) -> bool {
+pub async fn drive_warm_turn(
+    binary: OsString,
+    provider: &dyn Provider,
+    req: &TurnRequest,
+    emit: impl FnMut(AgentEvent),
+) -> bool {
     drive_warm_turn_with(binary, provider, req, StopToken::never(), emit).await
 }
 
 /// [`drive_warm_turn`] that can be stopped: when `stop` fires the CLI is interrupted, the turn ends with its result and
 /// the process stays in the pool (see `interrupt.rs`).
-pub async fn drive_warm_turn_with(binary: OsString, provider: &dyn Provider, req: &TurnRequest, stop: StopToken, mut emit: impl FnMut(AgentEvent)) -> bool {
+pub async fn drive_warm_turn_with(
+    binary: OsString,
+    provider: &dyn Provider,
+    req: &TurnRequest,
+    stop: StopToken,
+    mut emit: impl FnMut(AgentEvent),
+) -> bool {
     if provider.id() == "codex" {
         return super::codex_server::drive(binary, provider, req, stop, emit).await;
     }
@@ -499,7 +581,15 @@ pub async fn drive_warm_turn_with(binary: OsString, provider: &dyn Provider, req
     let lock = lock_of(&chat);
     let asked_at = std::time::Instant::now();
     let _turn = lock.lock().await;
-    super::trace::note(&chat, "chat lock", format!("{} waited {} ms", provider.id(), asked_at.elapsed().as_millis()));
+    super::trace::note(
+        &chat,
+        "chat lock",
+        format!(
+            "{} waited {} ms",
+            provider.id(),
+            asked_at.elapsed().as_millis()
+        ),
+    );
     // A process that was left reading what the CLI does on its own comes back first, after an answer in progress.
     if !super::tail::stop(&chat, &mut stop.clone()).await {
         // Stopped (replaced) while waiting for the process: the turn ends here, with nothing written.
@@ -515,17 +605,28 @@ pub async fn drive_warm_turn_with(binary: OsString, provider: &dyn Provider, req
     };
     let env = provider.environment(req);
     let key = key_for(provider, &args, &env);
-    let line = format!("{}\n", provider.warm_message(&super::turn_prompt(provider, req)));
+    let line = format!(
+        "{}\n",
+        provider.warm_message(&super::turn_prompt(provider, req))
+    );
 
     let mut warm = match take(&chat, &key, req.session_id.as_deref()) {
         Some(mut warm) => {
             warm.fresh = false;
-            super::trace::note(&chat, "process", format!("kept one takes the turn pid={:?}", warm.child.id()));
+            super::trace::note(
+                &chat,
+                "process",
+                format!("kept one takes the turn pid={:?}", warm.child.id()),
+            );
             warm
         }
         None => match start(binary.clone(), provider, &args, &env, req, &key) {
             Ok(warm) => {
-                super::trace::note(&chat, "process", format!("started pid={:?} resume={}", warm.child.id(), req.resume));
+                super::trace::note(
+                    &chat,
+                    "process",
+                    format!("started pid={:?} resume={}", warm.child.id(), req.resume),
+                );
                 warm
             }
             Err(message) => {
@@ -537,9 +638,16 @@ pub async fn drive_warm_turn_with(binary: OsString, provider: &dyn Provider, req
     };
     // A model change on a live CLI is sent to it, not met with a new process: the conversation goes on in the same one.
     if provider.live_model() {
-        if let Some(model) = req.model.as_deref().filter(|model| warm.model.as_deref() != Some(*model)) {
+        if let Some(model) = req
+            .model
+            .as_deref()
+            .filter(|model| warm.model.as_deref() != Some(*model))
+        {
             warm.rpc += 1;
-            let line = format!("{}\n", provider.model_switch_line(&format!("agentdeck-model-{}", warm.rpc), model));
+            let line = format!(
+                "{}\n",
+                provider.model_switch_line(&format!("agentdeck-model-{}", warm.rpc), model)
+            );
             if send(&mut warm, &line).await.is_ok() {
                 warm.model = Some(model.to_owned());
             }
@@ -556,7 +664,12 @@ pub async fn drive_warm_turn_with(binary: OsString, provider: &dyn Provider, req
             }
         };
         if let Err(error) = send(&mut warm, &line).await {
-            emit(AgentEvent::Error { message: format!("could not send the message to {}: {error}", provider.binary()) });
+            emit(AgentEvent::Error {
+                message: format!(
+                    "could not send the message to {}: {error}",
+                    provider.binary()
+                ),
+            });
             return true;
         }
     }
@@ -567,15 +680,33 @@ pub async fn drive_warm_turn_with(binary: OsString, provider: &dyn Provider, req
             if conversation.is_some() {
                 warm.conversation = conversation;
             }
-            let tail = provider.tail_provider().filter(|_| warm.open_tasks && super::tail::available());
-            super::trace::note(&chat, "turn read", format!("done after {:.1}s background_open={} -> {}", began.elapsed().as_secs_f32(), warm.open_tasks, if tail.is_some() { "tail" } else { "park" }));
+            let tail = provider
+                .tail_provider()
+                .filter(|_| warm.open_tasks && super::tail::available());
+            super::trace::note(
+                &chat,
+                "turn read",
+                format!(
+                    "done after {:.1}s background_open={} -> {}",
+                    began.elapsed().as_secs_f32(),
+                    warm.open_tasks,
+                    if tail.is_some() { "tail" } else { "park" }
+                ),
+            );
             match tail {
                 Some(reader) => super::tail::start(chat, warm, reader),
                 None => park(chat, warm),
             }
         }
         Ending::Failed => {
-            super::trace::note(&chat, "turn read", format!("failed after {:.1}s: the process is dropped (its children end with it)", began.elapsed().as_secs_f32()));
+            super::trace::note(
+                &chat,
+                "turn read",
+                format!(
+                    "failed after {:.1}s: the process is dropped (its children end with it)",
+                    began.elapsed().as_secs_f32()
+                ),
+            );
             drop(warm)
         }
         Ending::Closed => {
@@ -584,10 +715,29 @@ pub async fn drive_warm_turn_with(binary: OsString, provider: &dyn Provider, req
                 .lock()
                 .map(|kept| String::from_utf8_lossy(&kept).trim().to_owned())
                 .unwrap_or_default();
-            super::trace::note(&chat, "turn read", format!("the CLI went away after {:.1}s; stderr: {}", began.elapsed().as_secs_f32(), stderr.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()));
+            super::trace::note(
+                &chat,
+                "turn read",
+                format!(
+                    "the CLI went away after {:.1}s; stderr: {}",
+                    began.elapsed().as_secs_f32(),
+                    stderr
+                        .chars()
+                        .rev()
+                        .take(300)
+                        .collect::<String>()
+                        .chars()
+                        .rev()
+                        .collect::<String>()
+                ),
+            );
             drop(warm);
             emit(AgentEvent::Error {
-                message: if stderr.is_empty() { "agent ended without a result".to_owned() } else { stderr },
+                message: if stderr.is_empty() {
+                    "agent ended without a result".to_owned()
+                } else {
+                    stderr
+                },
             });
         }
     }
@@ -604,25 +754,60 @@ mod tests {
 
     #[test]
     fn the_settings_key_leaves_the_conversation_out() {
-        let first = settings_key("claude", &args(&["-p", "--session-id", "a", "--model", "m"]), &[]);
-        let next = settings_key("claude", &args(&["-p", "--resume", "a", "--model", "m"]), &[]);
-        assert_eq!(first, next, "starting and resuming the same conversation is the same process");
-        let other_model = settings_key("claude", &args(&["-p", "--resume", "a", "--model", "n"]), &[]);
+        let first = settings_key(
+            "claude",
+            &args(&["-p", "--session-id", "a", "--model", "m"]),
+            &[],
+        );
+        let next = settings_key(
+            "claude",
+            &args(&["-p", "--resume", "a", "--model", "m"]),
+            &[],
+        );
+        assert_eq!(
+            first, next,
+            "starting and resuming the same conversation is the same process"
+        );
+        let other_model = settings_key(
+            "claude",
+            &args(&["-p", "--resume", "a", "--model", "n"]),
+            &[],
+        );
         assert_ne!(first, other_model);
     }
 
     #[test]
     fn a_live_model_stays_out_of_the_key_and_other_clis_keep_it() {
-        let claude = |model: &str| key_for(&super::super::claude::Claude, &args(&["-p", "--resume", "a", "--model", model]), &[]);
+        let claude = |model: &str| {
+            key_for(
+                &super::super::claude::Claude,
+                &args(&["-p", "--resume", "a", "--model", model]),
+                &[],
+            )
+        };
         assert_eq!(claude("m"), claude("n"), "a model change keeps the process");
-        let agy = |model: &str| key_for(&super::super::antigravity::Antigravity::default(), &args(&["-p", "--model", model]), &[]);
-        assert_ne!(agy("m"), agy("n"), "a CLI without a live switch still starts for another model");
+        let agy = |model: &str| {
+            key_for(
+                &super::super::antigravity::Antigravity::default(),
+                &args(&["-p", "--model", model]),
+                &[],
+            )
+        };
+        assert_ne!(
+            agy("m"),
+            agy("n"),
+            "a CLI without a live switch still starts for another model"
+        );
     }
 
     #[test]
     fn the_settings_key_holds_the_environment_and_the_agent() {
         let plain = settings_key("claude", &args(&["-p"]), &[]);
-        let keyed = settings_key("claude", &args(&["-p"]), &[("ANTHROPIC_API_KEY".to_owned(), "k".to_owned())]);
+        let keyed = settings_key(
+            "claude",
+            &args(&["-p"]),
+            &[("ANTHROPIC_API_KEY".to_owned(), "k".to_owned())],
+        );
         assert_ne!(plain, keyed, "another key is another account");
         assert!(settings_key("agy", &args(&["-p"]), &[]).starts_with(&format!("agy{SEP}")));
     }
@@ -687,10 +872,17 @@ mod unix_tests {
     }
 
     fn script(name: &str, body: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("agentdeck-warm-{name}-{}.sh", std::process::id()));
-        std::fs::write(&path, format!("#!/bin/sh
+        let path =
+            std::env::temp_dir().join(format!("agentdeck-warm-{name}-{}.sh", std::process::id()));
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh
 {body}
-")).unwrap();
+"
+            ),
+        )
+        .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         path
     }
@@ -711,14 +903,21 @@ mod unix_tests {
     }
 
     /// Starts the turn, waits until its first delta came out, then stops it.
-    async fn stopped_turn(provider: &'static dyn Provider, path: &std::path::Path, chat: &str) -> Vec<AgentEvent> {
+    async fn stopped_turn(
+        provider: &'static dyn Provider,
+        path: &std::path::Path,
+        chat: &str,
+    ) -> Vec<AgentEvent> {
         let (handle, token) = StopHandle::new();
         let events = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&events);
         let binary = path.to_path_buf().into_os_string();
         let request = req(chat);
         let turn = tokio::spawn(async move {
-            drive_warm_turn_with(binary, provider, &request, token, |event| seen.lock().unwrap().push(event)).await
+            drive_warm_turn_with(binary, provider, &request, token, |event| {
+                seen.lock().unwrap().push(event)
+            })
+            .await
         });
         for _ in 0..200 {
             if !events.lock().unwrap().is_empty() {
@@ -728,7 +927,10 @@ mod unix_tests {
         }
         handle.stop();
         let ended = tokio::time::timeout(Duration::from_secs(15), turn).await;
-        assert!(matches!(ended, Ok(Ok(true))), "the stopped turn did not end");
+        assert!(
+            matches!(ended, Ok(Ok(true))),
+            "the stopped turn did not end"
+        );
         let list = events.lock().unwrap().clone();
         list
     }
@@ -748,25 +950,45 @@ read third"),
         );
         let events = stopped_turn(&Fake, &path, "chat-interrupt").await;
         let _ = std::fs::remove_file(&path);
-        assert_eq!(events.first(), Some(&AgentEvent::Delta { text: "half".into() }));
+        assert_eq!(
+            events.first(),
+            Some(&AgentEvent::Delta {
+                text: "half".into()
+            })
+        );
         assert_eq!(
             events.last(),
-            Some(&AgentEvent::Done { session_id: Some("s1".into()), text: String::new(), cost_usd: None }),
+            Some(&AgentEvent::Done {
+                session_id: Some("s1".into()),
+                text: String::new(),
+                cost_usd: None
+            }),
             "the interrupted result closes the turn as a stopped one, not as an error"
         );
         let key = settings_key("fake", &[], &[]);
-        assert!(holds("chat-interrupt", &key, Some("s1"), false), "the CLI went back to the pool");
+        assert!(
+            holds("chat-interrupt", &key, Some("s1"), false),
+            "the CLI went back to the pool"
+        );
         reset(Some("fake"));
     }
 
     #[tokio::test]
     async fn a_cli_without_an_interrupt_message_is_ended_at_once() {
-        let path = script("nointerrupt", &format!("{WORKING}
-sleep 30"));
+        let path = script(
+            "nointerrupt",
+            &format!(
+                "{WORKING}
+sleep 30"
+            ),
+        );
         let events = stopped_turn(&NoInterrupt, &path, "chat-nointerrupt").await;
         let _ = std::fs::remove_file(&path);
         assert!(matches!(events.last(), Some(AgentEvent::Done { .. })));
         let key = settings_key("fake", &[], &[]);
-        assert!(!holds("chat-nointerrupt", &key, Some("s1"), true), "a killed CLI is not kept");
+        assert!(
+            !holds("chat-nointerrupt", &key, Some("s1"), true),
+            "a killed CLI is not kept"
+        );
     }
 }

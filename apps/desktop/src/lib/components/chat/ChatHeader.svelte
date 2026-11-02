@@ -233,7 +233,7 @@
       </button>
     {/if}
   </div>
-  <div class="flex shrink-0 items-center">
+  <div class="ml-1 flex shrink-0 items-center">
     <ToolbarActions divider={false} />
   </div>
 </header>

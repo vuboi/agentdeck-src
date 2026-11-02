@@ -18,7 +18,11 @@ pub fn set_sink(sink: TraceSink) {
 
 /// What the heartbeat adds about the adapters: kept processes and tails.
 pub fn stats() -> String {
-    format!("pool={} tails={}", super::warm::pool_len(), super::tail::count())
+    format!(
+        "pool={} tails={}",
+        super::warm::pool_len(),
+        super::tail::count()
+    )
 }
 
 /// Notes one step of a chat's flow.

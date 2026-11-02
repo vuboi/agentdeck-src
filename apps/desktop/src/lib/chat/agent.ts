@@ -49,8 +49,7 @@ export type AgentTurnSettings = {
   cwd: string | null;
 };
 
-/** The model and key a turn runs on: a `credit:` Claude model runs the same CLI on the Console API key, so the turn
- *  spends API credit (models.svelte.ts). */
+/** Subscription models use Claude Code's local account; `credit:` models explicitly use the saved Console API key. */
 function billing(args: AgentTurnSettings): { model: string | null; apiKey: string | null } {
   const credit = args.agent === 'claude' ? creditModel(args.model) : null;
   if (!credit) return { model: args.model, apiKey: null };
