@@ -18,6 +18,8 @@ set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 
 if not defined LIBCLANG_PATH set "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
 set "CMAKE_GENERATOR=Visual Studio 17 2022"
+rem Some tests start `sh -c` (runner, tail): take Git for Windows sh when it is not on PATH.
+if exist "%ProgramFiles%\Git\bin\sh.exe" set "PATH=%PATH%;%ProgramFiles%\Git\bin"
 
 rem bindgen does not see MSVC headers by default: pass INCLUDE dirs as -isystem.
 set "BINDGEN_EXTRA_CLANG_ARGS="

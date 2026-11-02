@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { enqueue, enqueueNext } from '../src/lib/chat/runs/queue.ts';
 import { applyAgentEvent } from '../src/lib/chat/agent-reply.ts';
 import { credentialScope } from '../src/lib/agents/credential-scope.ts';
+import { resolveBinding } from '../src/lib/chat/session/binding.ts';
 
 const ts = createRequire(import.meta.url)('typescript');
 const providers = [
@@ -19,7 +20,7 @@ const providers = [
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 /** The svelte runtime classes are plain collections here; reactivity is not what these tests check. */
-const runtimeDefaults = { SvelteMap: Map, SvelteSet: Set };
+const runtimeDefaults = { SvelteMap: Map, SvelteSet: Set, SvelteDate: Date };
 
 /** Executes a real coordinator module with isolated native I/O; unconfigured imports fail on use. */
 async function load(name, bindings) {
@@ -151,6 +152,9 @@ function fixture(agent) {
         withElements: (value) => value,
         credentialScope,
         forgetUnstartedConversation() {},
+        dropRecovery() {},
+        messagesById: new Map(),
+        resolveBinding,
         supersedeOwedTurn() {},
         stopOwedTurn() {},
         turnOptionsOf: () => ({}),
@@ -171,7 +175,7 @@ function fixture(agent) {
 }
 
 for (const agent of providers) {
-    test(`${agent}: Send now prioritizes exactly once without cancelling existing work`, async () => {
+    test(`${agent}: Send now stops the running answer once and sends the message right away; a double click resends nothing`, async () => {
         const f = fixture(agent);
         f.replies.chat = 'old';
         const first = {
@@ -191,14 +195,13 @@ for (const agent of providers) {
         const api = await load('sending', f.bindings);
         api.steerQueued('chat', first);
         api.steerQueued('chat', first);
-        assert.equal(f.starts.length, 0);
-        assert.equal(f.stops.length, 0);
-        assert.equal(f.messages.length, 0);
+        // Send now stops the running answer (as Ctrl/Cmd+Enter does) and starts this message once.
+        assert.equal(f.stops.length, 1);
+        assert.equal(f.starts.length, 1);
         assert.deepEqual(
-            Array.from(f.queued.chat, (item) => item.messageId),
-            ['one', 'two'],
+            Array.from(f.queued.chat ?? [], (item) => item.messageId),
+            ['two'],
         );
-        assert.equal(f.queued.chat[0].priority, true);
         assert.equal(f.queuePaused.chat, undefined);
     });
 

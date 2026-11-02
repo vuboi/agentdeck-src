@@ -1064,6 +1064,170 @@ fn servers_for_inner(project: Option<&std::path::Path>, agent: Option<&str>) -> 
         .collect()
 }
 
+/// Reads project MCP config before global entries so a local override wins in SDK sessions.
+fn read_project(project: &std::path::Path) -> Vec<Raw> {
+    let mut found = Vec::new();
+    for (file, agent, key, is_toml) in [
+        (".mcp.json", "claude", "mcpServers", false),
+        (".codex/config.toml", "codex", "mcp_servers", true),
+        (".copilot/mcp-config.json", "copilot", "mcpServers", false),
+    ] {
+        let path = project.join(file);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let value: Option<Value> = if is_toml {
+            toml::from_str::<toml::Value>(&text)
+                .ok()
+                .and_then(|v| serde_json::to_value(v).ok())
+        } else {
+            serde_json::from_str(&text).ok()
+        };
+        if let Some(value) = value {
+            found.extend(servers_in(
+                &value[key],
+                agent,
+                &format!("project: {}", project.display()),
+                &path.to_string_lossy(),
+            ));
+        }
+    }
+    found
+}
+
+/// Shares user MCP entries across providers or explicitly selected projects, preserving conflicts.
+pub(crate) async fn sync_store(
+    projects: &[PathBuf],
+    name: Option<&str>,
+) -> Vec<crate::store::sync::SyncResult> {
+    use crate::store::sync::{merge_mcp, SyncResult};
+    let all = read_all();
+    let mut results = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for raw in all.iter().filter(|r| {
+        !is_own(r)
+            && !r.disabled
+            && (r.scope == "user"
+                || projects
+                    .iter()
+                    .any(|p| r.scope == format!("project: {}", p.display())))
+            && name.is_none_or(|n| n == r.name)
+    }) {
+        if !seen.insert((raw.name.clone(), raw.scope.clone())) {
+            continue;
+        }
+        if all.iter().any(|other| {
+            other.name == raw.name
+                && other.scope == raw.scope
+                && (other.command != raw.command
+                    || other.args != raw.args
+                    || other.url != raw.url
+                    || other.env != raw.env
+                    || other.headers != raw.headers
+                    || other.disabled)
+        }) {
+            results.push(SyncResult {
+                target: "global".into(),
+                item: raw.name.clone(),
+                ok: false,
+                message: "Provider configurations differ; resolve the conflict before sync".into(),
+            });
+            continue;
+        }
+        if projects.is_empty() {
+            let agents = ["claude", "codex", "copilot"]
+                .into_iter()
+                .filter(|a| {
+                    !all.iter()
+                        .any(|r| r.name == raw.name && r.agent == *a && r.scope == "user")
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if agents.is_empty() {
+                continue;
+            }
+            let spec = AddSpec {
+                name: raw.name.clone(),
+                transport: raw.transport.clone(),
+                target: raw
+                    .url
+                    .clone()
+                    .or_else(|| raw.command.clone())
+                    .unwrap_or_default(),
+                args: raw.args.clone(),
+                env: raw.env.iter().map(|(k, v)| format!("{k}={v}")).collect(),
+                headers: raw
+                    .headers
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {v}"))
+                    .collect(),
+                agents,
+            };
+            match mcp_add(spec).await {
+                Ok(rows) => results.extend(rows.into_iter().map(|r| SyncResult {
+                    target: format!("global / {}", r.agent),
+                    item: raw.name.clone(),
+                    ok: r.ok,
+                    message: r.message,
+                })),
+                Err(error) => results.push(SyncResult {
+                    target: "global".into(),
+                    item: raw.name.clone(),
+                    ok: false,
+                    message: error,
+                }),
+            }
+        } else {
+            for project in projects
+                .iter()
+                .filter(|p| raw.scope == "user" || raw.scope == format!("project: {}", p.display()))
+            {
+                for (file, key, is_toml) in [
+                    (".mcp.json", "mcpServers", false),
+                    (".codex/config.toml", "mcp_servers", true),
+                    (".copilot/mcp-config.json", "mcpServers", false),
+                ] {
+                    let mut server = if let Some(url) = &raw.url {
+                        json!({"url":url})
+                    } else {
+                        json!({"command":raw.command, "args":raw.args})
+                    };
+                    if !raw.env.is_empty() {
+                        server["env"] = json!(raw.env);
+                    }
+                    if !raw.headers.is_empty() {
+                        server[if is_toml { "http_headers" } else { "headers" }] =
+                            json!(raw.headers);
+                    }
+                    if !is_toml {
+                        server["type"] = json!(raw.transport);
+                    }
+                    let result = if project.is_absolute() && project.is_dir() {
+                        merge_mcp(&project.join(file), key, &raw.name, server, is_toml)
+                    } else {
+                        Err("Project must be an existing absolute folder".into())
+                    };
+                    results.push(SyncResult {
+                        target: format!("{} / {file}", project.display()),
+                        item: raw.name.clone(),
+                        ok: result.is_ok(),
+                        message: result.err().unwrap_or_else(|| "Synchronized".into()),
+                    });
+                }
+            }
+        }
+    }
+    results
+}
+
+pub(crate) fn raw_id(raw: &Raw) -> String {
+    if raw.scope.starts_with("project: ") {
+        format!("{}|{}|{}", raw.name, raw.target(), raw.scope)
+    } else {
+        format!("{}|{}", raw.name, raw.target())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1231,169 +1395,5 @@ mod tests {
         bad = spec("stdio", "npx");
         bad.agents = vec!["rm".into()];
         assert!(check(&bad).is_err());
-    }
-}
-
-/// Reads project MCP config before global entries so a local override wins in SDK sessions.
-fn read_project(project: &std::path::Path) -> Vec<Raw> {
-    let mut found = Vec::new();
-    for (file, agent, key, is_toml) in [
-        (".mcp.json", "claude", "mcpServers", false),
-        (".codex/config.toml", "codex", "mcp_servers", true),
-        (".copilot/mcp-config.json", "copilot", "mcpServers", false),
-    ] {
-        let path = project.join(file);
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let value: Option<Value> = if is_toml {
-            toml::from_str::<toml::Value>(&text)
-                .ok()
-                .and_then(|v| serde_json::to_value(v).ok())
-        } else {
-            serde_json::from_str(&text).ok()
-        };
-        if let Some(value) = value {
-            found.extend(servers_in(
-                &value[key],
-                agent,
-                &format!("project: {}", project.display()),
-                &path.to_string_lossy(),
-            ));
-        }
-    }
-    found
-}
-
-/// Shares user MCP entries across providers or explicitly selected projects, preserving conflicts.
-pub(crate) async fn sync_store(
-    projects: &[PathBuf],
-    name: Option<&str>,
-) -> Vec<crate::store::sync::SyncResult> {
-    use crate::store::sync::{merge_mcp, SyncResult};
-    let all = read_all();
-    let mut results = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for raw in all.iter().filter(|r| {
-        !is_own(r)
-            && !r.disabled
-            && (r.scope == "user"
-                || projects
-                    .iter()
-                    .any(|p| r.scope == format!("project: {}", p.display())))
-            && name.is_none_or(|n| n == r.name)
-    }) {
-        if !seen.insert((raw.name.clone(), raw.scope.clone())) {
-            continue;
-        }
-        if all.iter().any(|other| {
-            other.name == raw.name
-                && other.scope == raw.scope
-                && (other.command != raw.command
-                    || other.args != raw.args
-                    || other.url != raw.url
-                    || other.env != raw.env
-                    || other.headers != raw.headers
-                    || other.disabled)
-        }) {
-            results.push(SyncResult {
-                target: "global".into(),
-                item: raw.name.clone(),
-                ok: false,
-                message: "Provider configurations differ; resolve the conflict before sync".into(),
-            });
-            continue;
-        }
-        if projects.is_empty() {
-            let agents = ["claude", "codex", "copilot"]
-                .into_iter()
-                .filter(|a| {
-                    !all.iter()
-                        .any(|r| r.name == raw.name && r.agent == *a && r.scope == "user")
-                })
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
-            if agents.is_empty() {
-                continue;
-            }
-            let spec = AddSpec {
-                name: raw.name.clone(),
-                transport: raw.transport.clone(),
-                target: raw
-                    .url
-                    .clone()
-                    .or_else(|| raw.command.clone())
-                    .unwrap_or_default(),
-                args: raw.args.clone(),
-                env: raw.env.iter().map(|(k, v)| format!("{k}={v}")).collect(),
-                headers: raw
-                    .headers
-                    .iter()
-                    .map(|(k, v)| format!("{k}: {v}"))
-                    .collect(),
-                agents,
-            };
-            match mcp_add(spec).await {
-                Ok(rows) => results.extend(rows.into_iter().map(|r| SyncResult {
-                    target: format!("global / {}", r.agent),
-                    item: raw.name.clone(),
-                    ok: r.ok,
-                    message: r.message,
-                })),
-                Err(error) => results.push(SyncResult {
-                    target: "global".into(),
-                    item: raw.name.clone(),
-                    ok: false,
-                    message: error,
-                }),
-            }
-        } else {
-            for project in projects
-                .iter()
-                .filter(|p| raw.scope == "user" || raw.scope == format!("project: {}", p.display()))
-            {
-                for (file, key, is_toml) in [
-                    (".mcp.json", "mcpServers", false),
-                    (".codex/config.toml", "mcp_servers", true),
-                    (".copilot/mcp-config.json", "mcpServers", false),
-                ] {
-                    let mut server = if let Some(url) = &raw.url {
-                        json!({"url":url})
-                    } else {
-                        json!({"command":raw.command, "args":raw.args})
-                    };
-                    if !raw.env.is_empty() {
-                        server["env"] = json!(raw.env);
-                    }
-                    if !raw.headers.is_empty() {
-                        server[if is_toml { "http_headers" } else { "headers" }] =
-                            json!(raw.headers);
-                    }
-                    if !is_toml {
-                        server["type"] = json!(raw.transport);
-                    }
-                    let result = if project.is_absolute() && project.is_dir() {
-                        merge_mcp(&project.join(file), key, &raw.name, server, is_toml)
-                    } else {
-                        Err("Project must be an existing absolute folder".into())
-                    };
-                    results.push(SyncResult {
-                        target: format!("{} / {file}", project.display()),
-                        item: raw.name.clone(),
-                        ok: result.is_ok(),
-                        message: result.err().unwrap_or_else(|| "Synchronized".into()),
-                    });
-                }
-            }
-        }
-    }
-    results
-}
-
-pub(crate) fn raw_id(raw: &Raw) -> String {
-    if raw.scope.starts_with("project: ") {
-        format!("{}|{}|{}", raw.name, raw.target(), raw.scope)
-    } else {
-        format!("{}|{}", raw.name, raw.target())
     }
 }

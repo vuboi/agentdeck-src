@@ -327,12 +327,9 @@ mod tests {
         commit_all(Path::new(&wt.path), "c");
         // Committed but not merged: branch delete refuses, the worktree itself is gone.
         assert!(remove(&r, &wt.path, &wt.branch, false).is_err());
-        assert!(
-            git_ok(&root, &["branch", "--list", &wt.branch])
-                .unwrap()
-                .len()
-                > 0
-        );
+        assert!(!git_ok(&root, &["branch", "--list", &wt.branch])
+            .unwrap()
+            .is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
 
