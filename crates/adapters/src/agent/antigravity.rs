@@ -688,6 +688,17 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                         image: None,
                         change: None,
                     });
+                    // A sub-agent that fails ends its task under the id it started with, or its card stays running.
+                    if is_subagent_tool(raw_name) {
+                        events.push(AgentEvent::Task {
+                            id: index.to_string(),
+                            tool_use_id: Some(index.to_string()),
+                            status: TaskStatus::Failed,
+                            label: None,
+                            summary: None,
+                            tools: None,
+                        });
+                    }
                 }
                 _ => {}
             }
@@ -1177,6 +1188,30 @@ mod tests {
             "{events:?}"
         );
         assert!(matches!(events.last(), Some(AgentEvent::Done { .. })));
+    }
+
+    #[test]
+    fn a_failed_sub_agent_ends_its_task_under_the_id_it_started_with() {
+        let provider = Antigravity::default();
+        let lines = [
+            r#"{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"invoke_subagent","tool_info":{"name":"invoke_subagent","parameters":{"Role":"First"}}}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":2,"state":"ERROR","step_type":"tool","tool_name":"invoke_subagent","tool_info":{"name":"invoke_subagent","parameters":{"Role":"First"},"error":{"message":"boom"}}}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":5,"state":"ACTIVE","step_type":"tool","tool_name":"invoke_subagent","tool_info":{"name":"invoke_subagent","parameters":{"Role":"Second"}}}}"#,
+            r#"{"event":"step_update","step_update":{"step_index":5,"state":"ERROR","step_type":"tool","tool_name":"invoke_subagent","tool_info":{"name":"invoke_subagent","parameters":{"Role":"Second"},"error":{"message":"boom"}}}}"#,
+        ];
+        let events: Vec<AgentEvent> = lines
+            .iter()
+            .flat_map(|line| provider.parse_line(line))
+            .collect();
+        for (id, label) in [("2", "First"), ("5", "Second")] {
+            let started = events.iter().any(|event| matches!(event, AgentEvent::Task { id: task, status: TaskStatus::Started, label: Some(l), .. } if task == id && l == label));
+            let failed = events.iter().any(|event| matches!(event, AgentEvent::Task { id: task, status: TaskStatus::Failed, tool_use_id: Some(call), .. } if task == id && call == id));
+            assert!(started, "task {id} starts: {events:?}");
+            assert!(
+                failed,
+                "task {id} ends as failed under its own id: {events:?}"
+            );
+        }
     }
 
     #[test]

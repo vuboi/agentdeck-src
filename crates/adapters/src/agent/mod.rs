@@ -121,6 +121,13 @@ pub enum TaskStatus {
     Stopped,
 }
 
+impl TaskStatus {
+    /// Whether the task is over: done, failed or stopped.
+    pub fn is_end(self) -> bool {
+        matches!(self, Self::Done | Self::Failed | Self::Stopped)
+    }
+}
+
 /// The address of the browser's MCP server for one chat: `/mcp?chat=<id>&root=<folder>`. The bridge reads both from it.
 pub fn mcp_url(bridge: &str, owner: Option<&str>, cwd: Option<&std::path::Path>) -> String {
     let mut query = Vec::new();

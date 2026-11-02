@@ -398,10 +398,7 @@ impl Translate {
 
     /// The `turn.failed` line of a turn, at most once per turn id (see `failed`).
     fn fail_once(&mut self, params: &Value, message: &str) -> Vec<Value> {
-        let turn = params["turnId"]
-            .as_str()
-            .or_else(|| params["turn"]["id"].as_str())
-            .unwrap_or_default();
+        let turn = turn_of(params).unwrap_or_default();
         if !self.failed.insert(turn.to_owned()) {
             return Vec::new();
         }
@@ -620,10 +617,14 @@ pub async fn prewarm(binary: OsString, provider: &dyn Provider, req: &TurnReques
 /// The notification names a turn, and it is not the current one. Only notifications that carry a turn id are judged
 /// (`turn/*` has it in `turn.id`, the others in `turnId`).
 fn foreign_turn(current: Option<&str>, params: &Value) -> bool {
-    let named = params["turn"]["id"]
+    matches!((current, turn_of(params)), (Some(current), Some(named)) if current != named)
+}
+
+/// The turn a notification names: `turnId`, or `turn.id` on the `turn/*` ones.
+fn turn_of(params: &Value) -> Option<&str> {
+    params["turnId"]
         .as_str()
-        .or_else(|| params["turnId"].as_str());
-    matches!((current, named), (Some(current), Some(named)) if current != named)
+        .or_else(|| params["turn"]["id"].as_str())
 }
 
 /// Reads and drops what a kept server wrote while no turn ran (the end of an interrupted turn, late notifications), so
