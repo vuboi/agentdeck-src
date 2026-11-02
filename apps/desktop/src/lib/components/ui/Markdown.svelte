@@ -111,6 +111,9 @@
     const STAGGER_MS = 18;
     // Past FADE_LIMIT words in flight, new ones simply appear: fading dozens at once costs frames.
     const FADE_LIMIT = 80;
+    // Each shown word re-parses the block being written; doing it every frame made a long block drop frames. The reveal
+    // keeps its own pace every frame, but the text on screen moves on at most every COMMIT_MS (the fades hide the step).
+    const COMMIT_MS = 32;
 
     let live = untrack(() => streaming);
     // What has arrived before this block was put on screen shows at once: coming back to a chat that is still writing must
@@ -203,6 +206,7 @@
         }
         arrived = target;
         let last = performance.now();
+        let committedAt = 0;
         let frame = 0;
         const step = (now: number) => {
             const dt = Math.min(64, now - last) / 1000;
@@ -242,7 +246,13 @@
                 target,
             );
             // `progress` keeps its own pace: pulling it to the end of each shown word would double the real speed.
-            if (next > shown) shown = next;
+            if (
+                next > shown &&
+                (next >= target || now - committedAt >= COMMIT_MS)
+            ) {
+                shown = next;
+                committedAt = now;
+            }
             frame = requestAnimationFrame(step);
         };
         frame = requestAnimationFrame(step);
