@@ -1,6 +1,6 @@
 <script lang="ts">
     import { SvelteMap } from 'svelte/reactivity';
-    import { fade, slide } from 'svelte/transition';
+    import { slide } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import {
         ZButton,
@@ -17,6 +17,7 @@
     import { ticker } from '../../app/platform/clock.svelte';
     import { LOADER, LOADER_SIZE } from '../../app/platform/loaders';
     import ActivityIndicator from '../ui/ActivityIndicator.svelte';
+    import SwapLine from '../ui/SwapLine.svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
     import { ASK, WEB_SEARCH } from '../../chat/content/tool-kind';
     import {
@@ -168,19 +169,6 @@
     const runningLine = $derived(runningStep ? stepLine(runningStep) : '');
     const total = $derived(totalChange(items));
     const seconds = $derived(elapsed(ticker.sec - (startedAt ?? ticker.sec)));
-    let previousRunningLine = '';
-    let runningLineStartedAt = 0;
-    let lineTransition = $state<'fade' | 'legacy'>('legacy');
-    $effect.pre(() => {
-        const line = runningLine;
-        if (line === previousRunningLine) return;
-        const now = performance.now();
-        const visibleFor =
-            runningLineStartedAt > 0 ? now - runningLineStartedAt : Infinity;
-        lineTransition = visibleFor < 1000 ? 'fade' : 'legacy';
-        previousRunningLine = line;
-        runningLineStartedAt = now;
-    });
     const shown = (item: CommandBlock) =>
         toolOf(item.command) === 'Bash'
             ? `> ${argOf(item.command)}`
@@ -436,7 +424,7 @@
                     color="primary"
                 />
             {/key}
-            <ZShimmerText class="stream-label" zText={current.label} />
+            <SwapLine text={current.label} shimmer class="stream-label" />
             <span class="stream-label tabular-nums">{seconds}</span>
         {:else}
             <!-- Always an icon, by the kind of work: the step running now, else what the group did most (terminal, file edit,
@@ -452,27 +440,7 @@
             {#if runningStep}
                 <!-- While a step runs the line is that step ("Running pnpm test", "Using officecli load_skill word"), cut to the
              width; once every step is done it goes back to the summary. -->
-                <span class="min-w-0 truncate font-medium">
-                    {#key runningLine}
-                        {#if lineTransition === 'fade'}
-                            <span
-                                class="block truncate"
-                                in:fade={{ duration: 120 }}
-                                out:fade={{ duration: 90 }}
-                            >
-                                <ZShimmerText
-                                    class="block truncate font-medium"
-                                    zText={runningLine}
-                                />
-                            </span>
-                        {:else}
-                            <ZShimmerText
-                                class="block truncate font-medium"
-                                zText={runningLine}
-                            />
-                        {/if}
-                    {/key}
-                </span>
+                <SwapLine text={runningLine} shimmer class="font-medium" />
             {:else if working}
                 <ZShimmerText
                     class="truncate font-medium"
