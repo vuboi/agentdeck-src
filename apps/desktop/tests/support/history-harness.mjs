@@ -1,4 +1,5 @@
 import { load } from './load-session.mjs';
+import { mergeTranscripts } from '../../src/lib/chat/session/transcript-merge.ts';
 
 /** Lets the promise chains of the module under test (prefs read at load time, saves) run before an assertion. */
 export const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -146,6 +147,7 @@ export async function historyWith({
         recoveries: {},
         resumes: {},
         backlog: new Map(),
+        mergeTranscripts,
     };
     const globals = {
         $state: Object.assign((value) => value, {
