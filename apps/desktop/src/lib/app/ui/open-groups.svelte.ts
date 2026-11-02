@@ -30,10 +30,14 @@ export function groupView(key: string): GroupState {
 
 /** The list's own entry, created on first use. Writes state: call it only from event handlers. */
 export function editGroup(key: string): GroupState {
-    let found = states.get(key);
-    if (!found) {
-        found = $state({ open: false, thinking: false, rows: {} });
-        states.set(key, found);
-    }
-    return found;
+    const found = states.get(key);
+    if (found) return found;
+    // `$state` must initialise a declaration (state_invalid_placement), so the new entry gets its own const.
+    const fresh: GroupState = $state({
+        open: false,
+        thinking: false,
+        rows: {},
+    });
+    states.set(key, fresh);
+    return fresh;
 }
