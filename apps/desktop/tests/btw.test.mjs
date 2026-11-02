@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { load } from './support/load-session.mjs';
 import { btwQuestionOf } from '../src/lib/chat/session/btw-command.ts';
+import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
 
 /** A parent chat on `agent`, and the stubs `btw.svelte.ts` reaches through its imports. */
 async function setup(agent = 'claude') {
@@ -54,5 +55,72 @@ test('R4.1: /btw on a non-Claude chat is refused and starts no side chat', async
             false,
             agent,
         );
+    }
+});
+
+/** A delegate module whose caller is `caller`; `onDelegateCall` is the entry the Rust bridge calls. */
+async function delegateCaller(caller) {
+    const replies = [];
+    const invoked = [];
+    const api = await load('delegate-task', {
+        ...taskHelpers,
+        elapsed: (ms) => `${ms} ms`,
+        workspace: { activeId: 'chat', sessions: [caller], projects: [] },
+        getPref: async () => null,
+        setPref() {},
+        persistLocal() {},
+        logFlow() {},
+        hasTurnWork: () => false,
+        inTauri: () => false,
+        owesTurn: () => false,
+        queued: {},
+        queuePaused: {},
+        send() {},
+        sendNextQueued() {},
+        handbackPrompt: () => 'handback',
+        NO_HANDOUT: {},
+        replyDelegateCall: async (...args) => {
+            replies.push(args);
+            return true;
+        },
+        invoke: async (...args) => {
+            invoked.push(args);
+            throw new Error('no invoke expected');
+        },
+        releaseWorkerSlot: async () => {},
+        stopTurn() {},
+        updateWorkflowWorker() {},
+        settleWorkflowRun() {},
+        taskWaiters: new Map(),
+    });
+    return { api, replies, invoked };
+}
+
+test('R4.2: a side chat cannot delegate, with or without a worktree', async () => {
+    const side = {
+        id: 'side',
+        agent: 'claude',
+        model: 'model',
+        status: 'idle',
+        projectId: 'project',
+        side: { parentId: 'chat', question: 'q' },
+    };
+    for (const args of [
+        { agent: 'claude', task: 'write the file' },
+        { agent: 'claude', task: 'write the file', isolation: 'worktree' },
+    ]) {
+        const { api, replies, invoked } = await delegateCaller(side);
+        api.onDelegateCall({
+            callId: 'c1',
+            caller: 'side',
+            tool: 'delegate_task',
+            args,
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(replies.length, 1);
+        assert.equal(replies[0][2], true);
+        assert.match(replies[0][1], /side chats cannot delegate/);
+        assert.equal(invoked.length, 0, 'no worktree is created');
+        assert.deepEqual(Object.keys(api.delegateTasks), []);
     }
 });

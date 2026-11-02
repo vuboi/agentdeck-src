@@ -508,6 +508,12 @@ function startTask(
             'AgentDeck could not tell which chat is calling. Do the task yourself, or ask the user to run it from the chat.',
             true,
         );
+    // A /btw side chat answers one question read-only: it hands no work to another chat, and no worktree is made for it.
+    if (caller.side)
+        return reply(
+            'side chats cannot delegate: answer the question yourself, read-only.',
+            true,
+        );
     if (isolated && !prepared) {
         if (continueId)
             return reply(
@@ -1729,7 +1735,7 @@ async function watchWorkers() {
 }
 
 /** A call of one of the delegation tools, from the Rust side. */
-function onDelegateCall(call: DelegateCall) {
+export function onDelegateCall(call: DelegateCall) {
     const reply = (text: string, isError = false) =>
         void replyDelegateCall(call.callId, text, isError).catch(
             () => undefined,
