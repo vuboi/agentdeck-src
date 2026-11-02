@@ -22,7 +22,11 @@ const report = {
  * A delegate-task module with the chat's collaborators stubbed. `sent` records every hand-back send. `delivered` is what
  * replyDelegateCall answers: false when the caller's call is no longer waiting, so a report would fall back to the backlog.
  */
-async function delegateWith({ owed = false, delivered = true } = {}) {
+async function delegateWith({
+    owed = false,
+    delivered = true,
+    prefs = {},
+} = {}) {
     const session = {
         id: 'chat',
         title: 'Chat',
@@ -36,7 +40,7 @@ async function delegateWith({ owed = false, delivered = true } = {}) {
         ...taskHelpers,
         elapsed: (ms) => `${ms} ms`,
         workspace: { activeId: 'chat', sessions: [session], projects: [] },
-        getPref: async () => null,
+        getPref: async (key) => prefs[key] ?? null,
         setPref() {},
         persistLocal() {},
         logFlow() {},
@@ -207,5 +211,70 @@ test("R3.8: credentialScopeOf names a custom provider's credential, the same as 
     assert.equal(
         credentialScopeOf('custom|p::m'),
         credentialScope('custom', 'p::m'),
+    );
+});
+
+// ---------- R3.7: one "recovering" note per recovery; watchdog notes are not restored after a reload ----------
+
+test('R3.7: three recoveries of one worker leave one "recovering" note in the backlog', async () => {
+    const { api } = await delegateWith();
+    api.delegateTasks.t1 = {
+        id: 't1',
+        childId: 'child',
+        caller: 'chat',
+        wait: false,
+        label: 'worker',
+        task: 'Original request',
+        sourceMessageId: 'm1',
+        sourceTask: 'Original request',
+        state: 'running',
+        startedAt: 0,
+        reportState: 'running',
+    };
+    api.taskRuns.set('t1', { timeoutS: 60, remainingMs: 0, deadline: 0 });
+    // Each recovery comes later than the one before (the ids used to carry a timestamp: the test must not rely on that).
+    for (let attempt = 0; attempt < 3; attempt++) {
+        api.noteWorkerRecovering('child', 'the CLI failed');
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(api.backlog.get('chat')?.length, 1);
+});
+
+test('R3.7: a reload drops the watchdog notes from the restored backlog and keeps the reports', async () => {
+    const saved = [
+        [
+            'chat',
+            [
+                {
+                    taskId: 't1#recover',
+                    sourceMessageId: 'm1',
+                    sourceTask: 'a',
+                    label: 'w',
+                    text: 'recovering',
+                },
+                {
+                    taskId: 't1#check2',
+                    sourceMessageId: 'm1',
+                    sourceTask: 'a',
+                    label: 'w',
+                    text: 'progress',
+                },
+                {
+                    taskId: 't1',
+                    sourceMessageId: 'm1',
+                    sourceTask: 'a',
+                    label: 'w',
+                    text: 'done',
+                },
+            ],
+        ],
+    ];
+    const { api } = await delegateWith({
+        prefs: { 'delegate.backlog': saved },
+    });
+    await settle();
+    assert.deepEqual(
+        api.backlog.get('chat').map((item) => item.taskId),
+        ['t1'],
     );
 });

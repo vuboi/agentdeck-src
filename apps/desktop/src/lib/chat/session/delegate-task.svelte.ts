@@ -213,8 +213,13 @@ void Promise.all([
         for (const [callerId, reports] of Array.isArray(savedBacklog)
             ? savedBacklog
             : [])
-            if (Array.isArray(reports) && reports.length)
-                backlog.set(callerId, reports);
+            if (Array.isArray(reports)) {
+                // Watchdog notes (recovering, progress check-ins) are about a worker of the last run: they are stale now.
+                const kept = reports.filter(
+                    (report) => !/#(check|recover)/.test(report.taskId),
+                );
+                if (kept.length) backlog.set(callerId, kept);
+            }
         for (const item of Array.isArray(saved) ? saved : []) {
             if (delegateTasks[item.id]) continue;
             const lost =
@@ -1557,7 +1562,8 @@ export function noteWorkerRecovering(childId: string, reason: string) {
         `task=${record.id} recovering: ${reason}`,
     );
     deliverReport(record.caller, {
-        taskId: `${record.id}#recover${Date.now()}`,
+        // A fixed id: the backlog keeps one note per task, however many recoveries it went through (see deliverReport).
+        taskId: `${record.id}#recover`,
         sourceMessageId: record.sourceMessageId,
         sourceTask: record.sourceTask ?? record.task,
         label: `${record.label} (task ${record.id}) - recovering`,
