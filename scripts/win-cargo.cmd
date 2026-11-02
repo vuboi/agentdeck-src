@@ -6,6 +6,8 @@ rem Requires: VS 2022 BuildTools (C++ workload), LLVM at C:\Program Files\LLVM.
 setlocal EnableDelayedExpansion
 rem cmd truncates PATH at 8191 characters: keep the system folders at the front so they survive vcvars and tests.
 set "PATH=%SystemRoot%\System32;%SystemRoot%;%PATH%"
+rem Some tests start `sh -c` (runner, tail): take Git for Windows sh when it is not on PATH.
+if exist "%ProgramFiles%\Git\bin\sh.exe" set "PATH=%PATH%;%ProgramFiles%\Git\bin"
 
 set "VCVARS=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 if not exist "%VCVARS%" (
@@ -20,8 +22,6 @@ set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 
 if not defined LIBCLANG_PATH set "LIBCLANG_PATH=C:\Program Files\LLVM\bin"
 set "CMAKE_GENERATOR=Visual Studio 17 2022"
-rem Some tests start `sh -c` (runner, tail): take Git for Windows sh when it is not on PATH.
-if exist "%ProgramFiles%\Git\bin\sh.exe" set "PATH=%PATH%;%ProgramFiles%\Git\bin"
 
 rem bindgen does not see MSVC headers by default: pass INCLUDE dirs as -isystem.
 set "BINDGEN_EXTRA_CLANG_ARGS="
