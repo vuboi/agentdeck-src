@@ -121,6 +121,7 @@ File: `apps/desktop/src-tauri/src/worktree.rs`, `chat/session/delegate-task.svel
 2. **`tests/delegate-task.test.ts:~513`:** comment nâng ngưỡng 1500 → 2500 sai lý do (hint không chứa quy tắc isolation). Hoặc rút gọn `DELEGATE_HINT` về < 1500, hoặc thêm câu quy tắc worktree vào hint (dùng cho R5.1) rồi sửa comment đúng lý do. Chọn một, ghi lý do.
 3. **Test thiếu (thêm):** `worktreeSlug` (tiếng Việt có dấu, ký tự đặc biệt, độ dài ≤ 20, không có `-` ở đầu/cuối); `sessionCwd` ưu tiên worktree; `snapshotOf`; side chat không có trong `localSessions`/sidebar tree.
 4. **`scripts/check-derived-writes.mjs`:** thêm vào `WRITERS` các hàm bọc có gọi `messagesOf` (tìm bằng grep `messagesOf(` trong `src/lib/**/*.ts`, các hàm export chỉ để đọc nhưng gọi `messagesOf`). Nếu một hàm như vậy được dùng trong template, đổi nó sang `messagesView`.
+5. **`crates/protocol/src/lib.rs` `committed_protocol_ts_matches_rust_types`:** fail trong worktree mới vì `core.autocrlf=true` (file checkout ra CRLF, chuỗi sinh ra là LF). So sánh sau khi bỏ `\r` ở cả hai phía: `on_disk.replace("\r\n", "\n")`. Test: tạo worktree mới, chạy `cargo test -p ag-protocol` → pass.
 
 ---
 
