@@ -3,6 +3,7 @@
 // changes an account. Account switching is the opt-in auto-switch in events.svelte.ts (per connector, per custom
 // provider); when it is off, a limit or sign-out moves the work to another provider here, never to another account.
 // Free of stores and Tauri so plain node can test it; events.svelte.ts acts on the answer.
+import { credentialScope } from '../../agents/credential-scope';
 
 export type FailureKind =
     | 'limit'
@@ -119,8 +120,8 @@ export function nextAgent(
  * Antigravity's sign-in is the `agy` one. Routes with the same scope share one limit and one sign-in.
  */
 export function credentialScopeOf(route: string): string {
-    const provider = route.split('|')[0] ?? '';
-    return provider === 'antigravity' ? 'agy' : provider;
+    const [provider = '', ...model] = route.split('|');
+    return credentialScope(provider, model.join('|'));
 }
 
 /**

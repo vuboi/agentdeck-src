@@ -101,7 +101,12 @@ import {
     taskWaiters,
 } from './orchestration.svelte';
 import { handbackPrompt, send } from './sending.svelte';
-import { lastEventAt, lastEventKind, manuallyStopped } from './events.svelte';
+import {
+    lastEventAt,
+    lastEventKind,
+    manuallyStopped,
+    owesTurn,
+} from './events.svelte';
 import { activity } from '../runs/activity.svelte';
 import { continuePrompt } from '../recovery/turn-failure';
 import {
@@ -125,9 +130,9 @@ const TASKS_KEY = 'delegate.tasks';
 const TASK_LIMIT = 200;
 
 /** `cascade`: its parent task was stopped, so it is stopped too and its report has nobody to go to. */
-type Ending = 'user' | 'caller' | 'timeout' | 'abort' | 'cascade';
+type Ending = 'user' | 'caller' | 'timeout' | 'abort' | 'cascade' | 'chat';
 /** Endings whose report is not delivered to the caller: someone stopped the task on purpose. */
-const NO_REPORT_ENDINGS: Ending[] = ['user', 'caller', 'cascade'];
+const NO_REPORT_ENDINGS: Ending[] = ['user', 'caller', 'cascade', 'chat'];
 /** What a running task needs besides its record: the tool call that waits for its report, the timer, why it is ending. */
 type TaskRun = {
     callId?: string;
@@ -208,8 +213,13 @@ void Promise.all([
         for (const [callerId, reports] of Array.isArray(savedBacklog)
             ? savedBacklog
             : [])
-            if (Array.isArray(reports) && reports.length)
-                backlog.set(callerId, reports);
+            if (Array.isArray(reports)) {
+                // Watchdog notes (recovering, progress check-ins) are about a worker of the last run: they are stale now.
+                const kept = reports.filter(
+                    (report) => !/#(check|recover)/.test(report.taskId),
+                );
+                if (kept.length) backlog.set(callerId, kept);
+            }
         for (const item of Array.isArray(saved) ? saved : []) {
             if (delegateTasks[item.id]) continue;
             const lost =
@@ -1272,7 +1282,9 @@ function finishTask(
               ? 'the agent that asked was stopped'
               : run.ending === 'cascade'
                 ? 'the task that asked for it was stopped'
-                : detail;
+                : run.ending === 'chat'
+                  ? 'the chat was stopped'
+                  : detail;
     const body =
         verdict === 'done'
             ? reportDigest(answer)
@@ -1319,16 +1331,17 @@ function finishTask(
         },
         body,
     );
-    // A task in the background: its report goes to the caller, unless the user or the caller itself stopped it.
+    // The backlog is the fallback for a report nobody waits for. Only a task that ended on its own (or timed out) keeps
+    // it: a stopped task, or one aborted with its caller, has no one left to read it (so a timeout gets one notice).
     const toCaller = () => {
-        if (!run.ending || !NO_REPORT_ENDINGS.includes(run.ending))
-            deliverReport(record.caller, {
-                taskId,
-                sourceMessageId: record.sourceMessageId,
-                sourceTask: record.sourceTask ?? record.task,
-                label: `${record.label} (task ${taskId})`,
-                text: verdict === 'done' ? body : reasonLine(verdict, detailOf),
-            });
+        if (run.ending && run.ending !== 'timeout') return;
+        deliverReport(record.caller, {
+            taskId,
+            sourceMessageId: record.sourceMessageId,
+            sourceTask: record.sourceTask ?? record.task,
+            label: `${record.label} (task ${taskId})`,
+            text: verdict === 'done' ? body : reasonLine(verdict, detailOf),
+        });
     };
     if (!run.callId) return toCaller();
     // A waiting caller whose call was already dropped on the Rust side (its timeout, or its connection closed) gets the
@@ -1488,8 +1501,11 @@ export function flushReports(callerId: string) {
         backlog.delete(callerId);
         return;
     }
+    // A failed turn still owed a retry or an account switch is not finished: a hand-back sent now would take it over
+    // (sendNextQueued runs again when that turn ends, so the report goes out then).
     if (
         hasTurnWork(callerId) ||
+        owesTurn(callerId) ||
         queuePaused[callerId] ||
         queued[callerId]?.length
     )
@@ -1546,7 +1562,8 @@ export function noteWorkerRecovering(childId: string, reason: string) {
         `task=${record.id} recovering: ${reason}`,
     );
     deliverReport(record.caller, {
-        taskId: `${record.id}#recover${Date.now()}`,
+        // A fixed id: the backlog keeps one note per task, however many recoveries it went through (see deliverReport).
+        taskId: `${record.id}#recover`,
         sourceMessageId: record.sourceMessageId,
         sourceTask: record.sourceTask ?? record.task,
         label: `${record.label} (task ${record.id}) - recovering`,
@@ -1554,15 +1571,18 @@ export function noteWorkerRecovering(childId: string, reason: string) {
     });
 }
 
-/** A caller's turn ended: the tasks it was waiting for have nobody to answer, so they stop. Background ones go on. */
-export function endWaitingTasks(callerId: string) {
+/**
+ * A caller's turn ended: the tasks it was waiting for have nobody to answer, so they stop. Background ones go on.
+ * `stopped`: the user stopped the caller, so the tasks end as stopped by the chat (no report).
+ */
+export function endWaitingTasks(callerId: string, stopped = false) {
     for (const record of Object.values(delegateTasks)) {
         if (
             record.caller === callerId &&
             record.wait &&
             taskRuns.has(record.id)
         )
-            stopTask(record.id, 'abort');
+            stopTask(record.id, stopped ? 'chat' : 'abort');
     }
 }
 
