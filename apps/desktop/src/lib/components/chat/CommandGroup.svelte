@@ -447,18 +447,14 @@
                     class="size-3"
                 /></span
             >
-            {#if runningStep}
-                <!-- While a step runs the line is that step ("Running pnpm test", "Using officecli load_skill word"), cut to the
-             width; once every step is done it goes back to the summary. -->
-                <SwapLine text={runningLine} shimmer class="font-medium" />
-            {:else if working}
-                <ZShimmerText
-                    class="truncate font-medium"
-                    zText={summarize(items)}
-                />
-            {:else}
-                <span class="truncate font-medium">{summarize(items)}</span>
-            {/if}
+            <!-- One SwapLine for the whole title. While a step runs the line is that step ("Running pnpm test"); once
+             every step is done it goes back to the summary. Switching between two branches used to destroy the
+             SwapLine for a few ms, so the next line appeared at once and the width jumped. -->
+            <SwapLine
+                text={runningStep ? runningLine : summarize(items)}
+                shimmer={Boolean(runningStep) || working}
+                class="font-medium"
+            />
             {#if total}{@render chips(total)}{/if}
         {/if}
         <!-- Always kept, so the label does not change width when the group gains or loses details. -->

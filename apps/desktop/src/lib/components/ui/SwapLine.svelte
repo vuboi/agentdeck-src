@@ -57,6 +57,8 @@
         aria-hidden="true"
         bind:offsetWidth={width}>{shown}</span
     >
+    <!-- Keyed on the shown line only. A shimmer change alone (the title goes from the summary to a running step, or
+         back) swaps the inner text inside the same slot without replaying the slide-in of the line. -->
     {#key shown}
         <span
             class="col-start-1 row-start-1 block min-w-0 truncate whitespace-nowrap"

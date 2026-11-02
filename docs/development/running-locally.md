@@ -20,6 +20,15 @@ Use the root scripts below instead of invoking `tauri dev` directly. `scripts/ru
 - Agent CLI authentication, global skills/MCP files and other explicitly user-level `~/.agentdeck` resources are still shared. These commands isolate the app runtime, not provider accounts or project working files.
 - Frontend IndexedDB is origin-scoped. A dev fallback to another port has a different frontend storage origin. Use the normal preferred port consistently when you want the same development chat/preferences database.
 
+## Swap-line comparison page (dev only)
+
+With `pnpm dev` running, open `http://127.0.0.1:<port>/dev/swap-line` in the dev window or a browser (`<port>` is the port the command printed). The page shows two scenarios, switched by its buttons:
+
+- **Dòng lệnh (SwapLine)**: one running line that changes every 150 to 1500 ms, with streamed text under it.
+- **Reply thật (AssistantMessage)**: a fake reply built by `applyAgentEvent`, with three command groups interleaved with text and a running command that changes every 150 to 1500 ms.
+
+The route answers 404 outside `pnpm dev` (`src/routes/dev/swap-line/+page.ts`) and is not prerendered, so release builds do not contain it. There is no menu entry for it.
+
 ## Inspect without launching
 
 Each run command accepts `--dry-run` to print its resolved configuration and selected port without building or starting another app/server. For example:
