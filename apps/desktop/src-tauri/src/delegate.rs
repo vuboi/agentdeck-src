@@ -29,17 +29,84 @@ pub const QUESTION_WAIT: Duration = Duration::from_secs(900);
 const BACKSTOP: Duration = Duration::from_secs(60);
 
 pub const DELEGATE_TOOL: &str = "delegate_task";
-const TOOLS: [&str; 6] = [
+/// The tool an agent calls to suggest splitting its work into sessions. It only shows a card: the user decides, so the
+/// call is answered at once and never waits (see `call`).
+pub const PROPOSE_TOOL: &str = "propose_session";
+pub const PROPOSE_REPLY: &str = "Proposed to the user; wait for their choice.";
+/// A proposal's title is a short name: under 60 characters.
+const PROPOSAL_TITLE_MAX: usize = 59;
+const PROPOSAL_TASKS: std::ops::RangeInclusive<usize> = 2..=4;
+const TOOLS: [&str; 7] = [
     DELEGATE_TOOL,
     "list_agents",
     "task_status",
     "task_stop",
     "task_ask",
     "task_answer",
+    PROPOSE_TOOL,
 ];
 
 pub fn is_tool(name: &str) -> bool {
     TOOLS.contains(&name)
+}
+
+/// Checks the arguments of `propose_session`: a title, 2 to 4 tasks, each with a title, a brief and a write scope. The
+/// overlaps and dependencies between the tasks are checked by the webview (tasks/propose.ts).
+pub fn check_proposal(args: &Value) -> Result<(), String> {
+    let title = text_of(&args["title"])
+        .ok_or("title is required: a short name for the split, under 60 characters")?;
+    if title.chars().count() > PROPOSAL_TITLE_MAX {
+        return Err("title is longer than 59 characters: a short name for the split".into());
+    }
+    let tasks = args["tasks"]
+        .as_array()
+        .ok_or("tasks is required: a list of 2 to 4 tasks")?;
+    if !PROPOSAL_TASKS.contains(&tasks.len()) {
+        return Err(format!(
+            "tasks takes 2 to 4 tasks, not {}: propose a split only when there are 2 independent parts",
+            tasks.len()
+        ));
+    }
+    for (at, task) in tasks.iter().enumerate() {
+        let number = at + 1;
+        if text_of(&task["title"]).is_none() {
+            return Err(format!("task {number}: title is required"));
+        }
+        if text_of(&task["brief"]).is_none() {
+            return Err(format!(
+                "task {number}: brief is required: the goal, paths and what to report back"
+            ));
+        }
+        if text_of(&task["brief"]).is_some_and(|brief| brief.chars().count() > TASK_MAX_CHARS) {
+            return Err(format!(
+                "task {number}: brief is longer than {TASK_MAX_CHARS} characters"
+            ));
+        }
+        let scope = task["write_scope"]
+            .as_array()
+            .filter(|scope| !scope.is_empty())
+            .ok_or(format!(
+                "task {number}: write_scope is required: the files or folders it may change"
+            ))?;
+        if scope.iter().any(|path| text_of(path).is_none()) {
+            return Err(format!(
+                "task {number}: write_scope takes paths, not empty entries"
+            ));
+        }
+        match &task["depends_on"] {
+            Value::Null => {}
+            Value::Array(items) if items.iter().all(|item| text_of(item).is_some()) => {}
+            _ => {
+                return Err(format!(
+                    "task {number}: depends_on is a list of task titles"
+                ))
+            }
+        }
+    }
+    match text_of(&args["isolation"]).as_deref() {
+        None | Some("worktree") | Some("shared") => Ok(()),
+        Some(_) => Err("isolation must be worktree or shared".into()),
+    }
 }
 
 pub fn tool_defs() -> Vec<Value> {
@@ -87,6 +154,34 @@ pub fn tool_defs() -> Vec<Value> {
             "name": "task_answer",
             "description": "Answer a task_ask from a child agent. Use the question_id and give the decision or context directly so the child can continue its work.",
             "inputSchema": { "type": "object", "properties": { "question_id": { "type": "string", "description": "the question_id shown in the coordination prompt" }, "answer": { "type": "string", "description": "the answer the child should use" } }, "required": ["question_id", "answer"] },
+        }),
+        json!({
+            "name": PROPOSE_TOOL,
+            "description": "Suggests splitting the work into sessions the user can run in parallel, each in its own git worktree. Shows the user a card with the tasks; nothing runs until the user chooses. Propose only when the request has 2 independent parts with disjoint write_scope (the files or folders each task may change) and no task needs another's result; Do NOT propose for work of 2 files or fewer, one continuous change, or a plan that must be done in order (give depends_on then, or keep it here). Each task has a self-contained brief (goal, paths, constraints, what to report back). Reply is immediate: say briefly what you proposed, then wait for their choice; do not start the tasks yourself.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string", "description": "a short name for the split, under 60 characters" },
+                    "tasks": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 4,
+                        "description": "2 to 4 independent tasks",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": { "type": "string", "description": "a short name for this task" },
+                                "brief": { "type": "string", "description": "the self-contained task: goal, paths, constraints, what to report back" },
+                                "write_scope": { "type": "array", "items": { "type": "string" }, "description": "the files or folders this task may change; scopes of different tasks must not overlap" },
+                                "depends_on": { "type": "array", "items": { "type": "string" }, "description": "titles of other tasks in this list that must finish first" }
+                            },
+                            "required": ["title", "brief", "write_scope"]
+                        }
+                    },
+                    "isolation": { "type": "string", "enum": ["worktree", "shared"], "description": "worktree (default): each task gets its own git worktree and branch" }
+                },
+                "required": ["title", "tasks"]
+            },
         }),
     ]
 }
@@ -391,6 +486,13 @@ fn reply_value(text: String, is_error: bool) -> Value {
 
 /// One tool call of the MCP server: checks the arguments, hands the call to the webview and waits for its answer.
 pub async fn call(app: &AppHandle, tool: &str, args: &Value, chat: &str) -> Value {
+    // A proposal is only shown: the webview draws its card from the call's own line in the chat, so nothing here waits.
+    if tool == PROPOSE_TOOL {
+        return match check_proposal(args) {
+            Ok(()) => reply_value(PROPOSE_REPLY.into(), false),
+            Err(error) => reply_value(error, true),
+        };
+    }
     let checked = match tool {
         DELEGATE_TOOL => parse_delegate(args).map(|parsed| {
             json!({ "agent": parsed.agent, "model": parsed.model, "role": parsed.role, "task": parsed.task, "wait": parsed.wait, "timeout_s": parsed.timeout_s, "continue": parsed.continue_id, "depends_on": parsed.depends_on })
@@ -811,7 +913,8 @@ mod tests {
                 "task_status",
                 "task_stop",
                 "task_ask",
-                "task_answer"
+                "task_answer",
+                "propose_session"
             ]
         );
         assert!(names.iter().all(|name| is_tool(name)));
@@ -827,6 +930,83 @@ mod tests {
             assert!(text.contains(phrase), "the description lacks: {phrase}");
         }
         assert_eq!(defs[0]["inputSchema"]["required"], json!(["task"]));
+    }
+
+    fn proposed_task(title: &str) -> Value {
+        json!({ "title": title, "brief": "do the part", "write_scope": [format!("src/{title}")] })
+    }
+
+    #[test]
+    fn a_proposal_needs_a_short_title_and_two_to_four_tasks() {
+        let two = json!({ "title": "Export", "tasks": [proposed_task("a"), proposed_task("b")] });
+        assert!(check_proposal(&two).is_ok());
+        let four = json!({ "title": "Export", "tasks": [proposed_task("a"), proposed_task("b"), proposed_task("c"), proposed_task("d")] });
+        assert!(check_proposal(&four).is_ok());
+        let one = json!({ "title": "Export", "tasks": [proposed_task("a")] });
+        assert!(check_proposal(&one).is_err());
+        let five = json!({ "title": "Export", "tasks": [proposed_task("a"), proposed_task("b"), proposed_task("c"), proposed_task("d"), proposed_task("e")] });
+        assert!(check_proposal(&five).is_err());
+        let no_tasks = json!({ "title": "Export" });
+        assert!(check_proposal(&no_tasks).is_err());
+        let no_title = json!({ "tasks": [proposed_task("a"), proposed_task("b")] });
+        assert!(check_proposal(&no_title).is_err());
+        let longest =
+            json!({ "title": "x".repeat(59), "tasks": [proposed_task("a"), proposed_task("b")] });
+        assert!(check_proposal(&longest).is_ok());
+        let too_long =
+            json!({ "title": "x".repeat(60), "tasks": [proposed_task("a"), proposed_task("b")] });
+        assert!(check_proposal(&too_long).is_err());
+    }
+
+    #[test]
+    fn each_task_needs_a_title_a_brief_and_a_write_scope() {
+        let bad_tasks = [
+            json!({ "title": "a", "brief": "x" }),
+            json!({ "title": "a", "brief": "x", "write_scope": [] }),
+            json!({ "title": "a", "brief": "x", "write_scope": [""] }),
+            json!({ "title": "", "brief": "x", "write_scope": ["a"] }),
+            json!({ "title": "a", "brief": " ", "write_scope": ["a"] }),
+            json!({ "title": "a", "brief": "x", "write_scope": ["a"], "depends_on": "b" }),
+        ];
+        for bad in bad_tasks {
+            let args = json!({ "title": "Export", "tasks": [bad.clone(), proposed_task("b")] });
+            assert!(check_proposal(&args).is_err(), "accepted {bad}");
+        }
+    }
+
+    #[test]
+    fn isolation_of_a_proposal_is_worktree_or_shared() {
+        let base = json!({ "title": "Export", "tasks": [proposed_task("a"), proposed_task("b")] });
+        assert!(check_proposal(&base).is_ok());
+        let mut shared = base.clone();
+        shared["isolation"] = json!("shared");
+        assert!(check_proposal(&shared).is_ok());
+        let mut bad = base;
+        bad["isolation"] = json!("everywhere");
+        assert!(check_proposal(&bad).is_err());
+    }
+
+    #[test]
+    fn propose_session_is_listed_with_when_to_propose() {
+        let defs = tool_defs();
+        let propose = defs
+            .iter()
+            .find(|tool| tool["name"] == PROPOSE_TOOL)
+            .expect("propose_session is listed");
+        assert!(is_tool(PROPOSE_TOOL));
+        let text = propose["description"].as_str().unwrap_or_default();
+        for phrase in [
+            "write_scope",
+            "2 independent",
+            "Do NOT propose",
+            "wait for their choice",
+        ] {
+            assert!(text.contains(phrase), "the description lacks: {phrase}");
+        }
+        assert_eq!(
+            propose["inputSchema"]["required"],
+            json!(["title", "tasks"])
+        );
     }
 
     // One test: both use the shared registry, and a reload empties it for everyone.
