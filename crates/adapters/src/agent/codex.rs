@@ -504,11 +504,18 @@ impl Provider for Codex {
                     item["tool"].as_str().unwrap_or_default()
                 );
                 if turn.started.insert(id.clone()) {
+                    // A proposal is read whole (its card parses the JSON); other calls are shown cut to 200 characters.
+                    let whole = super::is_proposal_tool(&name);
+                    let arguments = item["arguments"].to_string();
                     events.push(AgentEvent::ToolCall {
                         id: id.clone(),
                         background: super::delegate_wait(&name, &item["arguments"]),
                         name,
-                        input: item["arguments"].to_string().chars().take(200).collect(),
+                        input: if whole {
+                            arguments
+                        } else {
+                            arguments.chars().take(200).collect()
+                        },
                         change: None,
                     });
                 }

@@ -431,12 +431,13 @@ fn offloaded_image(output: &str) -> Option<String> {
 
 /// `call_mcp_tool` carries the server and the tool in its parameters: shown like Claude shows them, as
 /// `mcp__<server>__<tool>`, with the tool's own arguments as the input. A `browser_serve` keeps its arguments
-/// whole (JSON), since the chat reads the command and folder of the project run from them.
+/// whole (JSON), since the chat reads the command and folder of the project run from them; so does a `propose_session`,
+/// whose card reads its tasks from the JSON.
 fn mcp_call(parameters: &Value) -> Option<(String, String)> {
     let server = parameters["ServerName"].as_str()?;
     let tool = parameters["ToolName"].as_str()?;
     let arguments = &parameters["Arguments"];
-    let input = if tool == "browser_serve" {
+    let input = if tool == "browser_serve" || super::is_proposal_tool(tool) {
         arguments.to_string()
     } else {
         super::summarize_tool_input("", arguments)
