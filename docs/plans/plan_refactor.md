@@ -138,10 +138,10 @@ File: `apps/desktop/src-tauri/src/worktree.rs`, `chat/session/delegate-task.svel
 
 ## Báo cáo (người làm điền)
 
-- R1:
-- R2:
-- R3:
-- R4:
-- R5:
-- R6:
-- Kiểm tra cuối:
+- R1: làm xong, merge `0420c14` (commit `f86faec`). `assemble_path` (thứ tự node → common → system → current, dedup theo nền tảng), `child_path` (bỏ thư mục không tồn tại, bỏ mục quá dài nhưng giữ mục ngắn sau, log một lần), `augmented_path` không còn cắt; `runtime.rs` dùng `common_dirs_here`, xoá `extra_dirs` trùng; `win-cargo.cmd` đưa dòng Git\bin lên sau dòng PATH đầu. Test: 5 test mới trong `resolve.rs` (đều pass). Lưu ý: `extra_dirs` cũ có vài thư mục không có trong `common_dirs` (`agy\bin`, `mise\shims` trên Windows); chỉ dùng ở nhánh dự phòng khi `augmented_path()` lỗi. Đã bỏ qua test trong `runtime.rs`, test thay bằng `resolve.rs` (lookup trên danh sách đầy đủ).
+- R2: làm xong, merge `06e6d2d` (commit `a487f9e`). Làm: R2.1 (`tasks_to_stop`: chỉ Drop mới đóng task mở thành Stopped; test là hàm thuần, không phải fake `sh` như plan); R2.2 (end đưa xuống cuối buffer, mở rộng test); R2.3 (ERROR sub-agent → Task Failed cùng id; test `a_failed_sub_agent_ends_its_task_under_the_id_it_started_with`); R2.4 (copilot: đếm event bỏ theo agent, log khi chạm 64, `finish()` xoá `pending` khi hết lượt; test mới); R2.5 (`TaskStatus::is_end` dùng ở `stall.rs`, `tail.rs`; `turn_of` gộp trong `codex_server.rs`). Bỏ qua: R2.6 xoá `delegate_wait_tests` trong `mod.rs` vì không trùng: test đó kiểm `delegate_wait` (adapters), còn `delegate.rs` kiểm `is_long_call` (desktop), hai hàm khác nhau. Chưa làm: test `stall.rs` ~163 theo hành vi và `codex_server` qua `read_turn` (plan đã mô tả, chưa viết lại test).
+- R3: chưa làm. Lý do: phạm vi lớn (8 mục TS về state machine chat, cần đọc nhiều file và viết test Svelte/TS cho từng luồng); chưa đủ thời gian để làm an toàn trong phiên này.
+- R4: chưa làm (cùng lý do; `/btw` cần đọc `btw.svelte.ts`, `history.svelte.ts`, quyết định lưu danh sách id bỏ qua).
+- R5: chưa làm (phạm vi lớn: Rust worktree + UI + pref; nhiều quyết định thiết kế cần người xác nhận).
+- R6: chưa làm. Mục R6.5 (`committed_protocol_ts_matches_rust_types`) đang fail trong worktree mới vì `core.autocrlf=true`; cần sửa theo plan khi làm R6. Lưu ý: checkout `main` cũng có `core.autocrlf=true`, nên test này có thể đang fail cả trên `main`.
+- Kiểm tra cuối (trên `main` sau R2, `06e6d2d`): svelte-check 0 lỗi, 3 cảnh báo a11y có sẵn (`Markdown.svelte`, `Tree.svelte`), 2 file; check-derived-writes --strict 0 cảnh báo; node tests 388 pass / 0 fail; eslint: chưa chạy (không có file TS nào được sửa trong R1–R2); clippy `--workspace --all-targets -D warnings`: sạch (R2); `cargo test --workspace --no-fail-fast`: tất cả pass trừ 1 test `committed_protocol_ts_matches_rust_types` (ag-protocol, lỗi CRLF đã biết, thuộc R6.5); `ag-adapters` 200 pass.
