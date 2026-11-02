@@ -19,6 +19,20 @@ async function load(name, bindings) {
     const ast = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true);
     const imports = new Map();
     for (const node of ast.statements) {
+        // `export { a } from './x'` links like `import { a } from './x'`.
+        if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
+            if (node.isTypeOnly || !node.exportClause) continue;
+            if (!ts.isNamedExports(node.exportClause)) continue;
+            imports.set(node.moduleSpecifier.text, [
+                ...new Set([
+                    ...(imports.get(node.moduleSpecifier.text) ?? []),
+                    ...node.exportClause.elements
+                        .filter((item) => !item.isTypeOnly)
+                        .map((item) => (item.propertyName ?? item.name).text),
+                ]),
+            ]);
+            continue;
+        }
         if (!ts.isImportDeclaration(node) || node.importClause?.isTypeOnly)
             continue;
         const names = node.importClause?.namedBindings;

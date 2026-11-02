@@ -1,6 +1,7 @@
 import { workspace, localMessages, type SessionItem } from './state.svelte';
 import { send } from './sending.svelte';
 import { askText } from './run.svelte';
+import { chatTurnOptions } from './turns.svelte';
 
 export { btwQuestionOf } from './btw-command';
 
@@ -46,13 +47,26 @@ export function snapshotOf(parentId: string): string {
 
 /**
  * Asks a side question about a chat. The side chat is its own session: the parent's run is not touched,
- * nothing enters its queue, and the side chat is never listed or saved.
+ * nothing enters its queue, and the side chat is never listed or saved. It runs in Claude's plan mode, which
+ * cannot edit files, so only a Claude chat can ask one.
  */
-export function askBtw(parentId: string, question: string) {
+export function askBtw(
+    parentId: string,
+    question: string,
+): { ok: true; side: SessionItem } | { ok: false; error: string } {
     const parent = workspace.sessions.find((item) => item.id === parentId);
-    if (!parent) return;
+    if (!parent) return { ok: false, error: 'This chat is no longer open.' };
+    if (parent.agent !== 'claude')
+        return {
+            ok: false,
+            error: '/btw is only available in Claude chats for now (it runs in read-only plan mode).',
+        };
     dropSide(parentId);
     const id = crypto.randomUUID();
+    chatTurnOptions[id] = {
+        permission: 'plan',
+        effort: chatTurnOptions[parentId]?.effort ?? 'medium',
+    };
     const side: SessionItem = {
         id,
         projectId: parent.projectId,
@@ -78,5 +92,5 @@ export function askBtw(parentId: string, question: string) {
         .filter(Boolean)
         .join('\n\n');
     send(id, prompt, [], []);
-    return side;
+    return { ok: true, side };
 }
