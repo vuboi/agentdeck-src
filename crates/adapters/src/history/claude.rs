@@ -75,7 +75,7 @@ fn index_file(path: &Path) -> Option<Indexed> {
                     .map(str::to_owned)
             }
             Some(kind @ ("user" | "assistant")) if !is_true(line, "isSidechain") => {
-                if is_true(line, "isMeta") {
+                if is_true(line, "isMeta") || is_task_notice(line) {
                     continue;
                 }
                 count += 1;
@@ -226,7 +226,7 @@ pub(super) fn load(path: &Path) -> std::io::Result<Vec<HistoryMessage>> {
 
     for index in chain {
         let entry = &entries[index];
-        if !is_message(entry) || is_true(&entry.value, "isMeta") {
+        if !is_message(entry) || is_true(&entry.value, "isMeta") || is_task_notice(&entry.value) {
             continue;
         }
         let role = entry.kind.as_str();
@@ -399,4 +399,14 @@ fn str_of<'a>(value: &'a Value, key: &str) -> &'a str {
 
 fn is_true(value: &Value, key: &str) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// A background job or sub-agent reporting back. The CLI writes it as a user line with an XML body,
+/// but the user did not type it, so it must not show as a message.
+fn is_task_notice(value: &Value) -> bool {
+    value
+        .get("origin")
+        .and_then(|origin| origin.get("kind"))
+        .and_then(Value::as_str)
+        == Some("task-notification")
 }

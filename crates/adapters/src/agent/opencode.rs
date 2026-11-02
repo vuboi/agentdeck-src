@@ -26,7 +26,12 @@ pub fn is_subagent(tool: &str) -> bool {
 
 /// The task card of a sub-agent call, keyed by the call that started it. Used where the call's own metadata (the child
 /// session) is not known, as in the server's event stream.
-pub fn subagent_event(input: &Value, call: &str, status: TaskStatus, summary: Option<String>) -> AgentEvent {
+pub fn subagent_event(
+    input: &Value,
+    call: &str,
+    status: TaskStatus,
+    summary: Option<String>,
+) -> AgentEvent {
     AgentEvent::Task {
         id: call.to_owned(),
         tool_use_id: Some(call.to_owned()),
@@ -41,11 +46,16 @@ pub fn subagent_event(input: &Value, call: &str, status: TaskStatus, summary: Op
 /// streamed into this one, only its result comes back, so the call needs no scoping, just a label and a status.
 fn subagent_task(part: &Value, call: &str, status: TaskStatus) -> AgentEvent {
     let state = &part["state"];
-    let child = [&state["metadata"]["metadata"]["sessionID"], &state["metadata"]["sessionID"]]
-        .into_iter()
-        .find_map(Value::as_str)
-        .unwrap_or(call);
-    let failed = (status == TaskStatus::Failed).then(|| state["error"].as_str().map(str::to_owned)).flatten();
+    let child = [
+        &state["metadata"]["metadata"]["sessionID"],
+        &state["metadata"]["sessionID"],
+    ]
+    .into_iter()
+    .find_map(Value::as_str)
+    .unwrap_or(call);
+    let failed = (status == TaskStatus::Failed)
+        .then(|| state["error"].as_str().map(str::to_owned))
+        .flatten();
     AgentEvent::Task {
         id: child.to_owned(),
         tool_use_id: Some(call.to_owned()),
@@ -132,10 +142,20 @@ fn request_summary(data: &Value) -> String {
         .find_map(|key| metadata[key].as_str().filter(|text| !text.is_empty()))
         .map(str::to_owned)
         .or_else(|| {
-            let resources: Vec<&str> = data["resources"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let resources: Vec<&str> = data["resources"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
             (!resources.is_empty()).then(|| resources.join(", "))
         })
-        .or_else(|| data["message"].as_str().filter(|text| !text.is_empty()).map(str::to_owned))
+        .or_else(|| {
+            data["message"]
+                .as_str()
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        })
         .unwrap_or_else(|| data["action"].as_str().unwrap_or_default().to_owned())
 }
 
@@ -148,7 +168,9 @@ pub fn answer_permission(data: &Value, mode: Mode, allowed: &[String]) -> Permis
     let summary = request_summary(data);
     let allow = allow_entry(&tool, &json!({ "command": summary }));
     let approved = permission::verdict(mode, action_kind(action)) == Verdict::Approve
-        || allowed.iter().any(|entry| *entry == allow || *entry == tool);
+        || allowed
+            .iter()
+            .any(|entry| *entry == allow || *entry == tool);
     if approved {
         return PermissionAnswer::Approve;
     }
@@ -157,7 +179,12 @@ pub fn answer_permission(data: &Value, mode: Mode, allowed: &[String]) -> Permis
         .or_else(|| data["id"].as_str())
         .unwrap_or_default()
         .to_owned();
-    PermissionAnswer::Refuse(PermissionRequest { id, tool, summary, allow })
+    PermissionAnswer::Refuse(PermissionRequest {
+        id,
+        tool,
+        summary,
+        allow,
+    })
 }
 
 /// A tool's argument worth showing next to its name: the command, the file, the pattern.
@@ -313,7 +340,11 @@ impl Provider for OpenCode {
     }
     /// OpenCode has no system prompt flag here, so the app and ask instructions open each new session.
     fn opening_context(&self, req: &TurnRequest) -> Option<String> {
-        let continues = req.resume && req.session_id.as_ref().is_some_and(|session| session.starts_with("ses_"));
+        let continues = req.resume
+            && req
+                .session_id
+                .as_ref()
+                .is_some_and(|session| session.starts_with("ses_"));
         (!continues).then(|| format!("{APP_CONTEXT}{}", super::claude::ASK_CONTEXT))
     }
     fn environment(&self, req: &TurnRequest) -> Vec<(String, String)> {
@@ -422,7 +453,10 @@ impl Provider for OpenCode {
                 if settled {
                     let is_error = part["state"]["status"] == "error";
                     let change = if is_error {
-                        self.file_snapshots.lock().ok().and_then(|mut snapshots| snapshots.remove(&id));
+                        self.file_snapshots
+                            .lock()
+                            .ok()
+                            .and_then(|mut snapshots| snapshots.remove(&id));
                         None
                     } else {
                         self.file_snapshots
@@ -443,14 +477,22 @@ impl Provider for OpenCode {
                         change,
                     });
                     if part["tool"] == "subagent" {
-                        let status = if is_error { TaskStatus::Failed } else { TaskStatus::Done };
+                        let status = if is_error {
+                            TaskStatus::Failed
+                        } else {
+                            TaskStatus::Done
+                        };
                         events.push(subagent_task(part, &id, status));
                     }
                 }
                 events
             }
             "done" | "session_end" => {
-                let answer = self.answer.lock().map(|answer| answer.clone()).unwrap_or_default();
+                let answer = self
+                    .answer
+                    .lock()
+                    .map(|answer| answer.clone())
+                    .unwrap_or_default();
                 vec![AgentEvent::Done {
                     session_id: session,
                     text: answer.text(),
@@ -515,7 +557,9 @@ mod tests {
     #[test]
     fn the_opening_context_goes_only_to_a_new_session() {
         let mut fresh = request("hi");
-        assert!(OpenCode::default().opening_context(&fresh).is_some_and(|text| text.contains("```agentdeck-ask")));
+        assert!(OpenCode::default()
+            .opening_context(&fresh)
+            .is_some_and(|text| text.contains("```agentdeck-ask")));
         fresh.session_id = Some("ses_1".into());
         fresh.resume = true;
         assert!(OpenCode::default().opening_context(&fresh).is_none());
@@ -582,7 +626,9 @@ mod tests {
         let provider = OpenCode::default();
         let line = r#"{"type":"tool_use","sessionID":"ses_main","part":{"partID":"prt_1","id":"chatcmpl-tool-9","tool":"subagent","state":{"status":"completed","input":{"agent":"general","description":"Compute 2+2","prompt":"compute"},"output":"<subagent sessionID=\"ses_child\" state=\"completed\">\n4\n</subagent>","metadata":{"metadata":{"sessionID":"ses_child","status":"completed"}}}}}"#;
         let events = provider.parse_line(line);
-        assert!(matches!(&events[0], AgentEvent::ToolCall { name, background: true, .. } if name == "subagent"));
+        assert!(
+            matches!(&events[0], AgentEvent::ToolCall { name, background: true, .. } if name == "subagent")
+        );
         let task = |status| AgentEvent::Task {
             id: "ses_child".into(),
             tool_use_id: Some("chatcmpl-tool-9".into()),
@@ -592,7 +638,13 @@ mod tests {
             tools: None,
         };
         assert_eq!(events[1], task(TaskStatus::Started));
-        assert!(matches!(&events[2], AgentEvent::ToolResult { is_error: false, .. }));
+        assert!(matches!(
+            &events[2],
+            AgentEvent::ToolResult {
+                is_error: false,
+                ..
+            }
+        ));
         assert_eq!(events[3], task(TaskStatus::Done));
         assert_eq!(events.len(), 4);
     }
@@ -602,7 +654,9 @@ mod tests {
         let provider = OpenCode::default();
         let line = r#"{"type":"tool_use","part":{"id":"c9","tool":"subagent","state":{"status":"error","input":{"agent":"general"},"error":"boom"}}}"#;
         let events = provider.parse_line(line);
-        assert!(matches!(events.last(), Some(AgentEvent::Task { status: TaskStatus::Failed, summary: Some(text), id, .. }) if text == "boom" && id == "c9"));
+        assert!(
+            matches!(events.last(), Some(AgentEvent::Task { status: TaskStatus::Failed, summary: Some(text), id, .. }) if text == "boom" && id == "c9")
+        );
     }
 
     #[test]
@@ -715,11 +769,20 @@ mod tests {
             })
         );
         // The next turn carries that entry, and then the same command runs.
-        assert_eq!(answer_permission(&shell, Mode::Ask, &["Bash(git push)".into()]), PermissionAnswer::Approve);
+        assert_eq!(
+            answer_permission(&shell, Mode::Ask, &["Bash(git push)".into()]),
+            PermissionAnswer::Approve
+        );
         // Another command is still refused, and a bare `Bash` approves every command.
         let other = request_of("shell", json!({ "command": "rm -rf x" }));
-        assert!(matches!(answer_permission(&other, Mode::Ask, &["Bash(git push)".into()]), PermissionAnswer::Refuse(_)));
-        assert_eq!(answer_permission(&other, Mode::Ask, &["Bash".into()]), PermissionAnswer::Approve);
+        assert!(matches!(
+            answer_permission(&other, Mode::Ask, &["Bash(git push)".into()]),
+            PermissionAnswer::Refuse(_)
+        ));
+        assert_eq!(
+            answer_permission(&other, Mode::Ask, &["Bash".into()]),
+            PermissionAnswer::Approve
+        );
     }
 
     #[test]
@@ -727,14 +790,32 @@ mod tests {
         let edit = request_of("edit", json!({ "filepath": "a.ts" }));
         let shell = request_of("shell", json!({ "command": "ls" }));
         let read = request_of("read", json!({}));
-        assert_eq!(answer_permission(&edit, Mode::Edits, &[]), PermissionAnswer::Approve);
-        assert!(matches!(answer_permission(&shell, Mode::Edits, &[]), PermissionAnswer::Refuse(_)));
-        assert_eq!(answer_permission(&shell, Mode::Auto, &[]), PermissionAnswer::Approve);
-        assert_eq!(answer_permission(&shell, Mode::Yolo, &[]), PermissionAnswer::Approve);
-        assert_eq!(answer_permission(&read, Mode::Plan, &[]), PermissionAnswer::Approve);
+        assert_eq!(
+            answer_permission(&edit, Mode::Edits, &[]),
+            PermissionAnswer::Approve
+        );
+        assert!(matches!(
+            answer_permission(&shell, Mode::Edits, &[]),
+            PermissionAnswer::Refuse(_)
+        ));
+        assert_eq!(
+            answer_permission(&shell, Mode::Auto, &[]),
+            PermissionAnswer::Approve
+        );
+        assert_eq!(
+            answer_permission(&shell, Mode::Yolo, &[]),
+            PermissionAnswer::Approve
+        );
+        assert_eq!(
+            answer_permission(&read, Mode::Plan, &[]),
+            PermissionAnswer::Approve
+        );
         // Plan refuses changes and commands; the card names the file it would have changed.
         match answer_permission(&edit, Mode::Plan, &[]) {
-            PermissionAnswer::Refuse(request) => assert_eq!((request.tool.as_str(), request.summary.as_str()), ("Write", "a.ts")),
+            PermissionAnswer::Refuse(request) => assert_eq!(
+                (request.tool.as_str(), request.summary.as_str()),
+                ("Write", "a.ts")
+            ),
             other => panic!("plan must refuse an edit: {other:?}"),
         }
     }
@@ -788,7 +869,8 @@ mod tests {
     #[test]
     fn the_done_event_carries_the_final_answer_text() {
         let provider = OpenCode::default();
-        provider.parse_line(r#"{"type":"text","sessionID":"ses_3","part":{"text":"Let me check."}}"#);
+        provider
+            .parse_line(r#"{"type":"text","sessionID":"ses_3","part":{"text":"Let me check."}}"#);
         provider.parse_line(r#"{"type":"step_finish","sessionID":"ses_3","part":{"cost":0.1,"tokens":{"input":1,"output":1}}}"#);
         provider.parse_line(r#"{"type":"text","sessionID":"ses_3","part":{"text":"Done: 4"}}"#);
         assert_eq!(

@@ -1,3 +1,4 @@
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import {
     cancelCredentialRotations,
     credentialBusy,
@@ -347,11 +348,11 @@ const ACCOUNT_CACHE_KEY = 'accounts.quota-cache';
 const ACCOUNT_AUTO_SWITCH_KEY = 'accounts.auto-switch';
 export const ACCOUNT_REFRESH_TTL_MS = 60_000;
 const accountCacheAt: Partial<Record<ConnectorId, number>> = {};
-const accountRefreshAt = new Map<string, number>();
-const accountRefreshInFlight = new Map<string, Promise<boolean>>();
+const accountRefreshAt = new SvelteMap<string, number>();
+const accountRefreshInFlight = new SvelteMap<string, Promise<boolean>>();
 
 /** One refresh clock shared by Settings, the composer and the account switcher. */
-const quotaRefreshSubscribers = new Set<() => void>();
+const quotaRefreshSubscribers = new SvelteSet<() => void>();
 let quotaRefreshTimer: ReturnType<typeof setInterval> | undefined;
 
 export function subscribeQuotaRefresh(job: () => void): () => void {
@@ -410,10 +411,10 @@ function saveAccountCache() {
     } satisfies SavedAccountCache);
 }
 
-const activeLoginRuns = new Map<ConnectorId, number>();
-const cancelledLoginRuns = new Set<number>();
-const activeAccountAddRuns = new Map<AccountProvider, number>();
-const cancelledAccountAddRuns = new Set<number>();
+const activeLoginRuns = new SvelteMap<ConnectorId, number>();
+const cancelledLoginRuns = new SvelteSet<number>();
+const activeAccountAddRuns = new SvelteMap<AccountProvider, number>();
+const cancelledAccountAddRuns = new SvelteSet<number>();
 let loginSequence = 0;
 
 const call = async <T>(
@@ -468,7 +469,8 @@ export function normalizeCustomProvider(
     const activeKeyId = keys.some((item) => item.id === provider.activeKeyId)
         ? provider.activeKeyId!
         : (keys[0]?.id ?? null);
-    const { apiKey: _legacyApiKey, ...saved } = provider;
+    const saved: Partial<StoredCustomProvider> = { ...provider };
+    delete saved.apiKey;
     return {
         ...saved,
         keyEnv: provider.keyEnv ?? '',
@@ -598,7 +600,7 @@ async function listenToLogs() {
 // Claude, Codex and Antigravity open the browser themselves. OpenCode and `gh auth login --web` run here without a terminal,
 // so they only print the address: the first one printed during a sign-in is opened for them (once per sign-in).
 const OPENS_ITSELF_NOT = new Set<string>(['opencode', 'copilot']);
-const signInPageOpened = new Set<string>();
+const signInPageOpened = new SvelteSet<string>();
 function openSignInPage(id: string, line: string) {
     if (
         !OPENS_ITSELF_NOT.has(id) ||
@@ -865,10 +867,9 @@ export async function refreshAgyQuota(duringSwitch = false, force = false) {
             }
         }
         try {
-            const quotas = await call<AgyAccountQuota[]>(
-                'antigravity_quotas',
-                { force: force || duringSwitch },
-            );
+            const quotas = await call<AgyAccountQuota[]>('antigravity_quotas', {
+                force: force || duringSwitch,
+            });
             connectors.agyAccountQuotas = quotas;
             const activeQuota = quotas.find((item) => item.active)?.quota;
             // The all-account response already includes the active account. Reuse it instead of
@@ -1777,7 +1778,7 @@ export function usagePct(
     return live.length ? Math.max(...live.map((window) => window.pct)) : null;
 }
 
-const announced = new Set<string>();
+const announced = new SvelteSet<string>();
 
 function announce(warning: Warning) {
     const key = `${warning.provider}|${warning.account.email}|${warning.window.label}|${warning.window.resets_at}`;
@@ -1855,7 +1856,7 @@ const providerQuotaCacheReady = getPref<Record<string, ProviderQuota>>(
         if (saved) Object.assign(providerQuotas, saved);
     })
     .catch(() => undefined);
-const providerQuotaRefreshes = new Map<string, Promise<void>>();
+const providerQuotaRefreshes = new SvelteMap<string, Promise<void>>();
 
 /** Reads the spending left on a custom provider's key, when the provider tells it; leaves it unset otherwise. */
 export async function refreshProviderQuota(
@@ -2161,7 +2162,7 @@ export const newProviderId = () => `custom-${Date.now().toString(36)}`;
 // --- Saved settings ---------------------------------------------------------------------------------------
 
 // Keys saved to the system store this session, by name: one is written again only when it changed.
-const savedSecrets = new Map<string, string>();
+const savedSecrets = new SvelteMap<string, string>();
 
 /** What the database keeps for a key: nothing when the system store holds it, the value itself when the store refused it. */
 async function keepSecret(name: string, value: string): Promise<string> {

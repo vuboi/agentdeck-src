@@ -1,3 +1,4 @@
+import { SvelteMap } from 'svelte/reactivity';
 import { inTauri } from '../app/platform/history';
 import { nextVoicePhase, type VoicePhase } from './voice-state';
 
@@ -115,7 +116,7 @@ class VoiceCapture {
             this.releaseMedia();
             this.phase = nextVoicePhase(this.phase, 'fail');
             this.error = errorMessage(error);
-            throw new Error(this.error);
+            throw new Error(this.error, { cause: error });
         } finally {
             this.starting = false;
         }
@@ -162,7 +163,7 @@ class VoiceCapture {
                 this.phase = nextVoicePhase(this.phase, 'fail');
                 this.error = errorMessage(error);
             }
-            throw new Error(errorMessage(error));
+            throw new Error(errorMessage(error), { cause: error });
         } finally {
             if (mine === this.token) {
                 this.phase = nextVoicePhase(this.phase, 'finish');
@@ -283,7 +284,7 @@ class VoiceCapture {
     }
 }
 
-const voices = new Map<string, VoiceCapture>();
+const voices = new SvelteMap<string, VoiceCapture>();
 
 /** Returns the independent voice capture state owned by one chat session. */
 export function voiceOf(sessionId: string): VoiceCapture {

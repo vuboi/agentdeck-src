@@ -1,3 +1,4 @@
+import { SvelteSet } from 'svelte/reactivity';
 import type { ZIconName } from '@shival99/z-ui-svelte';
 import { inTauri } from '../app/platform/history';
 import { claudeCreditOn, connectors } from './connectors.svelte';
@@ -284,7 +285,7 @@ export const MCP_PROVIDER_IDS = [
 export function providerSources(
     allowed: readonly BuiltInProviderId[] = SKILL_PROVIDER_IDS,
 ): ModelSource[] {
-    const ids = new Set<string>(allowed);
+    const ids = new SvelteSet<string>(allowed);
     return modelSources().filter(
         (source) => source.provider !== 'custom' && ids.has(source.provider),
     );
@@ -501,7 +502,7 @@ export function freeFirst<
               ['Claude credit', credit],
           ];
     const dividers: ModelDivider[] = [];
-    const named = new Set<string>();
+    const named = new SvelteSet<string>();
     let at = 0;
     for (const [label, group] of groups) {
         if (

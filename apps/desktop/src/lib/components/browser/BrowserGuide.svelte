@@ -18,7 +18,7 @@
     let videoChat = $state('');
     let canvas: HTMLCanvasElement | undefined = $state();
     let recorder: MediaRecorder | undefined;
-    let recordingChunks: BlobPart[] = [];
+    let recordingChunks: Blob[] = [];
     let recordingStream: MediaStream | undefined;
     let recordingTarget: { root: string; fileName: string } | undefined;
     let recordingLoop = false;

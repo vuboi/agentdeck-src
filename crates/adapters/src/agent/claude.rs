@@ -75,11 +75,16 @@ pub fn claude_code_binary() -> Option<PathBuf> {
     let env_path = |key: &str| std::env::var_os(key).map(PathBuf::from);
     let home = env_path("HOME").or_else(|| env_path("USERPROFILE"));
     let mut candidates = candidates_for(std::env::consts::OS, home, env_path("APPDATA"));
-    let executable = if cfg!(windows) { "claude.exe" } else { "claude" };
+    let executable = if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    };
     if let Some(path) = env_path("PATH") {
         candidates.extend(std::env::split_paths(&path).map(|directory| directory.join(executable)));
         #[cfg(windows)]
-        candidates.extend(std::env::split_paths(&path).map(|directory| directory.join("claude.cmd")));
+        candidates
+            .extend(std::env::split_paths(&path).map(|directory| directory.join("claude.cmd")));
     }
     candidates.into_iter().find(|path| path.is_file())
 }
@@ -101,7 +106,9 @@ fn sdk_args(req: &TurnRequest, mode: &str) -> Vec<String> {
     let mut allowed_tools = req.allowed_tools.clone();
     let mcp_servers = if let Some(bridge) = bridge {
         system_prompt.push_str(" You CAN see and operate the page open in the Preview panel yourself, with the agentdeck tools: browser_screenshot to look, browser_click / browser_fill (form fields; browser_type only when the page reacts to each keystroke) / browser_key / browser_scroll / browser_hover to act as a user would (coordinates are CSS pixels of the screenshot; browser_eval with getBoundingClientRect() finds an element's point), browser_eval and browser_dom to read the page, browser_console and browser_network for errors. Never tell the user you cannot click or test in Preview, and do not ask them to do it for you. Test step by step: look, act, look again, check the console and network.");
-        system_prompt.push_str(&format!(" The same actions are plain HTTP too if a tool is missing: curl {bridge}/help."));
+        system_prompt.push_str(&format!(
+            " The same actions are plain HTTP too if a tool is missing: curl {bridge}/help."
+        ));
         allowed_tools.push("mcp__agentdeck".to_string());
         serde_json::json!({
             "agentdeck": {
@@ -179,6 +186,12 @@ impl Provider for Claude {
                 .map(|key| ("ANTHROPIC_API_KEY".to_string(), key.clone())),
         );
         env
+    }
+
+    fn environment_remove(&self, _req: &TurnRequest) -> Vec<&'static str> {
+        // Only a key explicitly selected for this turn may choose Console billing. Do not let a machine-wide key
+        // or bearer token silently override Claude Code's local subscription login.
+        vec!["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
     }
 
     fn args(&self, req: &TurnRequest) -> Vec<String> {
@@ -298,17 +311,29 @@ impl Claude {
                 .into_iter()
                 .flatten()
                 .filter(|block| block["type"] == "tool_use")
-                .map(|block| {
+                .flat_map(|block| {
                     let name = block["name"].as_str().unwrap_or_default();
-                    AgentEvent::ToolCall {
-                        id: block["id"].as_str().unwrap_or_default().to_string(),
+                    let id = block["id"].as_str().unwrap_or_default().to_string();
+                    let mut events = vec![AgentEvent::ToolCall {
+                        id: id.clone(),
                         name: name.to_string(),
                         input: summarize_tool_input(name, &block["input"]),
                         change: file_change(name, &block["input"]),
                         background: block["input"]["run_in_background"].as_bool() == Some(true)
                             || matches!(name, "Agent" | "Task")
                             || super::delegate_wait(name, &block["input"]),
+                    }];
+                    // A sub-agent names its model in its input; the task events never do.
+                    if let Some(model) = block["input"]["model"]
+                        .as_str()
+                        .filter(|model| !model.is_empty() && matches!(name, "Agent" | "Task"))
+                    {
+                        events.push(AgentEvent::ToolModel {
+                            id,
+                            model: model.to_string(),
+                        });
                     }
+                    events
                 })
                 .collect(),
             // Tool output comes back as a "user" message made of tool_result blocks.
@@ -466,15 +491,30 @@ mod tests {
     }
 
     #[test]
+    fn inherited_anthropic_credentials_are_removed_before_each_claude_turn() {
+        assert_eq!(
+            Claude.environment_remove(&req(false)),
+            vec!["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+        );
+    }
+
+    /// The SDK runner receives its settings as the last argument, base64-encoded JSON.
+    fn sdk_config(args: &[String]) -> Value {
+        let encoded = args.last().expect("the SDK config is the last argument");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .expect("the SDK config is base64");
+        serde_json::from_slice(&bytes).expect("the SDK config is JSON")
+    }
+
+    #[test]
     fn first_turn_creates_the_session_and_later_turns_resume_it() {
-        assert!(Claude
-            .args(&req(false))
-            .windows(2)
-            .any(|w| w == ["--session-id", "abc"]));
-        assert!(Claude
-            .args(&req(true))
-            .windows(2)
-            .any(|w| w == ["--resume", "abc"]));
+        let first = sdk_config(&Claude.args(&req(false)));
+        assert_eq!(first["sessionId"], "abc");
+        assert!(first.get("resume").is_none());
+        let later = sdk_config(&Claude.args(&req(true)));
+        assert_eq!(later["resume"], "abc");
+        assert!(later.get("sessionId").is_none());
     }
 
     #[test]
@@ -665,12 +705,14 @@ mod tests {
 
     #[test]
     fn the_agent_is_told_about_the_built_in_browser() {
-        let args = Claude.args(&req(false));
-        let at = args
-            .iter()
-            .position(|arg| arg == "--append-system-prompt")
-            .unwrap();
-        assert!(args[at + 1].contains("Preview panel"));
+        // The browser context is added only when the app's bridge address is set.
+        std::env::set_var("AGENTDECK_BRIDGE", "http://127.0.0.1:1/token");
+        let config = sdk_config(&Claude.args(&req(false)));
+        std::env::remove_var("AGENTDECK_BRIDGE");
+        assert!(config["systemPrompt"]
+            .as_str()
+            .expect("the system prompt is a string")
+            .contains("Preview panel"));
     }
 
     #[test]
@@ -678,12 +720,13 @@ mod tests {
         let mut request = req(true);
         request.permission_mode = Some("acceptEdits".into());
         request.allowed_tools = vec!["Bash(ls)".into(), "Write".into()];
-        let args = Claude.args(&request);
-        assert!(args
-            .windows(2)
-            .any(|w| w == ["--permission-mode", "acceptEdits"]));
-        assert!(args.windows(2).any(|w| w == ["--allowedTools", "Bash(ls)"]));
-        assert!(args.windows(2).any(|w| w == ["--allowedTools", "Write"]));
+        let config = sdk_config(&Claude.args(&request));
+        assert_eq!(config["permissionMode"], "acceptEdits");
+        let allowed = config["allowedTools"]
+            .as_array()
+            .expect("allowedTools is an array");
+        assert!(allowed.iter().any(|tool| tool == "Bash(ls)"));
+        assert!(allowed.iter().any(|tool| tool == "Write"));
     }
 
     #[test]
@@ -707,6 +750,22 @@ mod tests {
         let top = r#"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#;
         assert!(matches!(
             Claude.parse_line(top).as_slice(),
+            [AgentEvent::ToolCall { .. }]
+        ));
+    }
+
+    #[test]
+    fn sub_agent_call_reports_the_model_it_was_given() {
+        let call = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_agent","name":"Agent","input":{"description":"Scan docs","subagent_type":"Explore","model":"sonnet"}}]}}"#;
+        let events = Claude.parse_line(call);
+        assert!(matches!(
+            events.as_slice(),
+            [AgentEvent::ToolCall { id, background: true, .. }, AgentEvent::ToolModel { id: model_id, model }]
+                if id == "toolu_agent" && model_id == "toolu_agent" && model == "sonnet"
+        ));
+        let plain = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls","model":"x"}}]}}"#;
+        assert!(matches!(
+            Claude.parse_line(plain).as_slice(),
             [AgentEvent::ToolCall { .. }]
         ));
     }

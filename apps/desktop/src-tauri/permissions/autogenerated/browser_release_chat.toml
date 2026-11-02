@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-release-chat"
+description = "Enables the browser_release_chat command without any pre-configured scope."
+commands.allow = ["browser_release_chat"]
+
+[[permission]]
+identifier = "deny-browser-release-chat"
+description = "Denies the browser_release_chat command without any pre-configured scope."
+commands.deny = ["browser_release_chat"]

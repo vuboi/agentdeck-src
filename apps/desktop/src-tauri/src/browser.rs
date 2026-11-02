@@ -47,7 +47,7 @@ fn failures<R>(
         .map(|mut map| f(map.get_or_insert_with(Default::default)))
 }
 
-fn requested(tab: &str) -> Option<String> {
+pub(crate) fn requested(tab: &str) -> Option<String> {
     REQUESTED.lock().ok()?.as_ref()?.get(tab).cloned()
 }
 
@@ -345,6 +345,12 @@ pub(crate) fn parse(url: &str) -> Result<tauri::Url, String> {
     // A bare host or "localhost:4200" is what people type; give it a scheme.
     let url = without_colours(url);
     let url = url.trim();
+    // A template copied from a log or docs (`http://localhost:{port}/`) is not an address: no page opens for it.
+    if url.contains(['{', '}']) && (url.contains("://") || url.starts_with("localhost")) {
+        return Err(format!(
+            "`{url}` is a template, not an address: use the port the server printed"
+        ));
+    }
     let text = if url.contains("://") || url.starts_with("about:") || url.starts_with("data:") {
         url.to_owned()
     } else if url.starts_with("localhost") || url.starts_with("127.") || url.starts_with("[::1]") {
@@ -982,7 +988,13 @@ pub fn browser_reset(app: AppHandle) {
             let _ = view.close();
         }
     }
-    crate::bridge::set_active("");
+    crate::bridge::reset();
+}
+
+/// The turn of a chat ended: the tabs it drove are free for other chats to reuse (see `bridge::release_chat`).
+#[tauri::command]
+pub fn browser_release_chat(chat: String) {
+    crate::bridge::release_chat(&chat);
 }
 
 #[tauri::command]
@@ -1626,6 +1638,13 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[test]
+    fn a_template_is_not_an_address() {
+        assert!(parse("http://localhost:{port}/").is_err());
+        assert!(parse("localhost:{{port}}").is_err());
+        assert!(parse("http://localhost:4301/").is_ok());
+    }
 
     /// A plain HTTP server on a free local port that answers every request with `status`; `None` takes the request
     /// and never answers.

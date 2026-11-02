@@ -18,7 +18,7 @@ export type Event = {
 	hash: string,
 };
 
-export type EventKind = { type: "message_delta"; text: string } | { type: "thinking"; text: string } | { type: "tool_call"; call_id: string; name: string; input: any; status: ToolStatus; output: string | null } | { type: "permission_request"; request_id: string; summary: string } | { type: "diff"; path: string; patch: string } | { type: "terminal_output"; chunk: string } | { type: "usage"; tokens_in: number; tokens_out: number; cache_read: number; cache_write: number; cost_usd: number | null } | { type: "agent_handoff"; from: AgentKind; to: AgentKind; artifact_id: string | null } | { type: "artifact"; id: string; kind: string; schema: string; content: any } | { type: "model_switch"; from: string; to: string; reason: string; quota_snapshot: any } | { type: "status_change"; state: string };
+export type EventKind = { type: "message_delta"; text: string } | { type: "thinking"; text: string } | { type: "tool_call"; call_id: string; name: string; input: unknown; status: ToolStatus; output: string | null } | { type: "permission_request"; request_id: string; summary: string } | { type: "diff"; path: string; patch: string } | { type: "terminal_output"; chunk: string } | { type: "usage"; tokens_in: number; tokens_out: number; cache_read: number; cache_write: number; cost_usd: number | null } | { type: "agent_handoff"; from: AgentKind; to: AgentKind; artifact_id: string | null } | { type: "artifact"; id: string; kind: string; schema: string; content: unknown } | { type: "model_switch"; from: string; to: string; reason: string; quota_snapshot: unknown } | { type: "status_change"; state: string };
 
 export type ModelProfile = {
 	id: string,

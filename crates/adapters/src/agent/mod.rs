@@ -6,11 +6,10 @@
 pub mod antigravity;
 pub mod claude;
 pub mod codex;
-pub mod guard;
 mod codex_server;
+pub mod guard;
 pub mod interrupt;
 pub mod opencode;
-pub mod workbuddy;
 pub mod output;
 pub mod permission;
 pub mod resolve;
@@ -19,6 +18,7 @@ pub mod stall;
 pub mod tail;
 pub mod trace;
 pub mod warm;
+pub mod workbuddy;
 
 use serde::Serialize;
 
@@ -41,6 +41,9 @@ pub enum AgentEvent {
         /// Runs on its own while the agent carries on: a shell started in the background, or a sub-agent.
         background: bool,
     },
+    /// The model a sub-agent call was given in its input. Sent right after its [`AgentEvent::ToolCall`]: the task
+    /// start event does not carry the model.
+    ToolModel { id: String, model: String },
     /// What a tool printed. `is_error` marks a failed call.
     ToolResult {
         id: String,
@@ -209,6 +212,10 @@ pub trait Provider: Send + Sync {
     fn environment(&self, _req: &TurnRequest) -> Vec<(String, String)> {
         Vec::new()
     }
+    /// Environment variables inherited from the desktop process that must not reach this provider process.
+    fn environment_remove(&self, _req: &TurnRequest) -> Vec<&'static str> {
+        Vec::new()
+    }
     /// How long a turn may print nothing before it is ended as stuck (see `stall.rs`). Any output line resets it.
     fn stall_limit(&self) -> std::time::Duration {
         stall::DEFAULT_STALL_LIMIT
@@ -326,7 +333,9 @@ pub struct ChatResponseCapabilities {
 impl ChatResponseCapabilities {
     pub fn claude() -> Self {
         Self {
-            delivery: MidTurnDelivery::NativeSteer { association: ResponseAssociation::MergedIntoActive },
+            delivery: MidTurnDelivery::NativeSteer {
+                association: ResponseAssociation::MergedIntoActive,
+            },
             interruption: InterruptBehavior::GracefulReusable,
             turn_end: TurnEndBehavior::ResultEvent,
             background: BackgroundBehavior::TailAutoTurn,
@@ -335,7 +344,9 @@ impl ChatResponseCapabilities {
     }
     pub fn codex() -> Self {
         Self {
-            delivery: MidTurnDelivery::NativeSteer { association: ResponseAssociation::MergedIntoActive },
+            delivery: MidTurnDelivery::NativeSteer {
+                association: ResponseAssociation::MergedIntoActive,
+            },
             interruption: InterruptBehavior::GracefulReusable,
             turn_end: TurnEndBehavior::ThreadTurnCompleted,
             background: BackgroundBehavior::PollOnly,
@@ -344,7 +355,9 @@ impl ChatResponseCapabilities {
     }
     pub fn opencode() -> Self {
         Self {
-            delivery: MidTurnDelivery::Parallel { association: ResponseAssociation::Unknown },
+            delivery: MidTurnDelivery::Parallel {
+                association: ResponseAssociation::Unknown,
+            },
             interruption: InterruptBehavior::KillProcess,
             turn_end: TurnEndBehavior::ProcessExit,
             background: BackgroundBehavior::None,
@@ -353,7 +366,9 @@ impl ChatResponseCapabilities {
     }
     pub fn antigravity() -> Self {
         Self {
-            delivery: MidTurnDelivery::NativeQueue { association: ResponseAssociation::PerMessage },
+            delivery: MidTurnDelivery::NativeQueue {
+                association: ResponseAssociation::PerMessage,
+            },
             interruption: InterruptBehavior::KillProcess,
             turn_end: TurnEndBehavior::ResultEvent,
             background: BackgroundBehavior::PollOnly,
@@ -362,7 +377,9 @@ impl ChatResponseCapabilities {
     }
     pub fn copilot() -> Self {
         Self {
-            delivery: MidTurnDelivery::NativeSteer { association: ResponseAssociation::MergedIntoActive },
+            delivery: MidTurnDelivery::NativeSteer {
+                association: ResponseAssociation::MergedIntoActive,
+            },
             interruption: InterruptBehavior::AbortAndDrain,
             turn_end: TurnEndBehavior::SessionIdle,
             background: BackgroundBehavior::NotificationAutoTurn,
@@ -383,7 +400,9 @@ impl ChatResponseCapabilities {
     pub fn can_inject_as_distinct_reply(self) -> bool {
         matches!(
             self.delivery,
-            MidTurnDelivery::NativeSteer { association: ResponseAssociation::PerMessage }
+            MidTurnDelivery::NativeSteer {
+                association: ResponseAssociation::PerMessage
+            }
         )
     }
 }
@@ -391,8 +410,8 @@ impl ChatResponseCapabilities {
 #[cfg(test)]
 mod response_capability_tests {
     use super::{
-        BackgroundBehavior, ChatResponseCapabilities, ChildOutputBehavior, InterruptBehavior, MidTurnDelivery,
-        ResponseAssociation, TurnEndBehavior,
+        BackgroundBehavior, ChatResponseCapabilities, ChildOutputBehavior, InterruptBehavior,
+        MidTurnDelivery, ResponseAssociation, TurnEndBehavior,
     };
 
     #[test]
@@ -404,12 +423,26 @@ mod response_capability_tests {
 
     #[test]
     fn native_features_are_not_mistaken_for_separate_message_replies() {
-        for profile in [ChatResponseCapabilities::claude(), ChatResponseCapabilities::codex(), ChatResponseCapabilities::copilot()] {
+        for profile in [
+            ChatResponseCapabilities::claude(),
+            ChatResponseCapabilities::codex(),
+            ChatResponseCapabilities::copilot(),
+        ] {
             assert!(!profile.can_inject_as_distinct_reply());
-            assert!(matches!(profile.delivery, MidTurnDelivery::NativeSteer { association: ResponseAssociation::MergedIntoActive }));
+            assert!(matches!(
+                profile.delivery,
+                MidTurnDelivery::NativeSteer {
+                    association: ResponseAssociation::MergedIntoActive
+                }
+            ));
         }
         let agy = ChatResponseCapabilities::antigravity();
-        assert!(matches!(agy.delivery, MidTurnDelivery::NativeQueue { association: ResponseAssociation::PerMessage }));
+        assert!(matches!(
+            agy.delivery,
+            MidTurnDelivery::NativeQueue {
+                association: ResponseAssociation::PerMessage
+            }
+        ));
         assert!(!agy.can_inject_as_distinct_reply());
     }
 
@@ -421,7 +454,10 @@ mod response_capability_tests {
         assert_eq!(claude.child_output, ChildOutputBehavior::ScopedEvents);
         assert_eq!(claude.interruption, InterruptBehavior::GracefulReusable);
 
-        assert_eq!(ChatResponseCapabilities::codex().turn_end, TurnEndBehavior::ThreadTurnCompleted);
+        assert_eq!(
+            ChatResponseCapabilities::codex().turn_end,
+            TurnEndBehavior::ThreadTurnCompleted
+        );
 
         let copilot = ChatResponseCapabilities::copilot();
         assert_eq!(copilot.turn_end, TurnEndBehavior::SessionIdle);
@@ -457,12 +493,25 @@ pub fn plan_json(input: &serde_json::Value) -> Option<String> {
 
 /// Whether AgentDeck's delegate tool blocks until its worker finishes.
 pub fn delegate_wait(name: &str, input: &serde_json::Value) -> bool {
-    if !matches!(name, "delegate_task" | "mcp__agentdeck__delegate_task" | "agentdeck.delegate_task" | "agentdeck:delegate_task" | "agentdeck/delegate_task" | "agentdeck_delegate_task") { return false; }
+    if !matches!(
+        name,
+        "delegate_task"
+            | "mcp__agentdeck__delegate_task"
+            | "agentdeck.delegate_task"
+            | "agentdeck:delegate_task"
+            | "agentdeck/delegate_task"
+            | "agentdeck_delegate_task"
+    ) {
+        return false;
+    }
     match &input["wait"] {
         serde_json::Value::Null => true,
         serde_json::Value::Bool(flag) => *flag,
         serde_json::Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
-        serde_json::Value::String(flag) => matches!(flag.trim().to_ascii_lowercase().as_str(), "true" | "yes" | "1"),
+        serde_json::Value::String(flag) => matches!(
+            flag.trim().to_ascii_lowercase().as_str(),
+            "true" | "yes" | "1"
+        ),
         _ => false,
     }
 }
@@ -538,11 +587,26 @@ pub fn begin_file_snapshot(
     if !is_write_tool(name) {
         return None;
     }
-    let raw_path = ["file_path", "notebook_path", "filePath", "notebookPath", "Path", "AbsolutePath", "absolute_path", "TargetFile", "target_file", "path"]
-        .iter()
-        .find_map(|key| input[*key].as_str())?;
+    let raw_path = [
+        "file_path",
+        "notebook_path",
+        "filePath",
+        "notebookPath",
+        "Path",
+        "AbsolutePath",
+        "absolute_path",
+        "TargetFile",
+        "target_file",
+        "path",
+    ]
+    .iter()
+    .find_map(|key| input[*key].as_str())?;
     let supplied = std::path::Path::new(raw_path);
-    let candidate = if supplied.is_absolute() { supplied.to_path_buf() } else { root.join(supplied) };
+    let candidate = if supplied.is_absolute() {
+        supplied.to_path_buf()
+    } else {
+        root.join(supplied)
+    };
     let (full_path, before) = match candidate.canonicalize() {
         Ok(path) if path.starts_with(&root) => {
             let text = read_change_text(&path)?;
@@ -552,19 +616,31 @@ pub fn begin_file_snapshot(
         Err(_) => {
             let parent = candidate.parent()?.canonicalize().ok()?;
             let full_path = parent.join(candidate.file_name()?);
-            if !full_path.starts_with(&root) { return None; }
+            if !full_path.starts_with(&root) {
+                return None;
+            }
             (full_path, None)
         }
     };
-    Some(FileSnapshot { path: raw_path.to_owned(), full_path, before })
+    Some(FileSnapshot {
+        path: raw_path.to_owned(),
+        full_path,
+        before,
+    })
 }
 
 /// Finish a before-image after a successful write and return only that write's changed lines.
 pub fn finish_file_snapshot(snapshot: FileSnapshot) -> Option<FileChange> {
-    let after = if snapshot.full_path.exists() { read_change_text(&snapshot.full_path)? } else { String::new() };
+    let after = if snapshot.full_path.exists() {
+        read_change_text(&snapshot.full_path)?
+    } else {
+        String::new()
+    };
     let before = snapshot.before.as_deref().unwrap_or_default();
     let diff = line_diff(before, &after);
-    if diff.added == 0 && diff.removed == 0 { return None; }
+    if diff.added == 0 && diff.removed == 0 {
+        return None;
+    }
     Some(FileChange {
         path: snapshot.path,
         added: diff.added,
@@ -577,12 +653,30 @@ pub fn finish_file_snapshot(snapshot: FileSnapshot) -> Option<FileChange> {
 
 fn read_change_text(path: &std::path::Path) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
-    if bytes.len() > 2_000_000 || bytes.contains(&0) { return None; }
+    if bytes.len() > 2_000_000 || bytes.contains(&0) {
+        return None;
+    }
     String::from_utf8(bytes).ok()
 }
 
 fn is_write_tool(name: &str) -> bool {
-    matches!(name.to_ascii_lowercase().as_str(), "write" | "edit" | "multiedit" | "notebookedit" | "apply_patch" | "patch" | "write_file" | "writefile" | "create_file" | "createfile" | "edit_file" | "editfile" | "replace_file_content" | "replacefilecontent")
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "write"
+            | "edit"
+            | "multiedit"
+            | "notebookedit"
+            | "apply_patch"
+            | "patch"
+            | "write_file"
+            | "writefile"
+            | "create_file"
+            | "createfile"
+            | "edit_file"
+            | "editfile"
+            | "replace_file_content"
+            | "replacefilecontent"
+    )
 }
 
 const DIFF_TEXT_MAX: usize = 3000;
@@ -682,7 +776,8 @@ mod line_diff_tests {
 
     #[test]
     fn antigravity_edit_file_target_and_replacement_make_a_change() {
-        let input = serde_json::json!({ "Path": "E:/a.ts", "Target": "a\nb", "Replacement": "a\nB\nc" });
+        let input =
+            serde_json::json!({ "Path": "E:/a.ts", "Target": "a\nb", "Replacement": "a\nB\nc" });
         let change = super::file_change("edit_file", &input).expect("a change");
         assert_eq!((change.added, change.removed), (2, 1));
     }
@@ -708,11 +803,24 @@ fn string_arg<'a>(source: &'a serde_json::Value, keys: &[&str]) -> Option<&'a st
 }
 
 pub fn file_change(name: &str, input: &serde_json::Value) -> Option<FileChange> {
-    let text = |source: &serde_json::Value, keys: &[&str]| string_arg(source, keys).unwrap_or_default().to_owned();
-    let path = ["file_path", "notebook_path", "filePath", "notebookPath", "Path", "AbsolutePath", "absolute_path", "TargetFile", "target_file", "path"]
-        .iter()
-        .find_map(|key| input[*key].as_str())?
-        .to_owned();
+    let text = |source: &serde_json::Value, keys: &[&str]| {
+        string_arg(source, keys).unwrap_or_default().to_owned()
+    };
+    let path = [
+        "file_path",
+        "notebook_path",
+        "filePath",
+        "notebookPath",
+        "Path",
+        "AbsolutePath",
+        "absolute_path",
+        "TargetFile",
+        "target_file",
+        "path",
+    ]
+    .iter()
+    .find_map(|key| input[*key].as_str())?
+    .to_owned();
     match name.to_ascii_lowercase().as_str() {
         "write" | "write_file" | "writefile" | "create_file" | "createfile" => {
             let content = string_arg(input, &["content", "Content", "text"])?.to_owned();
@@ -728,8 +836,26 @@ pub fn file_change(name: &str, input: &serde_json::Value) -> Option<FileChange> 
         }
         "edit" | "edit_file" | "editfile" | "replace_file_content" | "replacefilecontent" => {
             // Antigravity's edit_file names them `Target` / `Replacement`.
-            const OLD: &[&str] = &["old_string", "oldString", "oldText", "old_text", "oldContent", "Target", "target", "TargetContent"];
-            const NEW: &[&str] = &["new_string", "newString", "newText", "new_text", "newContent", "replacement", "Replacement", "ReplacementContent"];
+            const OLD: &[&str] = &[
+                "old_string",
+                "oldString",
+                "oldText",
+                "old_text",
+                "oldContent",
+                "Target",
+                "target",
+                "TargetContent",
+            ];
+            const NEW: &[&str] = &[
+                "new_string",
+                "newString",
+                "newText",
+                "new_text",
+                "newContent",
+                "replacement",
+                "Replacement",
+                "ReplacementContent",
+            ];
             if string_arg(input, OLD).is_none() && string_arg(input, NEW).is_none() {
                 return None;
             }
@@ -761,8 +887,16 @@ pub fn file_change(name: &str, input: &serde_json::Value) -> Option<FileChange> 
                 added: diffs.iter().map(|diff| diff.added).sum(),
                 removed: diffs.iter().map(|diff| diff.removed).sum(),
                 cumulative: false,
-                before: cut(&diffs.iter().map(|diff| diff.before.as_str()).collect::<Vec<_>>().join("\n…\n")),
-                after: cut(&diffs.iter().map(|diff| diff.after.as_str()).collect::<Vec<_>>().join("\n…\n")),
+                before: cut(&diffs
+                    .iter()
+                    .map(|diff| diff.before.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n…\n")),
+                after: cut(&diffs
+                    .iter()
+                    .map(|diff| diff.after.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n…\n")),
             })
         }
         _ => None,

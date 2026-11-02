@@ -333,6 +333,7 @@ fn describe(event: &AgentEvent) -> (&'static str, String) {
             "tool_result",
             format!("id={id} error={is_error} bytes={}", output.len()),
         ),
+        AgentEvent::ToolModel { id, model } => ("tool_model", format!("id={id} model={model}")),
         AgentEvent::ToolOutputDelta { .. } => ("tool_output", String::new()),
         AgentEvent::PermissionDenied { requests } => (
             "permission_denied",

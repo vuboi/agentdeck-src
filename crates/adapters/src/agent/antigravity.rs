@@ -110,7 +110,9 @@ pub fn add_allow_rules(path: &std::path::Path, rules: &[String]) -> Result<(), S
     // earlier one's rules. A panic elsewhere does not matter here, the file is the state.
     static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static SCRATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let _writing = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _writing = WRITING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::from("{}"),
@@ -231,14 +233,27 @@ impl Provider for Antigravity {
     /// Antigravity has no system prompt flag here, so the app and ask instructions open each new conversation.
     fn opening_context(&self, req: &TurnRequest) -> Option<String> {
         let continues = req.resume && req.session_id.is_some();
-        (!continues).then(|| format!("{}{}", super::codex::APP_CONTEXT, super::claude::ASK_CONTEXT))
+        (!continues).then(|| {
+            format!(
+                "{}{}",
+                super::codex::APP_CONTEXT,
+                super::claude::ASK_CONTEXT
+            )
+        })
     }
 
     /// The same settings with each message read as a JSON line (`--input-format stream-json`, agy 1.1.15+). The prompt
     /// flag stays, empty and attached (`-p=`), so print mode is on without taking the next flag as its prompt.
     fn warm_args(&self, req: &TurnRequest) -> Option<Vec<String>> {
         let mut args = self.args(req);
-        args.splice(0..2, ["--input-format".to_string(), "stream-json".to_string(), "-p=".to_string()]);
+        args.splice(
+            0..2,
+            [
+                "--input-format".to_string(),
+                "stream-json".to_string(),
+                "-p=".to_string(),
+            ],
+        );
         Some(args)
     }
 
@@ -438,7 +453,9 @@ const READ_MAX_BYTES: usize = 2_000_000;
 fn is_stat_line(output: &str) -> bool {
     let count_of = |part: Option<&str>, unit: &str| -> bool {
         part.and_then(|part| part.trim().strip_suffix(unit))
-            .map(|number| !number.trim().is_empty() && number.trim().chars().all(|c| c.is_ascii_digit()))
+            .map(|number| {
+                !number.trim().is_empty() && number.trim().chars().all(|c| c.is_ascii_digit())
+            })
             .unwrap_or(false)
     };
     let mut parts = output.trim().split(',');
@@ -477,18 +494,28 @@ fn read_output(root: Option<&std::path::Path>, parameters: &Value, output: &str)
         .iter()
         .find_map(|key| parameter_path(&parameters[*key]))?;
     let path = std::path::Path::new(&raw_path);
-    let path = if path.is_absolute() { path.to_path_buf() } else { root.map(|root| root.join(path))? };
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.map(|root| root.join(path))?
+    };
     let bytes = std::fs::read(&path).ok()?;
     if bytes.len() > READ_MAX_BYTES || bytes.contains(&0) {
         // Too big or not a text a card can show: the stat line stays.
         return None;
     }
     let text = String::from_utf8(bytes).ok()?;
-    let first = parameter_number(&parameters["StartLine"]).unwrap_or(1).max(1);
+    let first = parameter_number(&parameters["StartLine"])
+        .unwrap_or(1)
+        .max(1);
     // The `EndLine` a call asked for only ever shortens the read; `READ_MAX_LINES` is the widest it can be.
     let last = parameter_number(&parameters["EndLine"]).unwrap_or(first + READ_MAX_LINES - 1);
     let span = last.saturating_sub(first).saturating_add(1);
-    let window: Vec<&str> = text.lines().skip(first as usize - 1).take(span.min(READ_MAX_LINES) as usize).collect();
+    let window: Vec<&str> = text
+        .lines()
+        .skip(first as usize - 1)
+        .take(span.min(READ_MAX_LINES) as usize)
+        .collect();
     let mut shown = window.join("\n");
     // A cut only because the card cannot carry every line the read asked for says so; a window smaller than the
     // file is what the call itself asked for.
@@ -497,7 +524,9 @@ fn read_output(root: Option<&std::path::Path>, parameters: &Value, output: &str)
         shown = String::from_utf8_lossy(&shown.as_bytes()[..READ_MAX_BYTES]).into_owned();
     }
     if cut {
-        shown.push_str("\n[The read was longer than this card shows; the file itself has all of it.]");
+        shown.push_str(
+            "\n[The read was longer than this card shows; the file itself has all of it.]",
+        );
     }
     Some(shown)
 }
@@ -561,18 +590,23 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                 }
             }
             if turn.started.insert(index) {
-                let snapshot = super::begin_file_snapshot(
-                    turn.root.as_deref(),
-                    raw_name,
-                    parameters,
-                );
+                let snapshot =
+                    super::begin_file_snapshot(turn.root.as_deref(), raw_name, parameters);
                 let change = if let Some(snapshot) = snapshot {
                     turn.file_snapshots.insert(index, snapshot);
                     None
                 } else {
                     super::file_change(&name, parameters)
                 };
-                let background = is_subagent_tool(raw_name) || super::delegate_wait(&name, if raw_name == "call_mcp_tool" { &parameters["Arguments"] } else { parameters });
+                let background = is_subagent_tool(raw_name)
+                    || super::delegate_wait(
+                        &name,
+                        if raw_name == "call_mcp_tool" {
+                            &parameters["Arguments"]
+                        } else {
+                            parameters
+                        },
+                    );
                 events.push(AgentEvent::ToolCall {
                     id: index.to_string(),
                     name,
@@ -587,7 +621,10 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                         id: index.to_string(),
                         tool_use_id: Some(index.to_string()),
                         status: TaskStatus::Started,
-                        label: parameters["Role"].as_str().or_else(|| parameters["TypeName"].as_str()).map(str::to_owned),
+                        label: parameters["Role"]
+                            .as_str()
+                            .or_else(|| parameters["TypeName"].as_str())
+                            .map(str::to_owned),
                         summary: None,
                         tools: None,
                     });
@@ -597,7 +634,9 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                 "DONE" => {
                     // The step that ends a sub-agent lists who ran and what it was asked.
                     let listed = match &update["subagent_info"] {
-                        Value::String(text) => serde_json::from_str::<Value>(text).unwrap_or(Value::Null),
+                        Value::String(text) => {
+                            serde_json::from_str::<Value>(text).unwrap_or(Value::Null)
+                        }
                         other => other.clone(),
                     };
                     events.extend(subagents_ended(&listed, &index.to_string(), agy_transcript));
@@ -605,7 +644,9 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                     // Read card can show what was read.
                     let mut output = info["output"].as_str().unwrap_or_default().to_string();
                     if matches!(raw_name, "read_file" | "view_file") {
-                        if let Some(content) = read_output(turn.root.as_deref(), parameters, &output) {
+                        if let Some(content) =
+                            read_output(turn.root.as_deref(), parameters, &output)
+                        {
                             output = content;
                         }
                     }
@@ -657,7 +698,10 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
 
 /// The tools that start a sub-agent.
 fn is_subagent_tool(name: &str) -> bool {
-    matches!(name, "invoke_subagent" | "define_subagent" | "browser_subagent")
+    matches!(
+        name,
+        "invoke_subagent" | "define_subagent" | "browser_subagent"
+    )
 }
 
 /// What a sub-agent's own transcript says of its work: the tool calls it made, and the tokens of each of its model calls
@@ -672,7 +716,10 @@ struct Transcript {
 /// the tool calls it made.
 fn read_transcript(text: &str) -> Transcript {
     let mut transcript = Transcript::default();
-    for step in text.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+    for step in text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+    {
         if step["type"].as_str() != Some("PLANNER_RESPONSE") {
             continue;
         }
@@ -708,7 +755,11 @@ fn agy_transcript(uri: &str) -> Option<String> {
 /// The end of the sub-agents a step lists. Each task ends with its tool count (when its transcript can be read), and the
 /// model calls of that transcript count toward the turn's usage, as Claude's sub-agent calls do. The parent's own usage
 /// does not include them: its total is the sum of its own steps.
-fn subagents_ended(listed: &Value, call: &str, read: impl Fn(&str) -> Option<String>) -> Vec<AgentEvent> {
+fn subagents_ended(
+    listed: &Value,
+    call: &str,
+    read: impl Fn(&str) -> Option<String>,
+) -> Vec<AgentEvent> {
     let mut events = Vec::new();
     for agent in listed["subagents"].as_array().into_iter().flatten() {
         let transcript = agent["log_uri"]
@@ -716,11 +767,18 @@ fn subagents_ended(listed: &Value, call: &str, read: impl Fn(&str) -> Option<Str
             .and_then(&read)
             .map(|text| read_transcript(&text));
         events.push(AgentEvent::Task {
-            id: agent["conversation_id"].as_str().map_or_else(|| call.to_string(), str::to_owned),
+            id: agent["conversation_id"]
+                .as_str()
+                .map_or_else(|| call.to_string(), str::to_owned),
             tool_use_id: Some(call.to_string()),
             status: TaskStatus::Done,
-            label: agent["role"].as_str().or_else(|| agent["type_name"].as_str()).map(str::to_owned),
-            summary: agent["initial_prompt"].as_str().map(|prompt| prompt.chars().take(200).collect()),
+            label: agent["role"]
+                .as_str()
+                .or_else(|| agent["type_name"].as_str())
+                .map(str::to_owned),
+            summary: agent["initial_prompt"]
+                .as_str()
+                .map(|prompt| prompt.chars().take(200).collect()),
             tools: transcript.as_ref().map(|found| found.tools),
         });
         for (input, output, cache_read) in transcript.into_iter().flat_map(|found| found.calls) {
@@ -964,8 +1022,12 @@ mod tests {
     #[test]
     fn a_plain_answer_streams_text_then_finishes() {
         let events = run(include_str!("../../tests/fixtures/agy/plain.jsonl"));
-        assert!(events.iter().any(|event| matches!(event, AgentEvent::Session { .. })));
-        assert!(events.iter().any(|event| matches!(event, AgentEvent::Delta { .. })));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Session { .. })));
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Delta { .. })));
         let text: String = events
             .iter()
             .filter_map(|event| {
@@ -1011,7 +1073,6 @@ mod tests {
         assert_eq!(results, 3);
     }
 
-
     #[test]
     fn a_sub_agent_is_a_background_call_with_a_task_that_names_it() {
         let events = run(include_str!("../../tests/fixtures/agy/subagent.jsonl"));
@@ -1020,8 +1081,14 @@ mod tests {
             _ => None,
         });
         let call = call.expect("the invoke_subagent call is marked as background work");
-        let tasks: Vec<&AgentEvent> = events.iter().filter(|event| matches!(event, AgentEvent::Task { .. })).collect();
-        assert!(matches!(tasks.first(), Some(AgentEvent::Task { status: TaskStatus::Started, tool_use_id: Some(id), label: Some(label), .. }) if *id == call && label == "Math Calculator"), "{tasks:?}");
+        let tasks: Vec<&AgentEvent> = events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::Task { .. }))
+            .collect();
+        assert!(
+            matches!(tasks.first(), Some(AgentEvent::Task { status: TaskStatus::Started, tool_use_id: Some(id), label: Some(label), .. }) if *id == call && label == "Math Calculator"),
+            "{tasks:?}"
+        );
         assert!(tasks.iter().any(|event| matches!(event, AgentEvent::Task { status: TaskStatus::Done, summary: Some(summary), .. } if summary.contains("17*3"))), "{tasks:?}");
         assert!(matches!(events.last(), Some(AgentEvent::Done { .. })));
     }
@@ -1132,7 +1199,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("probe.txt"), "one\ntwo\nthree\nfour\n").unwrap();
-        let path = dir.join("probe.txt").to_string_lossy().replace('\\', "\\\\");
+        let path = dir
+            .join("probe.txt")
+            .to_string_lossy()
+            .replace('\\', "\\\\");
         let call = |output: &str| {
             let provider = Antigravity::default();
             let mut request = req(true);
@@ -1264,11 +1334,16 @@ mod tests {
             _ => None,
         });
         let request = events.iter().find_map(|event| match event {
-            AgentEvent::PermissionDenied { requests } => requests.first().map(|request| request.id.clone()),
+            AgentEvent::PermissionDenied { requests } => {
+                requests.first().map(|request| request.id.clone())
+            }
             _ => None,
         });
         assert_eq!(call.as_deref(), Some("4"));
-        assert_eq!(request, call, "the request is linked to its tool call, as Claude's denials are");
+        assert_eq!(
+            request, call,
+            "the request is linked to its tool call, as Claude's denials are"
+        );
     }
 
     #[test]
@@ -1280,7 +1355,10 @@ mod tests {
         assert!(Antigravity::default().environment(&request).is_empty());
         request.allowed_tools = vec!["agy:command(echo hi)".into()];
         let one = Antigravity::default().environment(&request);
-        assert_eq!(one, vec![(RULES_ENV.to_string(), r#"["command(echo hi)"]"#.to_string())]);
+        assert_eq!(
+            one,
+            vec![(RULES_ENV.to_string(), r#"["command(echo hi)"]"#.to_string())]
+        );
         // A new approval changes the value, so it changes the settings key of the kept process.
         request.allowed_tools.push("agy:command(ls)".into());
         assert_ne!(Antigravity::default().environment(&request), one);
@@ -1296,7 +1374,10 @@ mod tests {
 not json"#;
         assert_eq!(
             read_transcript(text),
-            Transcript { tools: 1, calls: vec![(10925, 54, 0), (11089, 2, 512)] }
+            Transcript {
+                tools: 1,
+                calls: vec![(10925, 54, 0), (11089, 2, 512)]
+            }
         );
         assert_eq!(read_transcript("nothing here"), Transcript::default());
     }
@@ -1323,23 +1404,36 @@ not json"#;
                     summary: Some("17*3".into()),
                     tools: Some(2),
                 },
-                AgentEvent::Usage { input_tokens: 5, output_tokens: 1, cache_read_tokens: 0, cache_write_tokens: 0, new_call: true },
+                AgentEvent::Usage {
+                    input_tokens: 5,
+                    output_tokens: 1,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    new_call: true
+                },
             ]
         );
         // Without a readable transcript the task still ends, with no count and no usage.
         let unread = subagents_ended(&listed, "2", |_| None);
-        assert!(matches!(unread.as_slice(), [AgentEvent::Task { tools: None, .. }]));
+        assert!(matches!(
+            unread.as_slice(),
+            [AgentEvent::Task { tools: None, .. }]
+        ));
     }
 
     #[test]
     fn only_a_file_inside_agys_folder_is_read_for_a_sub_agent() {
-        let home = std::env::temp_dir().join(format!("agentdeck-agy-transcript-{}", std::process::id()));
+        let home =
+            std::env::temp_dir().join(format!("agentdeck-agy-transcript-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let inside = home.join(".gemini").join("brain").join("t.jsonl");
         std::fs::create_dir_all(inside.parent().expect("has a parent")).expect("makes folders");
         std::fs::write(&inside, "{}").expect("writes");
         std::fs::write(home.join("other.jsonl"), "{}").expect("writes");
-        let as_text = |path: &std::path::Path| path.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+        let as_text = |path: &std::path::Path| {
+            path.to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/")
+        };
         assert!(inside_gemini(&as_text(&inside), &home).is_some());
         assert!(inside_gemini(&as_text(&home.join("other.jsonl")), &home).is_none());
         assert_eq!(local_path("C%3A/a%20b.jsonl"), "C:/a b.jsonl");

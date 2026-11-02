@@ -227,19 +227,25 @@ impl ImageBackend for WorkBuddyImages {
             .iter()
             .map(|path| {
                 let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
-                let mime = match path.extension().and_then(|extension| extension.to_str()).map(str::to_lowercase).as_deref() {
+                let mime = match path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(str::to_lowercase)
+                    .as_deref()
+                {
                     Some("jpg" | "jpeg") => "image/jpeg",
                     Some("webp") => "image/webp",
                     _ => "image/png",
                 };
-                Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+                Ok(format!(
+                    "data:{mime};base64,{}",
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                ))
             })
             .collect::<Result<Vec<_>, String>>()?;
         let prompt = format!("{}\n\n{}", job.prompt, variation_hint(job.variant));
         let answer = tauri::async_runtime::block_on(crate::connectors::workbuddy_image(
-            job.model,
-            &prompt,
-            references,
+            job.model, &prompt, references,
         ))?;
         let image = provider_image(&answer)?;
         let bytes = match image {
@@ -367,7 +373,11 @@ fn provider_image(answer: &serde_json::Value) -> Result<ProviderImage, String> {
     let item = answer["data"]
         .as_array()
         .and_then(|items| items.first())
-        .or_else(|| answer["data"]["data"].as_array().and_then(|items| items.first()))
+        .or_else(|| {
+            answer["data"]["data"]
+                .as_array()
+                .and_then(|items| items.first())
+        })
         .or_else(|| answer["images"].as_array().and_then(|items| items.first()))
         .or_else(|| answer.as_array().and_then(|items| items.first()))
         .unwrap_or(answer);

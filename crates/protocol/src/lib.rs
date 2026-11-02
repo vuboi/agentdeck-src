@@ -98,7 +98,7 @@ pub enum EventKind {
     ToolCall {
         call_id: String,
         name: String,
-        #[specta(type = specta_typescript::Any)]
+        #[specta(type = specta_typescript::Unknown)]
         input: serde_json::Value,
         status: ToolStatus,
         output: Option<String>,
@@ -134,14 +134,14 @@ pub enum EventKind {
         id: String,
         kind: String,
         schema: String,
-        #[specta(type = specta_typescript::Any)]
+        #[specta(type = specta_typescript::Unknown)]
         content: serde_json::Value,
     },
     ModelSwitch {
         from: String,
         to: String,
         reason: String,
-        #[specta(type = specta_typescript::Any)]
+        #[specta(type = specta_typescript::Unknown)]
         quota_snapshot: serde_json::Value,
     },
     StatusChange {

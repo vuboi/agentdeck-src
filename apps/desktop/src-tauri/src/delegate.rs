@@ -53,7 +53,7 @@ pub fn tool_defs() -> Vec<Value> {
                     "agent": { "type": "string", "description": "claude, codex, antigravity, or the id of a local model provider as listed by list_agents" },
                     "continue": { "type": "string", "description": "a task_id (e.g. t-ab12cd) or worker chat id of a worker that already answered and is idle: its chat is reused and `task` is sent to it as a follow-up. agent and model may then be left out" },
                     "model": { "type": "string", "description": "a model of that agent as listed by list_agents (a part of its name is enough); left out: the agent's usual one" },
-                    "role": { "type": "string", "description": "the kind of work, as set in Settings > Tasks: read, research, plan, review, write, text or logic. AgentDeck then sends the work to the first agent set for that role, so agent and model can be left out" },
+                    "role": { "type": "string", "description": "the kind of work, as set in Settings > Tasks: read, research, plan, review, security, refactor, coding, write, text or logic. AgentDeck then sends the work to the first agent set for that role, so agent and model can be left out" },
                     "task": { "type": "string", "description": "the self-contained task: goal, paths, constraints, what to report back" },
                     "wait": { "type": "boolean", "description": "true (default): wait for the report because the next step depends on it. false: run in the background and return a task_id now" },
                     "depends_on": { "type": ["string", "array"], "items": { "type": "string" }, "description": "task_id or task_ids that must finish successfully before this worker starts; use this for an explicit sequence" },
@@ -95,6 +95,7 @@ pub fn tool_defs() -> Vec<Value> {
 pub struct DelegateArgs {
     pub agent: String,
     pub model: Option<String>,
+    pub role: Option<String>,
     pub task: String,
     pub wait: bool,
     pub timeout_s: u64,
@@ -175,6 +176,7 @@ pub fn parse_delegate(args: &Value) -> Result<DelegateArgs, String> {
     Ok(DelegateArgs {
         agent,
         model: text_of(&args["model"]),
+        role,
         task,
         wait,
         timeout_s,
@@ -329,7 +331,7 @@ fn reply_value(text: String, is_error: bool) -> Value {
 pub async fn call(app: &AppHandle, tool: &str, args: &Value, chat: &str) -> Value {
     let checked = match tool {
         DELEGATE_TOOL => parse_delegate(args).map(|parsed| {
-            json!({ "agent": parsed.agent, "model": parsed.model, "task": parsed.task, "wait": parsed.wait, "timeout_s": parsed.timeout_s, "continue": parsed.continue_id, "depends_on": parsed.depends_on })
+            json!({ "agent": parsed.agent, "model": parsed.model, "role": parsed.role, "task": parsed.task, "wait": parsed.wait, "timeout_s": parsed.timeout_s, "continue": parsed.continue_id, "depends_on": parsed.depends_on })
         }),
         "task_status" | "task_stop" => parse_task_id(args).map(|id| json!({ "task_id": id })),
         "task_ask" => parse_question(args).map(|question| json!({ "question": question })),
@@ -475,6 +477,7 @@ mod tests {
             DelegateArgs {
                 agent: "claude".into(),
                 model: None,
+                role: None,
                 task: "read the logs".into(),
                 wait: true,
                 timeout_s: 1800,
@@ -501,6 +504,14 @@ mod tests {
         assert!(parsed.agent.is_empty());
         assert!(parse_delegate(&json!({ "continue": "   ", "task": "x" })).is_err());
         assert!(parse_delegate(&json!({ "continue": "t-ab12cd" })).is_err());
+    }
+
+    #[test]
+    fn a_task_role_can_route_without_an_explicit_agent() {
+        let parsed = parse_delegate(&json!({ "role": "read", "task": "inspect the image" }))
+            .expect("a role supplies the configured route");
+        assert!(parsed.agent.is_empty());
+        assert_eq!(parsed.role.as_deref(), Some("read"));
     }
 
     #[test]

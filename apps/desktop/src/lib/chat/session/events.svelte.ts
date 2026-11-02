@@ -1,3 +1,4 @@
+import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import {
     connectors,
     agentHasRoom,
@@ -17,7 +18,11 @@ import {
 } from '../recovery/turn-failure';
 import { inTauri, isPreviewCopy, clock } from '../../app/platform/history';
 import { type Message, type Block } from '../mock';
-import { effortLabel, modelLabel } from '../../agents/models.svelte';
+import {
+    customModelId,
+    modelLabel,
+    parseCustomModel,
+} from '../../agents/models.svelte';
 import { getPref, setPref } from '../../app/platform/prefs';
 import { parseResetAt } from '../recovery/limit-reset';
 import { classifyLimitGate, type LimitGateKind } from '../recovery/limit-gate';
@@ -27,6 +32,7 @@ import { hangTraceOn, logFlow, markStep } from '../../tasks/flow-log';
 import { activity, trackActivity } from '../runs/activity.svelte';
 import { recordProjectActivity } from '../runs/project-activity.svelte';
 import { guide } from '../../app/ui/guide.svelte';
+import { releaseBrowserChat } from '../../browser/browser.svelte';
 import {
     addUsage,
     applyAgentEvent,
@@ -53,7 +59,6 @@ import {
 import {
     agentLabel,
     chatTurnOptions,
-    continuationGroups,
     failSessionWork,
     hiddenPrompt,
     isRunning,
@@ -102,11 +107,10 @@ import {
     rememberMixed,
     transcripts,
 } from './history.svelte';
-import { parseCustomModel } from '../../agents/models.svelte';
 import type { CredentialAttempt } from '../../agents/credential-switch';
 import { isBackgroundWait, isLongRunningWork } from '../runs/run-lanes';
 
-const credentialAttempts = new Map<
+const credentialAttempts = new SvelteMap<
     string,
     CredentialAttempt & { controller: AbortController }
 >();
@@ -186,41 +190,135 @@ const CLI_OF: Record<string, string> = {
 const NO_CONVERSATION =
     /(?:\b(?:no|unknown)\s+(?:rollout|conversation|session|thread)\b.{0,120}\b(?:found|exist)|\b(?:rollout|conversation|session|thread)\b.{0,120}\b(?:not found|does not exist|doesn't exist|missing))/i;
 
-/** The chain's rows are `agent|model|effort` (a model and optional effort picked in Settings) or a bare agent. */
-const chainAgent = (row: string) => row.split('|')[0];
+type RecoveryRoute = {
+    key: string;
+    provider: string;
+    agent: Agent;
+    model: string;
+    effort?: string;
+};
 
-/** The agents a chat can move to now, in the user's order: installed, with models, not at their limit. */
+/** Resolve saved fallback rows to exact, currently available CLI or custom-connector routes. */
+function availableRecoveryRoutes(): RecoveryRoute[] {
+    const result: RecoveryRoute[] = [];
+    const seen = new SvelteSet<string>();
+    for (const saved of connectors.recovery.chain) {
+        const [provider, pickedModel, effort] = saved.split('|');
+        if (!provider) continue;
+        let agent: Agent;
+        let model: string | undefined;
+        if (CLI_OF[provider]) {
+            const installed = Boolean(
+                connectors.detected?.tools.find(
+                    (item) => item.id === CLI_OF[provider],
+                )?.path,
+            );
+            if (!installed || !agentHasRoom(provider)) continue;
+            const catalog = (MODELS[provider as Agent] ?? []).filter(
+                (item) =>
+                    !(
+                        provider === 'claude' &&
+                        item.value.startsWith('credit:')
+                    ),
+            );
+            model = pickedModel
+                ? catalog.find((item) => item.value === pickedModel)?.value
+                : catalog[0]?.value;
+            agent = provider as Agent;
+        } else {
+            const connector = connectors.custom.find(
+                (item) =>
+                    item.id === provider && item.enabled && item.baseUrl.trim(),
+            );
+            if (!connector) continue;
+            const models = connector.models.length
+                ? connector.models
+                : connector.defaultModel
+                  ? [connector.defaultModel]
+                  : [];
+            model = pickedModel
+                ? models.find((item) => item === pickedModel)
+                : models[0];
+            agent = 'custom';
+        }
+        if (!model) continue;
+        const key = `${provider}|${model}${effort ? `|${effort}` : ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push({
+            key,
+            provider,
+            agent,
+            model,
+            ...(effort ? { effort } : {}),
+        });
+    }
+    return result;
+}
+
+/** The route identities a chat can move to now, in the user's order. */
 export function recoveryChain(): string[] {
-    const agents = [...new Set(connectors.recovery.chain.map(chainAgent))];
-    return agents.filter((agent) => {
-        const tool = CLI_OF[agent];
-        if (!tool) return false;
-        const installed =
-            connectors.detected?.tools.find((item) => item.id === tool)
-                ?.path !== null;
-        return (
-            installed &&
-            (MODELS[agent as Agent] ?? []).length > 0 &&
-            agentHasRoom(agent)
-        );
-    });
+    return availableRecoveryRoutes().map((route) => route.key);
 }
 
-/** The model the chain picked for an agent (its first row with a model), or undefined for the agent's first model. */
-export function recoveryModelFor(agent: string): string | undefined {
-    const row = connectors.recovery.chain.find(
-        (item) => chainAgent(item) === agent && item.includes('|'),
-    );
-    const model = row?.split('|')[1];
-    return model || undefined;
+/** Find the exact route's chat model; custom providers need their provider id embedded in the model id. */
+export function recoveryTarget(
+    key: string,
+): { agent: Agent; model: string; effort?: string } | undefined {
+    const route = availableRecoveryRoutes().find((item) => item.key === key);
+    if (!route) return undefined;
+    return {
+        agent: route.agent,
+        model:
+            route.agent === 'custom'
+                ? customModelId(route.provider, route.model)
+                : route.model,
+        ...(route.effort ? { effort: route.effort } : {}),
+    };
 }
 
-/** The configured effort for an agent's fallback route, or undefined for legacy/bare routes. */
-export function recoveryEffortFor(agent: string): string | undefined {
-    const row = connectors.recovery.chain.find(
-        (item) => chainAgent(item) === agent && item.includes('|'),
+/** Compatibility helpers for callers that need the configured model or effort for a route/provider. */
+export function recoveryModelFor(key: string): string | undefined {
+    const exact = recoveryTarget(key);
+    if (exact) return exact.model;
+    const route = availableRecoveryRoutes().find(
+        (item) => item.provider === key,
     );
-    return row?.split('|')[2] || undefined;
+    return route
+        ? route.agent === 'custom'
+            ? customModelId(route.provider, route.model)
+            : route.model
+        : undefined;
+}
+
+export function recoveryEffortFor(key: string): string | undefined {
+    return (
+        recoveryTarget(key)?.effort ??
+        availableRecoveryRoutes().find((item) => item.provider === key)?.effort
+    );
+}
+
+function currentRecoveryRoute(session: SessionItem, chain: string[]): string {
+    const custom =
+        session.agent === 'custom' ? parseCustomModel(session.model) : null;
+    const provider = custom?.providerId ?? session.agent;
+    const model = custom?.model ?? session.model;
+    const effort = turnOptionsOf(session.id).effort;
+    const matching =
+        chain.find((key) => {
+            const [routeProvider, routeModel] = key.split('|');
+            const routeEffort = key.split('|')[2];
+            return (
+                routeProvider === provider &&
+                routeModel === model &&
+                routeEffort === effort
+            );
+        }) ??
+        chain.find((key) => {
+            const [routeProvider, routeModel] = key.split('|');
+            return routeProvider === provider && routeModel === model;
+        });
+    return matching ?? `${provider}|${model ?? ''}`;
 }
 
 /** What to do about a turn of `session` that ended with `message`; null when nothing is (off, or stopped by the user). */
@@ -232,12 +330,14 @@ function recoveryFor(
     const kind = classifyFailure(message);
     if (kind === 'stopped') return null;
     const state = (recoveries[session.id] ??= { retries: 0, tried: [] });
-    if (!state.tried.includes(session.agent)) state.tried.push(session.agent);
+    const chain = recoveryChain();
+    const current = currentRecoveryRoute(session, chain);
+    if (!state.tried.includes(current)) state.tried.push(current);
     const plan = planRecovery({
         kind,
         retries: state.retries,
-        chain: recoveryChain(),
-        current: session.agent,
+        chain,
+        current,
         tried: state.tried,
     });
     return { kind, plan };
@@ -273,13 +373,21 @@ function noteModelFallback(session: SessionItem, reply: Message, line: string) {
     if (moves && session.model !== to) {
         session.model = to;
         session.conversationModel = to;
+        // The effort belongs to the route of this very model, never to another route of the same agent.
+        const served = availableRecoveryRoutes().find(
+            (route) =>
+                route.agent === session.agent &&
+                (route.agent === 'custom'
+                    ? customModelId(route.provider, route.model)
+                    : route.model) === to,
+        );
         window.dispatchEvent(
             new CustomEvent('agentdeck:agent-moved', {
                 detail: {
                     sessionId: session.id,
                     agent: session.agent,
                     model: to,
-                    effort: recoveryEffortFor(session.agent),
+                    effort: served?.effort,
                 },
             }),
         );
@@ -303,7 +411,7 @@ export function moveChatTo(
     const model = picked ?? MODELS[agent]?.[0]?.value ?? session.model;
     if (session.agent !== agent && !session.draft) {
         session.agents = [
-            ...new Set([
+            ...new SvelteSet([
                 ...(session.agents ?? [session.source ?? session.agent]),
                 agent,
             ]),
@@ -353,12 +461,9 @@ async function runRecovery(sessionId: string, plan: Recovery, reason: string) {
         if (replies[sessionId] || recoveries[sessionId] !== state) return;
         forgetUnstartedConversation(session);
     } else {
-        moveChatTo(
-            session,
-            plan.agent as Agent,
-            recoveryModelFor(plan.agent),
-            recoveryEffortFor(plan.agent),
-        );
+        const target = recoveryTarget(plan.agent);
+        if (!target) return;
+        moveChatTo(session, target.agent, target.model, target.effort);
         state.retries = 0;
         state.tried.push(plan.agent);
     }
@@ -715,9 +820,9 @@ export function logCtx(sessionId: string, session?: SessionItem) {
 // A turn that says nothing for this long is written to the log once (an agent that hangs, a tool that never returns,
 // a member waiting on a message that never comes): that is the line to look for when the app seems frozen.
 const SILENT_AFTER_MS = 5 * 60_000;
-export const lastEventAt = new Map<string, number>();
-export const lastEventKind = new Map<string, string>();
-const silentLogged = new Set<string>();
+export const lastEventAt = new SvelteMap<string, number>();
+export const lastEventKind = new SvelteMap<string, string>();
+const silentLogged = new SvelteSet<string>();
 // After this long the reply itself says so, with what it waits for: a chat that looks frozen is one the user can stop.
 const SILENT_SHOWN_MS = 2 * 60_000;
 const SILENT_PREFIX = 'No output for ';
@@ -920,7 +1025,7 @@ const STREAMED = new Set<AgentEvent['kind']>([
     'thinking',
     'tool_output_delta',
 ]);
-const streamQueue = new Map<
+const streamQueue = new SvelteMap<
     string,
     { event: AgentEvent; turn?: string; messageId?: string }[]
 >();
@@ -1297,8 +1402,7 @@ function handleEventNow(
     const first = session.source ?? session.agents?.[0] ?? session.agent;
     const agent = reply.agent ?? session.agent;
     const confirmsConversation =
-        event.kind !== 'session' &&
-        event.kind !== 'error';
+        event.kind !== 'session' && event.kind !== 'error';
     if (agent === first) {
         if (update.agentSession) session.agentSession = update.agentSession;
         if (confirmsConversation) session.agentStarted = true;
@@ -1363,12 +1467,13 @@ function handleEventNow(
         scheduleResume(session, event.message);
     if (recovery) {
         const plan = recovery.plan;
+        const fallbackTarget =
+            plan.action === 'fallback' ? recoveryTarget(plan.agent) : undefined;
         const note = recoveryNote(recovery.kind, plan, {
             from: agentLabel(session.agent, session.model),
-            to:
-                plan.action === 'fallback'
-                    ? agentLabel(plan.agent as Agent)
-                    : undefined,
+            to: fallbackTarget
+                ? agentLabel(fallbackTarget.agent, fallbackTarget.model)
+                : undefined,
         });
         reply.blocks = [
             ...reply.blocks,
@@ -1510,6 +1615,8 @@ function handleEventNow(
             );
         } finally {
             if (update.finished && !recovering) {
+                // The turn is over: the Preview tabs it held are free again for another chat to reuse.
+                releaseBrowserChat(sessionId);
                 const project = workspace.projects.find(
                     (item) => item.id === session.projectId,
                 );

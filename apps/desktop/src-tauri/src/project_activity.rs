@@ -1,21 +1,70 @@
+use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-const FILE: &str = ".agentdeck/activity.md";
+const LEGACY_FILE: &str = ".agentdeck/activity.md";
+const DIRECTORY: &str = "project-activity";
 const HEADER: &str = "# AgentDeck project activity\n\n";
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ENTRY_BYTES: usize = 256 * 1024;
 
-fn file_in(root: &Path) -> Result<PathBuf, String> {
+fn file_in(data_dir: &Path, root: &Path) -> Result<PathBuf, String> {
     if !root.is_dir() {
         return Err(format!("{} is not a folder", root.display()));
     }
-    Ok(root.join(FILE))
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    let mut hasher = Sha256::new();
+    hasher.update(root.to_string_lossy().as_bytes());
+    let key = hex::encode(hasher.finalize());
+    Ok(data_dir.join(DIRECTORY).join(format!("{key}.md")))
 }
 
-fn read_in(root: &Path) -> Result<String, String> {
-    let file = file_in(root)?;
+fn ensure_legacy_ignored(root: &Path) -> Result<(), String> {
+    let gitignore = root.join(".gitignore");
+    let contents = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    if contents
+        .lines()
+        .any(|line| line.trim() == "/.agentdeck/activity.md")
+    {
+        return Ok(());
+    }
+    let mut handle = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(gitignore)
+        .map_err(|error| error.to_string())?;
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        handle.write_all(b"\n").map_err(|error| error.to_string())?;
+    }
+    handle
+        .write_all(b"\n# AgentDeck project activity log\n/.agentdeck/activity.md\n")
+        .map_err(|error| error.to_string())
+}
+
+fn migrate_legacy(root: &Path, destination: &Path) -> Result<(), String> {
+    let legacy = root.join(LEGACY_FILE);
+    if !legacy.is_file() {
+        return Ok(());
+    }
+    if !destination.exists() {
+        let content = std::fs::read(&legacy).map_err(|error| error.to_string())?;
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(destination, content).map_err(|error| error.to_string())?;
+    }
+    if std::fs::remove_file(&legacy).is_err() {
+        ensure_legacy_ignored(root)?;
+    } else if let Some(parent) = legacy.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+    Ok(())
+}
+
+fn read_in(data_dir: &Path, root: &Path) -> Result<String, String> {
+    let file = file_in(data_dir, root)?;
+    migrate_legacy(root, &file)?;
     match std::fs::read(file) {
         Ok(bytes) => Ok(String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_BYTES)]).into_owned()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -23,8 +72,9 @@ fn read_in(root: &Path) -> Result<String, String> {
     }
 }
 
-fn append_in(root: &Path, entry: &str) -> Result<(), String> {
-    let file = file_in(root)?;
+fn append_in(data_dir: &Path, root: &Path, entry: &str) -> Result<(), String> {
+    let file = file_in(data_dir, root)?;
+    migrate_legacy(root, &file)?;
     let entry = entry.trim();
     if entry.is_empty() {
         return Err("activity entry is empty".to_string());
@@ -65,15 +115,29 @@ fn append_in(root: &Path, entry: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn project_activity_read(root: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || read_in(Path::new(&root)))
+pub async fn project_activity_read(app: tauri::AppHandle, root: String) -> Result<String, String> {
+    use tauri::Manager;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || read_in(&data_dir, Path::new(&root)))
         .await
         .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub async fn project_activity_append(root: String, entry: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || append_in(Path::new(&root), &entry))
+pub async fn project_activity_append(
+    app: tauri::AppHandle,
+    root: String,
+    entry: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || append_in(&data_dir, Path::new(&root), &entry))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -121,15 +185,17 @@ mod tests {
         let folder = temp("append");
         append_in(
             &folder,
+            &folder,
             "<!-- agentdeck:activity-entry {\"id\":\"one\"} -->\n## One",
         )
         .unwrap();
         append_in(
             &folder,
+            &folder,
             "<!-- agentdeck:activity-entry {\"id\":\"two\"} -->\n## Two",
         )
         .unwrap();
-        let text = read_in(&folder).unwrap();
+        let text = read_in(&folder, &folder).unwrap();
         assert!(text.starts_with(HEADER));
         assert!(text.find("## One").unwrap() < text.find("## Two").unwrap());
         let _ = std::fs::remove_dir_all(folder);
@@ -138,9 +204,10 @@ mod tests {
     #[test]
     fn refuses_empty_invalid_and_oversized_entries() {
         let folder = temp("invalid");
-        assert!(append_in(&folder, "").is_err());
-        assert!(append_in(&folder, "## no marker").is_err());
+        assert!(append_in(&folder, &folder, "").is_err());
+        assert!(append_in(&folder, &folder, "## no marker").is_err());
         assert!(append_in(
+            &folder,
             &folder,
             &format!(
                 "<!-- agentdeck:activity-entry x -->\n{}",

@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+node scripts/clean-junk.mjs --staged || exit $?
+pnpm exec lint-staged

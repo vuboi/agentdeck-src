@@ -117,6 +117,26 @@ async fn lock_open_server(server: &str) -> tokio::sync::OwnedMutexGuard<()> {
     lock.lock_owned().await
 }
 
+/// The turn of `chat` ended: the tab it drove is no longer held, so another chat may reuse it. The chat keeps its
+/// `current` tab, so its next turn still goes there.
+pub fn release_chat(chat: &str) {
+    if chat.is_empty() {
+        return;
+    }
+    if let Ok(mut state) = STATE.lock() {
+        state.owners.retain(|_, owner| owner != chat);
+    }
+}
+
+/// The pages were closed (the app window reloaded): no tab is held or driven any more.
+pub fn reset() {
+    if let Ok(mut state) = STATE.lock() {
+        state.active.clear();
+        state.owners.clear();
+        state.current.clear();
+    }
+}
+
 /// The tab the user is looking at: what the agent's requests are about.
 pub fn set_active(tab: &str) {
     if let Ok(mut state) = STATE.lock() {
@@ -581,8 +601,36 @@ fn wants_new_tab(params: &HashMap<String, String>) -> Option<bool> {
 /// The address of a server: scheme, host and port (`http://127.0.0.1:1432`).
 fn server_of(url: &str) -> String {
     let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    format!("{scheme}://{authority}").to_ascii_lowercase()
+    let authority = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default()
+        .rsplit_once('@')
+        .map_or_else(
+            || rest.split(['/', '?', '#']).next().unwrap_or_default(),
+            |(_, host)| host,
+        );
+    let (host, port) = if let Some(end) = authority.find(']') {
+        (&authority[..=end], &authority[end + 1..])
+    } else {
+        authority
+            .rsplit_once(':')
+            .filter(|(_, port)| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
+            .map_or((authority, ""), |(host, _)| {
+                (host, &authority[host.len()..])
+            })
+    };
+    let host_name = host.trim_matches(['[', ']']).to_ascii_lowercase();
+    let host = match host_name.as_str() {
+        "localhost" | "127.0.0.1" | "0.0.0.0" | "::1" => "127.0.0.1",
+        _ => host_name.as_str(),
+    };
+    format!(
+        "{}://{}{}",
+        scheme.to_ascii_lowercase(),
+        host,
+        port.to_ascii_lowercase()
+    )
 }
 
 /// A tab a page can open in without a new one: the chat's own tab, else a tab already on the same server that no other
@@ -590,23 +638,39 @@ fn server_of(url: &str) -> String {
 fn reusable_tab(app: &AppHandle, chat: &str, url: &str) -> Option<String> {
     let alive = |tab: &str| !tab.is_empty() && app.get_webview(&format!("browser-{tab}")).is_some();
     let state = STATE.lock().ok()?;
-    if let Some(tab) = state.current.get(chat).filter(|tab| alive(tab)) {
+    let free = |tab: &str| state.owners.get(tab).is_none_or(|owner| owner == chat);
+    if let Some(tab) = state
+        .current
+        .get(chat)
+        .filter(|tab| alive(tab) && free(tab))
+    {
         return Some(tab.clone());
     }
-    let server = server_of(url);
-    let mut tabs: Vec<&String> = state
+    // The address a tab was asked for is kept while its error page shows, so that tab is still found on its server.
+    let candidates: Vec<(String, String)> = state
         .tabs
-        .iter()
-        .filter(|(id, tab)| {
-            !tab.url.is_empty()
-                && server_of(&tab.url) == server
-                && alive(id)
-                && state.owners.get(*id).is_none_or(|owner| owner == chat)
-        })
-        .map(|(id, _)| id)
+        .keys()
+        .filter(|id| alive(id) && free(id))
+        .filter_map(|id| Some((id.clone(), shown_address(&state, id)?)))
         .collect();
-    tabs.sort_by_key(|id| (**id != state.active, (*id).clone()));
-    tabs.first().map(|id| (*id).clone())
+    same_server_tab(&candidates, &state.active, &server_of(url))
+}
+
+/// The address a tab shows, or was asked for last.
+fn shown_address(state: &State, tab: &str) -> Option<String> {
+    crate::browser::requested(tab)
+        .or_else(|| state.tabs.get(tab).map(|entry| entry.url.clone()))
+        .filter(|address| !address.is_empty())
+}
+
+/// The tab among `candidates` (id, address) on `server`: the one in front first, then the lowest id.
+fn same_server_tab(candidates: &[(String, String)], active: &str, server: &str) -> Option<String> {
+    let mut found: Vec<&(String, String)> = candidates
+        .iter()
+        .filter(|(_, address)| server_of(address) == server)
+        .collect();
+    found.sort_by_key(|(id, _)| (id != active, id.clone()));
+    found.first().map(|(id, _)| id.clone())
 }
 
 /// Whether the tab in front is taken: it shows a page, or another chat opened and drives it. Such a tab is left alone.
@@ -1191,7 +1255,7 @@ pub(crate) async fn ask(
 
 #[cfg(test)]
 mod tests {
-    use super::{authorize, is_post_request};
+    use super::{authorize, is_post_request, same_server_tab, server_of};
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 
@@ -1265,6 +1329,42 @@ mod tests {
         assert!(!is_post_request("GET /mcp HTTP/1.1\r\n"));
         assert!(!is_post_request("POSTX /mcp HTTP/1.1\r\n"));
         assert!(!is_post_request("POST"));
+    }
+
+    #[test]
+    fn local_server_aliases_share_the_same_open_gate_and_tab() {
+        assert_eq!(server_of("http://localhost:4301/"), "http://127.0.0.1:4301");
+        assert_eq!(
+            server_of("HTTP://127.0.0.1:4301/app"),
+            "http://127.0.0.1:4301"
+        );
+        assert_eq!(server_of("http://0.0.0.0:4301"), "http://127.0.0.1:4301");
+        assert_ne!(
+            server_of("http://localhost:4301"),
+            server_of("http://localhost:4302")
+        );
+    }
+
+    #[test]
+    fn a_tab_on_the_same_server_is_reused_front_first() {
+        let tabs = vec![
+            ("tab-a".to_string(), "http://localhost:4200/voc".to_string()),
+            ("tab-b".to_string(), "http://127.0.0.1:4200/".to_string()),
+            ("tab-c".to_string(), "http://localhost:4201/".to_string()),
+        ];
+        let server = "http://127.0.0.1:4200";
+        assert_eq!(
+            same_server_tab(&tabs, "tab-b", server),
+            Some("tab-b".into())
+        );
+        assert_eq!(
+            same_server_tab(&tabs, "tab-c", server),
+            Some("tab-a".into())
+        );
+        assert_eq!(
+            same_server_tab(&tabs, "tab-a", "http://127.0.0.1:4300"),
+            None
+        );
     }
 }
 

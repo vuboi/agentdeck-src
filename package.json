@@ -12,18 +12,30 @@
     "build:linux": "node scripts/build.mjs linux",
     "check": "node scripts/cargo.mjs check --workspace && node scripts/cargo.mjs clippy --workspace -- -D warnings && pnpm -r check",
     "test": "node scripts/cargo.mjs test --workspace && pnpm -r --if-present test",
+    "lint": "eslint apps/desktop/src apps/desktop/scripts apps/desktop/svelte.config.js packages scripts eslint.config.mjs lint-staged.config.mjs",
+    "format:rust": "node scripts/cargo.mjs fmt --all",
+    "format:check": "prettier --check . && node scripts/cargo.mjs fmt --all -- --check",
     "clean:junk": "node scripts/clean-junk.mjs",
     "clean:junk:delete": "node scripts/clean-junk.mjs --delete",
-    "hooks:install": "git config core.hooksPath .githooks",
+    "hooks:install": "pnpm exec husky",
     "gen:icons": "node scripts/gen-icons.mjs",
     "gen:types": "node scripts/cargo.mjs run -q -p ag-protocol --example export_ts",
-    "format": "prettier --write .",
+    "format": "prettier --write . && node scripts/cargo.mjs fmt --all",
     "dev:web": "node scripts/run-desktop.mjs web",
-    "run:build": "node scripts/run-desktop.mjs build"
+    "run:build": "node scripts/run-desktop.mjs build",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-svelte": "^3.23.1",
+    "globals": "^17.14.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.6.0",
     "prettier": "^3.5.3",
-    "prettier-plugin-svelte": "^3.4.0"
+    "prettier-plugin-svelte": "^3.4.0",
+    "typescript-eslint": "^8.72.1"
   },
   "pnpm": {
     "overrides": {

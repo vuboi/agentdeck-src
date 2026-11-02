@@ -112,6 +112,37 @@ fn claude_transcript_merges_assistant_lines_and_attaches_tool_results() {
 }
 
 #[test]
+fn claude_background_notice_is_not_a_user_message() {
+    let home = Home::new("claude-task-notice");
+    let mut notice = user(
+        "n",
+        Some("b"),
+        json!("<task-notification><task-id>t1</task-id><status>completed</status></task-notification>"),
+        "2026-01-01T00:00:06Z",
+    );
+    notice["origin"] = json!({"kind":"task-notification","producer":"session-task"});
+    let path = home.write(
+        ".claude/projects/demo/55555555.jsonl",
+        &[
+            user(
+                "a",
+                None,
+                json!("start the research"),
+                "2026-01-01T00:00:00Z",
+            ),
+            assistant("b", "a", json!([{"type":"text","text":"started"}])),
+            notice,
+            assistant("d", "n", json!([{"type":"text","text":"research is back"}])),
+        ],
+    );
+    let messages = load(&home.roots(), Source::Claude, &path).unwrap();
+    assert_eq!(
+        responses(&messages),
+        vec!["start the research", "started", "research is back"]
+    );
+}
+
+#[test]
 fn claude_keeps_older_messages_when_the_parent_link_is_gone() {
     let home = Home::new("claude-compacted");
     let path = home.write(

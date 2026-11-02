@@ -4,3 +4,8 @@ apps/desktop/src-tauri/target
 apps/desktop/src-tauri/icons
 apps/desktop/build
 apps/desktop/.svelte-kit
+apps/desktop/.svelte-kit-dev-*
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+apps/desktop/build
+packages/protocol-ts

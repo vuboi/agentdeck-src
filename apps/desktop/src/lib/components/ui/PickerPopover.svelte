@@ -426,209 +426,221 @@
     zWidth={popWidth}
     onClose={() => onclose?.()}
 >
-    {#snippet children()}
-        <div
-            class="flex w-full flex-col {look.text}"
-            role="listbox"
-            aria-multiselectable={multiple || undefined}
-            aria-label={label}
-            tabindex="-1"
-            onpointerenter={onenter}
-        >
-            {#if search}
-                <div
-                    class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3"
-                >
-                    <ZIcon
-                        zType={'lucideSearch' as ZIconName}
-                        class="size-3.5 shrink-0 text-muted-foreground"
-                    />
-                    <input
-                        bind:this={input}
-                        bind:value={query}
-                        class="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none placeholder:text-muted-foreground"
-                        {placeholder}
-                        aria-label={placeholder}
-                        spellcheck="false"
-                        autocomplete="off"
-                        onkeydown={(event) => key(event)}
-                    />
-                </div>
-            {/if}
-            <div class="relative">
-                <div
-                    bind:this={scroller}
-                    class="overflow-x-hidden overflow-y-auto p-1"
-                    style:height={search ? `${height}px` : undefined}
-                    style:max-height="{height}px"
-                    onscroll={measure}
-                >
-                    {#if items.length === 0}
-                        <!-- In the fixed height: the box does not change size whether it is waiting, empty or full. -->
-                        <div
-                            class="grid h-full min-h-20 place-items-center px-2 text-center text-sm text-muted-foreground"
-                        >
-                            {#if loading}
-                                <ZIcon
-                                    zType={'lucideLoaderCircle' as ZIconName}
-                                    class="size-5 animate-spin text-primary"
-                                    aria-label="Loading"
-                                />
-                            {:else}
-                                <p class="m-0">{empty}</p>
-                            {/if}
-                        </div>
-                    {:else}
-                        <div
-                            class="relative w-full"
-                            style:height="{total}px"
-                            in:fade={{ duration: 160 }}
-                            {@attach glide()}
-                        >
-                            {#each shown as slot (slot.key)}
-                                {@const row = rows[slot.index]}
-                                <!-- The slot is the row and its gap: the row inside leaves 1px above and below, so rows never touch. -->
-                                <div
-                                    class="absolute top-0 left-0 w-full {row?.kind ===
-                                    'item'
-                                        ? 'py-px'
-                                        : ''}"
-                                    style:height="{slot.size}px"
-                                    style:transform="translateY({slot.start}px)"
-                                >
-                                    {#if row?.kind === 'head'}
-                                        <div
-                                            class="flex h-full items-end px-2 pb-1 text-[0.6875rem] font-medium text-muted-foreground"
-                                        >
-                                            {row.text}
-                                        </div>
-                                    {:else if row?.kind === 'rule'}
-                                        <div class="flex h-full items-center">
-                                            <div
-                                                class="mx-1 h-px w-full bg-border"
-                                            ></div>
-                                        </div>
-                                    {:else if row}
-                                        {@const item = items[row.index]}
-                                        <button
-                                            type="button"
-                                            role="option"
-                                            aria-selected={item.selected ===
-                                                true}
-                                            aria-disabled={item.disabled ||
-                                                undefined}
-                                            data-picker-row={item.id}
-                                            data-glide-item={item.disabled
-                                                ? undefined
-                                                : ''}
-                                            class="flex h-full w-full items-center gap-2.5 rounded-md px-2 text-left outline-none {item.disabled
-                                                ? 'cursor-not-allowed opacity-50'
-                                                : 'cursor-pointer'} {item.danger
-                                                ? row.index === active
-                                                    ? 'bg-destructive/15 text-destructive'
-                                                    : 'text-destructive'
-                                                : row.index === active ||
-                                                    item.selected
-                                                  ? ROW_ON
-                                                  : 'text-foreground'}"
-                                            onmousedown={(event) =>
-                                                event.preventDefault()}
-                                            onclick={() => pick(row.index)}
-                                            onpointerenter={(event) => {
-                                                active = row.index;
-                                                onhover?.(
-                                                    item,
-                                                    event.currentTarget,
-                                                );
-                                            }}
-                                            onpointerleave={() =>
-                                                onrowleave?.(item)}
-                                        >
-                                            {#if item.agent}<AgentLogo
-                                                    agent={item.agent}
-                                                    class="size-4 shrink-0"
-                                                />{:else if item.iconSrc}<span class="relative size-4 shrink-0"><span class="hidden"><ZIcon
-                                                            zType={item.icon ?? 'lucideAppWindow'}
-                                                            class="size-4 text-muted-foreground"
-                                                        /></span><img
-                                                        src={item.iconSrc}
-                                                        alt=""
-                                                        class="relative size-4 object-contain"
-                                                        onerror={(event) => {
-                                                            const image = event.currentTarget as HTMLImageElement;
-                                                            image.hidden = true;
-                                                            (image.previousElementSibling as HTMLElement | null)?.classList.remove('hidden');
-                                                        }}
-                                                    /></span>{:else if item.icon}<ZIcon
-                                                    zType={item.icon}
-                                                    class="shrink-0 {look.icon} {item.danger
-                                                        ? 'text-destructive'
-                                                        : 'text-muted-foreground'}"
-                                                />{/if}
-                                            <span
-                                                class="min-w-0 shrink truncate"
-                                                {@attach zTooltip({ content: item.label, position: 'right', autoDetect: true, offset: 6 })}
-                                                >{#each marked(item.label) as part, at (at)}{#if part.match}<span
-                                                            class="font-semibold text-primary"
-                                                            >{part.text}</span
-                                                        >{:else}{part.text}{/if}{/each}</span
-                                            >
-                                            {#if item.hint}<span
-                                                    class="min-w-0 flex-1 truncate text-sm text-muted-foreground"
-                                                    >{item.hint}</span
-                                                >{:else if item.stat}<span
-                                                    class="flex-1"
-                                                ></span>{/if}
-                                            {#if item.shortcut}<span
-                                                    class="ml-auto shrink-0 pl-3 text-[0.6875rem] text-muted-foreground"
-                                                    >{item.shortcut}</span
-                                                >{/if}
-                                            {#if item.more}<ZIcon
-                                                    zType={'lucideChevronRight' as ZIconName}
-                                                    class="ml-auto size-3.5 shrink-0 text-muted-foreground"
-                                                />{/if}
-                                            {#if item.selected}<ZIcon
-                                                    zType={'lucideCheck' as ZIconName}
-                                                    class="ml-auto size-3.5 shrink-0"
-                                                />{/if}
-                                            {#if item.stat}<span
-                                                    class="flex shrink-0 gap-1.5 font-mono text-sm tabular-nums"
-                                                    ><span
-                                                        class="text-emerald-500"
-                                                        >+{compact(
-                                                            item.stat.added,
-                                                        )}</span
-                                                    ><span class="text-red-500"
-                                                        >−{compact(
-                                                            item.stat.removed,
-                                                        )}</span
-                                                    ></span
-                                                >{/if}
-                                        </button>
-                                    {/if}
-                                </div>
-                            {/each}
-                        </div>
-                    {/if}
-                </div>
-                {#if !atTop}<div
-                        class="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-popover to-transparent"
-                        aria-hidden="true"
-                    ></div>{/if}
-                {#if !atTop && !atEnd}<div
-                        class="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-popover to-transparent"
-                        aria-hidden="true"
-                    ></div>{/if}
+    <div
+        class="flex w-full flex-col {look.text}"
+        role="listbox"
+        aria-multiselectable={multiple || undefined}
+        aria-label={label}
+        tabindex="-1"
+        onpointerenter={onenter}
+    >
+        {#if search}
+            <div
+                class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3"
+            >
+                <ZIcon
+                    zType={'lucideSearch' as ZIconName}
+                    class="size-3.5 shrink-0 text-muted-foreground"
+                />
+                <input
+                    bind:this={input}
+                    bind:value={query}
+                    class="min-w-0 flex-1 bg-transparent text-[0.8125rem] outline-none placeholder:text-muted-foreground"
+                    {placeholder}
+                    aria-label={placeholder}
+                    spellcheck="false"
+                    autocomplete="off"
+                    onkeydown={(event) => key(event)}
+                />
             </div>
-            {#if footer}
-                <div
-                    class="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground"
-                >
-                    {footer}
-                </div>
-            {/if}
+        {/if}
+        <div class="relative">
+            <div
+                bind:this={scroller}
+                class="overflow-x-hidden overflow-y-auto p-1"
+                style:height={search ? `${height}px` : undefined}
+                style:max-height="{height}px"
+                onscroll={measure}
+            >
+                {#if items.length === 0}
+                    <!-- In the fixed height: the box does not change size whether it is waiting, empty or full. -->
+                    <div
+                        class="grid h-full min-h-20 place-items-center px-2 text-center text-sm text-muted-foreground"
+                    >
+                        {#if loading}
+                            <ZIcon
+                                zType={'lucideLoaderCircle' as ZIconName}
+                                class="size-5 animate-spin text-primary"
+                                aria-label="Loading"
+                            />
+                        {:else}
+                            <p class="m-0">{empty}</p>
+                        {/if}
+                    </div>
+                {:else}
+                    <div
+                        class="relative w-full"
+                        style:height="{total}px"
+                        in:fade={{ duration: 160 }}
+                        {@attach glide()}
+                    >
+                        {#each shown as slot (slot.key)}
+                            {@const row = rows[slot.index]}
+                            <!-- The slot is the row and its gap: the row inside leaves 1px above and below, so rows never touch. -->
+                            <div
+                                class="absolute top-0 left-0 w-full {row?.kind ===
+                                'item'
+                                    ? 'py-px'
+                                    : ''}"
+                                style:height="{slot.size}px"
+                                style:transform="translateY({slot.start}px)"
+                            >
+                                {#if row?.kind === 'head'}
+                                    <div
+                                        class="flex h-full items-end px-2 pb-1 text-[0.6875rem] font-medium text-muted-foreground"
+                                    >
+                                        {row.text}
+                                    </div>
+                                {:else if row?.kind === 'rule'}
+                                    <div class="flex h-full items-center">
+                                        <div
+                                            class="mx-1 h-px w-full bg-border"
+                                        ></div>
+                                    </div>
+                                {:else if row}
+                                    {@const item = items[row.index]}
+                                    <button
+                                        type="button"
+                                        role="option"
+                                        aria-selected={item.selected === true}
+                                        aria-disabled={item.disabled ||
+                                            undefined}
+                                        data-picker-row={item.id}
+                                        data-glide-item={item.disabled
+                                            ? undefined
+                                            : ''}
+                                        class="flex h-full w-full items-center gap-2.5 rounded-md px-2 text-left outline-none {item.disabled
+                                            ? 'cursor-not-allowed opacity-50'
+                                            : 'cursor-pointer'} {item.danger
+                                            ? row.index === active
+                                                ? 'bg-destructive/15 text-destructive'
+                                                : 'text-destructive'
+                                            : row.index === active ||
+                                                item.selected
+                                              ? ROW_ON
+                                              : 'text-foreground'}"
+                                        onmousedown={(event) =>
+                                            event.preventDefault()}
+                                        onclick={() => pick(row.index)}
+                                        onpointerenter={(event) => {
+                                            active = row.index;
+                                            onhover?.(
+                                                item,
+                                                event.currentTarget,
+                                            );
+                                        }}
+                                        onpointerleave={() =>
+                                            onrowleave?.(item)}
+                                    >
+                                        {#if item.agent}<AgentLogo
+                                                agent={item.agent}
+                                                class="size-4 shrink-0"
+                                            />{:else if item.iconSrc}<span
+                                                class="relative size-4 shrink-0"
+                                                ><span class="hidden"
+                                                    ><ZIcon
+                                                        zType={item.icon ??
+                                                            'lucideAppWindow'}
+                                                        class="size-4 text-muted-foreground"
+                                                    /></span
+                                                ><img
+                                                    src={item.iconSrc}
+                                                    alt=""
+                                                    class="relative size-4 object-contain"
+                                                    onerror={(event) => {
+                                                        const image =
+                                                            event.currentTarget as HTMLImageElement;
+                                                        image.hidden = true;
+                                                        (
+                                                            image.previousElementSibling as HTMLElement | null
+                                                        )?.classList.remove(
+                                                            'hidden',
+                                                        );
+                                                    }}
+                                                /></span
+                                            >{:else if item.icon}<ZIcon
+                                                zType={item.icon}
+                                                class="shrink-0 {look.icon} {item.danger
+                                                    ? 'text-destructive'
+                                                    : 'text-muted-foreground'}"
+                                            />{/if}
+                                        <span
+                                            class="min-w-0 shrink truncate"
+                                            {@attach zTooltip({
+                                                content: item.label,
+                                                position: 'right',
+                                                autoDetect: true,
+                                                offset: 6,
+                                            })}
+                                            >{#each marked(item.label) as part, at (at)}{#if part.match}<span
+                                                        class="font-semibold text-primary"
+                                                        >{part.text}</span
+                                                    >{:else}{part.text}{/if}{/each}</span
+                                        >
+                                        {#if item.hint}<span
+                                                class="min-w-0 flex-1 truncate text-sm text-muted-foreground"
+                                                >{item.hint}</span
+                                            >{:else if item.stat}<span
+                                                class="flex-1"
+                                            ></span>{/if}
+                                        {#if item.shortcut}<span
+                                                class="ml-auto shrink-0 pl-3 text-[0.6875rem] text-muted-foreground"
+                                                >{item.shortcut}</span
+                                            >{/if}
+                                        {#if item.more}<ZIcon
+                                                zType={'lucideChevronRight' as ZIconName}
+                                                class="ml-auto size-3.5 shrink-0 text-muted-foreground"
+                                            />{/if}
+                                        {#if item.selected}<ZIcon
+                                                zType={'lucideCheck' as ZIconName}
+                                                class="ml-auto size-3.5 shrink-0"
+                                            />{/if}
+                                        {#if item.stat}<span
+                                                class="flex shrink-0 gap-1.5 font-mono text-sm tabular-nums"
+                                                ><span class="text-emerald-500"
+                                                    >+{compact(
+                                                        item.stat.added,
+                                                    )}</span
+                                                ><span class="text-red-500"
+                                                    >−{compact(
+                                                        item.stat.removed,
+                                                    )}</span
+                                                ></span
+                                            >{/if}
+                                    </button>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
+            </div>
+            {#if !atTop}<div
+                    class="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-popover to-transparent"
+                    aria-hidden="true"
+                ></div>{/if}
+            {#if !atTop && !atEnd}<div
+                    class="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-popover to-transparent"
+                    aria-hidden="true"
+                ></div>{/if}
         </div>
-    {/snippet}
+        {#if footer}
+            <div
+                class="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground"
+            >
+                {footer}
+            </div>
+        {/if}
+    </div>
 </ZPopover>
 
 {#if activeRow && open}
@@ -641,10 +653,8 @@
         zWidth={280}
         zCloseOnOutside={false}
     >
-        {#snippet children()}
-            <p class="m-0 p-2.5 text-sm leading-relaxed text-muted-foreground">
-                {describe(items[active])}
-            </p>
-        {/snippet}
+        <p class="m-0 p-2.5 text-sm leading-relaxed text-muted-foreground">
+            {describe(items[active])}
+        </p>
     </ZPopover>
 {/if}

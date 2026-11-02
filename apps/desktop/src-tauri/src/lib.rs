@@ -32,8 +32,8 @@ mod mcp;
 mod mcp_client;
 mod mcp_manage;
 mod mcp_providers;
-mod notify;
 mod model_prices;
+mod notify;
 mod officecli;
 mod opencode_serve;
 mod page_memory;
@@ -638,7 +638,9 @@ async fn models_list(agent: String) -> Vec<ag_adapters::models::ModelInfo> {
         return copilot::models_list().await.unwrap_or_default();
     }
     if agent == "workbuddy" {
-        return connectors::workbuddy_model_infos().await.unwrap_or_default();
+        return connectors::workbuddy_model_infos()
+            .await
+            .unwrap_or_default();
     }
     // `agy models` asks the server: off the main thread.
     tauri::async_runtime::spawn_blocking(move || models_of(&agent))
@@ -2790,6 +2792,7 @@ pub fn run() {
             browser::browser_hide,
             browser::browser_navigate,
             browser::browser_reset,
+            browser::browser_release_chat,
             browser::browser_park,
             browser::browser_layer,
             browser::browser_eval,

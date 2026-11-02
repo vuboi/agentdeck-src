@@ -25,7 +25,10 @@ const STDERR_KEEP: usize = 16 * 1024;
 
 /// Reads stderr while the CLI runs, keeping only its tail. A pipe nobody reads fills up (4 KB on Windows) and the
 /// CLI then blocks on its next write, so the turn would never end.
-pub(super) async fn drain_stderr(mut stderr: tokio::process::ChildStderr, kept: Arc<Mutex<Vec<u8>>>) {
+pub(super) async fn drain_stderr(
+    mut stderr: tokio::process::ChildStderr,
+    kept: Arc<Mutex<Vec<u8>>>,
+) {
     let mut chunk = [0u8; 4096];
     while let Ok(read) = stderr.read(&mut chunk).await {
         if read == 0 {
@@ -86,24 +89,38 @@ static CHAT_PIDS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap
 /// Notes that `pid` is the CLI of `chat`.
 pub fn claim_pid(pid: u32, chat: &str) {
     if !chat.is_empty() {
-        CHAT_PIDS.lock().unwrap_or_else(|p| p.into_inner()).insert(pid, chat.to_owned());
+        CHAT_PIDS
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(pid, chat.to_owned());
     }
 }
 
 /// The live CLI processes started for a chat (including a warm process).
 pub fn pids_of_chat(chat: &str) -> Vec<u32> {
-    CHAT_PIDS.lock().unwrap_or_else(|p| p.into_inner()).iter()
-        .filter_map(|(&pid, owner)| (owner == chat).then_some(pid)).collect()
+    CHAT_PIDS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .filter_map(|(&pid, owner)| (owner == chat).then_some(pid))
+        .collect()
 }
 
 /// The CLI ended: its pid may be given to something else.
 pub fn release_pid(pid: u32) {
-    CHAT_PIDS.lock().unwrap_or_else(|p| p.into_inner()).remove(&pid);
+    CHAT_PIDS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&pid);
 }
 
 /// The chat whose CLI process is `pid`.
 pub fn chat_of_pid(pid: u32) -> Option<String> {
-    CHAT_PIDS.lock().unwrap_or_else(|p| p.into_inner()).get(&pid).cloned()
+    CHAT_PIDS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&pid)
+        .cloned()
 }
 
 /// Releases the pid of a one-turn process when the turn ends, however it ends.
@@ -181,6 +198,9 @@ pub async fn drive_turn(
     }
     let args = provider.args(req);
     let mut command = command_for(binary, &args);
+    for key in provider.environment_remove(req) {
+        command.env_remove(key);
+    }
     command
         .envs(provider.environment(req))
         .stdin(if provider.prompt_on_stdin() {
@@ -200,7 +220,7 @@ pub async fn drive_turn(
     }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flashing up per turn
-    // Its own process group, so a stop ends what it started too (TreeGuard).
+                                         // Its own process group, so a stop ends what it started too (TreeGuard).
     #[cfg(unix)]
     command.process_group(0);
     let mut child = match command.spawn() {
@@ -250,7 +270,10 @@ pub async fn drive_turn(
     let mut file_snapshots = std::collections::HashMap::new();
     let mut watchdog = Watchdog::new(provider.stall_limit());
     // Set once the CLI has exited, with the time after which its pipe is no longer read.
-    let mut exited: Option<(std::io::Result<std::process::ExitStatus>, tokio::time::Instant)> = None;
+    let mut exited: Option<(
+        std::io::Result<std::process::ExitStatus>,
+        tokio::time::Instant,
+    )> = None;
     if let Some(stdout) = child.stdout.take() {
         // Split on bytes, not `lines()`: one line that is not UTF-8 would end that reader with an error and leave
         // the CLI blocked on a pipe nobody reads.
@@ -285,7 +308,9 @@ pub async fn drive_turn(
             }
             for mut event in provider.parse_line(line) {
                 match &mut event {
-                    AgentEvent::ToolCall { id, name, change, .. } if change.is_some() => {
+                    AgentEvent::ToolCall {
+                        id, name, change, ..
+                    } if change.is_some() => {
                         let path = change.as_ref().map(|change| change.path.clone());
                         if let Some(snapshot) = path.and_then(|path| {
                             super::begin_file_snapshot(
@@ -298,9 +323,18 @@ pub async fn drive_turn(
                             *change = None;
                         }
                     }
-                    AgentEvent::ToolResult { id, is_error, change, .. } => {
+                    AgentEvent::ToolResult {
+                        id,
+                        is_error,
+                        change,
+                        ..
+                    } => {
                         if let Some(snapshot) = file_snapshots.remove(id) {
-                            *change = if *is_error { None } else { super::finish_file_snapshot(snapshot) };
+                            *change = if *is_error {
+                                None
+                            } else {
+                                super::finish_file_snapshot(snapshot)
+                            };
                         }
                     }
                     _ => {}
@@ -573,7 +607,10 @@ echo '{"type":"result","is_error":false,"result":"pong","session_id":"s1"}'"#,
         })
         .await;
         let _ = std::fs::remove_file(&path);
-        assert!(matches!(events.last(), Some(AgentEvent::Done { .. })), "{events:?}");
+        assert!(
+            matches!(events.last(), Some(AgentEvent::Done { .. })),
+            "{events:?}"
+        );
     }
 
     #[tokio::test]
@@ -642,11 +679,15 @@ mod worker_tests {
     }
 
     async fn run(name: &str, body: &str) -> Vec<AgentEvent> {
-        let path = std::env::temp_dir().join(format!("agentdeck-worker-{name}-{}.sh", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("agentdeck-worker-{name}-{}.sh", std::process::id()));
         std::fs::write(&path, body).unwrap();
         let provider = Fake(path.to_string_lossy().replace('\\', "/"));
         let mut events = Vec::new();
-        drive_turn("sh".into(), &provider, &request(), |event| events.push(event)).await;
+        drive_turn("sh".into(), &provider, &request(), |event| {
+            events.push(event)
+        })
+        .await;
         let _ = std::fs::remove_file(&path);
         events
     }
@@ -664,9 +705,15 @@ echo '{"type":"result","subtype":"success","session_id":"s1","result":"the real 
 "#,
         )
         .await;
-        let dones: Vec<&AgentEvent> = events.iter().filter(|event| matches!(event, AgentEvent::Done { .. })).collect();
+        let dones: Vec<&AgentEvent> = events
+            .iter()
+            .filter(|event| matches!(event, AgentEvent::Done { .. }))
+            .collect();
         assert_eq!(dones.len(), 1, "{events:?}");
-        assert!(matches!(dones[0], AgentEvent::Done { text, .. } if text == "the real answer"), "{events:?}");
+        assert!(
+            matches!(dones[0], AgentEvent::Done { text, .. } if text == "the real answer"),
+            "{events:?}"
+        );
     }
 
     #[tokio::test]
@@ -679,7 +726,10 @@ sleep 30
 "#,
         )
         .await;
-        assert!(matches!(events.last(), Some(AgentEvent::Done { text, .. }) if text == "started the server"), "{events:?}");
+        assert!(
+            matches!(events.last(), Some(AgentEvent::Done { text, .. }) if text == "started the server"),
+            "{events:?}"
+        );
     }
 
     #[tokio::test]
@@ -691,6 +741,9 @@ echo '{"type":"result","subtype":"success","session_id":"s1","result":"only answ
 "#,
         )
         .await;
-        assert!(matches!(events.last(), Some(AgentEvent::Done { text, .. }) if text == "only answer"), "{events:?}");
+        assert!(
+            matches!(events.last(), Some(AgentEvent::Done { text, .. }) if text == "only answer"),
+            "{events:?}"
+        );
     }
 }

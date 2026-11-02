@@ -32,6 +32,8 @@ pub(crate) mod codex;
 pub(crate) mod copilot;
 #[path = "connectors/github.rs"]
 pub(crate) mod github;
+#[path = "connectors/muse_code.rs"]
+pub(crate) mod muse_code;
 #[path = "connectors/opencode.rs"]
 pub(crate) mod opencode;
 #[path = "connectors/providers.rs"]
@@ -42,8 +44,6 @@ pub(crate) mod runtime;
 pub(crate) mod secrets;
 #[path = "connectors/workbuddy.rs"]
 pub(crate) mod workbuddy;
-#[path = "connectors/muse_code.rs"]
-pub(crate) mod muse_code;
 
 pub(crate) use antigravity::{
     agy_saved_active_email, agy_sign_in, antigravity_sign_in_another_account,
@@ -652,6 +652,14 @@ fn detect_tools(only: Option<&str>) -> Vec<&'static str> {
     }
 }
 
+/// Prefer the Claude Code binary resolved for the desktop app, then search the inherited PATH.
+fn claude_binary() -> Option<PathBuf> {
+    std::env::var_os("AGENTDECK_CLAUDE_CODE_BINARY")
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+        .or_else(|| which("claude"))
+}
+
 /// Which CLIs are installed (with versions) and whether each is signed in. Reads no tokens.
 #[tauri::command]
 pub async fn connectors_detect(only: Option<String>) -> Detected {
@@ -660,7 +668,12 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
         .into_iter()
         .map(|id| {
             tauri::async_runtime::spawn(async move {
-                let found = match which(id) {
+                let found = if id == "claude" {
+                    claude_binary()
+                } else {
+                    which(id)
+                };
+                let found = match found {
                     Some(path) => Some(path),
                     None if id == "codex" => npm_global_binary("codex").await,
                     None => None,
@@ -684,7 +697,7 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
         }
     }
     let claude = if detect_selected(only, "claude") {
-        match which("claude") {
+        match claude_binary() {
             Some(path) => {
                 match capture(&path, &["auth", "status"], Duration::from_secs(10)).await {
                     Ok(out) => claude_login(&out.stdout),
@@ -946,7 +959,7 @@ async fn connector_login_inner(app: AppHandle, id: String) -> Result<(), String>
         "workbuddy" => workbuddy::sign_in().await,
         "muse-code" => muse_code::sign_in().await,
         "claude" => {
-            let claude = which("claude").ok_or("Claude Code is not installed")?;
+            let claude = claude_binary().ok_or("Claude Code is not installed")?;
             run_logged_with_idle_timeout(
                 &app,
                 &id,
@@ -1395,7 +1408,7 @@ async fn account_add_inner(app: AppHandle, provider: String) -> Result<(), Strin
         }
         "claude" => {
             let cswap = which("cswap").ok_or("`cswap` is not installed")?;
-            let claude = which("claude").ok_or("Claude Code is not installed")?;
+            let claude = claude_binary().ok_or("Claude Code is not installed")?;
             // Sign in as the new account first; the switcher then saves whoever is signed in.
             run_logged_with_idle_timeout(
                 &app,
