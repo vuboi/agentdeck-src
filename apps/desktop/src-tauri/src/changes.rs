@@ -22,7 +22,7 @@ pub struct Change {
 }
 
 /// Runs git in `dir` without a console window; `(success, stdout, stderr)`.
-fn git(dir: &Path, args: &[&str]) -> Result<(bool, Vec<u8>, String), String> {
+pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<(bool, Vec<u8>, String), String> {
     let mut command = Command::new("git");
     command
         .args(["-c", "core.quotepath=false"])
@@ -48,7 +48,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<(bool, Vec<u8>, String), String> {
     ))
 }
 
-fn git_ok(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+pub(crate) fn git_ok(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let (ok, stdout, stderr) = git(dir, args)?;
     if ok {
         Ok(stdout)
@@ -62,7 +62,7 @@ fn git_ok(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 }
 
 /// The repository top folder of `root`.
-fn toplevel(root: &str) -> Result<PathBuf, String> {
+pub(crate) fn toplevel(root: &str) -> Result<PathBuf, String> {
     let (ok, stdout, _) = git(Path::new(root), &["rev-parse", "--show-toplevel"])?;
     if !ok {
         return Err("this folder is not a git repository".to_string());

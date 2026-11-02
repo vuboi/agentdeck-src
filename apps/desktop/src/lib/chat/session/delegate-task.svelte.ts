@@ -60,6 +60,8 @@ import {
     type Agent,
     type Effort,
     type SessionItem,
+    type WorktreeInfo,
+    sessionCwd,
 } from './state.svelte';
 import {
     agentLabel,
@@ -376,9 +378,40 @@ function firstRouted(
     return firstAvailableRoute(routesOf(taskRoles, id), rows, agentHasRoom);
 }
 
+/** A short, ASCII folder and branch part from the task text: "Fix export PDF" -> "fix-export-pdf". */
+export function worktreeSlug(task: string): string {
+    const slug = task
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 20)
+        .replace(/-+$/, '');
+    return slug || 'task';
+}
+
+/** Creates the worker's worktree from the caller's branch. The caller's own worktree, if any, is the repository. */
+async function makeWorkerWorktree(
+    caller: SessionItem,
+    task: string,
+): Promise<WorktreeInfo> {
+    if (!inTauri()) throw new Error('worktrees need the desktop app');
+    const root = sessionCwd(caller);
+    if (!root) throw new Error('the chat has no project folder');
+    const base = caller.worktree?.branch ?? caller.gitBranch ?? 'HEAD';
+    return invoke<WorktreeInfo>('worktree_create', {
+        root,
+        slug: worktreeSlug(task),
+        base,
+    });
+}
+
 function startTask(
     call: DelegateCall,
     answer: (text: string, isError?: boolean) => void,
+    prepared?: WorktreeInfo,
 ) {
     const parsed = parseDelegateArgs(call.args);
     if (!parsed.ok) return answer(parsed.error, true);
@@ -391,6 +424,7 @@ function startTask(
         continueId,
         role,
         dependsOn,
+        worktree: isolated,
     } = parsed.args;
     const caller = callerOf(call.caller);
     const reply = answer;
@@ -399,6 +433,22 @@ function startTask(
             'AgentDeck could not tell which chat is calling. Do the task yourself, or ask the user to run it from the chat.',
             true,
         );
+    if (isolated && !prepared) {
+        if (continueId)
+            return reply(
+                'isolation worktree cannot be used with continue: a reused chat keeps its folder. Start a new task instead.',
+                true,
+            );
+        void makeWorkerWorktree(caller, parsed.args.task)
+            .then((info) => startTask(call, reply, info))
+            .catch((error: unknown) =>
+                reply(
+                    `Could not create a worktree: ${String(error)}. Run the task with isolation shared, or fix the repository.`,
+                    true,
+                ),
+            );
+        return;
+    }
     if (taskDepth(caller.id) >= MAX_DELEGATION_DEPTH)
         return reply(
             `Delegation depth is limited to ${MAX_DELEGATION_DEPTH} levels. Finish this task yourself and report back.`,
@@ -585,6 +635,7 @@ function startTask(
             status: 'idle',
             parentId: caller.id,
             draft: false,
+            worktree: prepared,
         });
     // A chat with no messages and no draft flag is not a local chat: the next history import rebuilt the list without it, and a
     // worker waiting for a free place then had no chat to start in.

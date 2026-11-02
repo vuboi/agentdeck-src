@@ -51,6 +51,7 @@ export type DelegateArgs = {
     continueId?: string;
     role?: string;
     dependsOn: string[];
+    worktree: boolean;
 };
 
 const text = (value: unknown) =>
@@ -126,6 +127,14 @@ export function parseDelegateArgs(
         wait = flag;
     }
     let timeoutS = DEFAULT_TIMEOUT_S;
+    const isolation = input.isolation;
+    if (
+        isolation !== undefined &&
+        isolation !== null &&
+        isolation !== 'shared' &&
+        isolation !== 'worktree'
+    )
+        return { ok: false, error: 'isolation must be shared or worktree' };
     if (input.timeout_s !== undefined && input.timeout_s !== null) {
         const seconds =
             typeof input.timeout_s === 'number'
@@ -154,6 +163,7 @@ export function parseDelegateArgs(
             continueId,
             role,
             dependsOn,
+            worktree: isolation === 'worktree',
         },
     };
 }
@@ -496,9 +506,7 @@ export function formatTaskResult(head: TaskHeader, body: string): string {
 }
 
 /** The header of `formatTaskResult`, read back; null for any other text. */
-export function parseTaskResult(
-    output: string,
-): {
+export function parseTaskResult(output: string): {
     taskId: string;
     childId: string;
     verdict: Verdict | 'running';

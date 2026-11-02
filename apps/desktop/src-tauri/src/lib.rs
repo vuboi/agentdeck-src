@@ -52,6 +52,7 @@ mod slash_commands;
 mod store;
 mod tts;
 mod voice;
+mod worktree;
 
 use ag_adapters::agent::antigravity::Antigravity;
 use ag_adapters::agent::commandcode::CommandCode;
@@ -2637,6 +2638,11 @@ pub fn run() {
             tray_update_recent,
             history_list,
             changes::changes_list,
+            worktree::worktree_create,
+            worktree::worktree_status,
+            worktree::worktree_list,
+            worktree::worktree_merge,
+            worktree::worktree_remove,
             changes::change_diff,
             changes::change_revert,
             changes::change_revert_all,
