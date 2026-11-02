@@ -623,12 +623,39 @@ void getPref<Record<string, string[]>>('permissions.allowed').then((saved) => {
     if (saved) Object.assign(approved, saved);
 });
 
-/** The chat's model if its agent offers it, else that agent's first model. */
+/**
+ * The model a chat's turn runs on, from the saved one and the agent's list (pure): the saved model when the list has it,
+ * the first model when none is saved, and `missing` when the saved one is no longer offered. A missing model is never
+ * replaced by another one (D-A): the send is blocked instead (see startTurn).
+ */
+export function pickModel(
+    saved: string | null | undefined,
+    list: readonly { value: string }[],
+): { model: string | null } | { missing: string } {
+    if (!saved) return { model: list[0]?.value ?? null };
+    if (list.some((item) => item.value === saved)) return { model: saved };
+    return { missing: saved };
+}
+
+/** The model a chat runs on: see pickModel. Pure: the chat is not written here. */
+export function chatModel(session: SessionItem): ReturnType<typeof pickModel> {
+    // A Console credit model stays picked while its key is missing: the turn then stops and says so (agent.ts), instead of
+    // quietly running on the plan's model. Only the user's own pick changes it.
+    if (creditModel(session.model)) return { model: session.model ?? null };
+    // Until the CLI's own list has been read, the catalogue is only a fallback: the saved model is trusted as it is.
+    if (session.model && modelsReady[session.agent as ProviderId] === false)
+        return { model: session.model };
+    return pickModel(session.model, MODELS[session.agent] ?? []);
+}
+
 /** The effort a turn is sent with. A model the CLI lists without reasoning levels (Antigravity's Claude models) gets
  *  none: `agy --effort` refuses it, and the level picked for another model must not follow it. */
 export function effortFor(session: SessionItem): Effort | null {
+    const picked = chatModel(session);
+    // A model that is no longer offered has no effort: the send is blocked (see startTurn).
+    if ('missing' in picked) return null;
     const level = turnOptionsOf(session.id).effort;
-    const model = modelFor(session);
+    const model = picked.model;
     const known = model ? findModel(session.agent, model) : undefined;
     // Antigravity sends a level only when its own list gives this model levels: `agy` refuses --effort for the rest.
     if (session.agent === 'antigravity')
@@ -636,18 +663,10 @@ export function effortFor(session: SessionItem): Effort | null {
     return known && !known.efforts?.length ? null : level;
 }
 
+/** The model a turn runs on (see chatModel); null when the saved one is no longer offered, so callers check chatModel first. */
 export function modelFor(session: SessionItem): string | null {
-    // A Console credit model stays picked while its key is missing: the turn then stops and says so (agent.ts), instead of
-    // quietly running on the plan's model. Only the user's own pick changes it.
-    if (creditModel(session.model)) return session.model;
-    const list = MODELS[session.agent] ?? [];
-    if (session.model && list.some((item) => item.value === session.model))
-        return session.model;
-    // Until the CLI's own list has been read, the catalogue is only a fallback: the saved model is trusted as it is.
-    if (session.model && modelsReady[session.agent as ProviderId] === false)
-        return session.model;
-    // Pure: the chat is not written here. The picker shows what is no longer offered (see ModelPicker).
-    return list[0]?.value ?? null;
+    const picked = chatModel(session);
+    return 'model' in picked ? picked.model : null;
 }
 
 export const agentLabel = (agent?: Agent, model?: string | null) =>

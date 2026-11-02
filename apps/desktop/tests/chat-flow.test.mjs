@@ -315,3 +315,143 @@ test('R3.7: a reload drops the watchdog notes from the restored backlog and keep
         ['t1'],
     );
 });
+
+// ---------- R3.6 (D-A, plan_next.md): a saved model that is no longer offered blocks the send; it is never swapped ----------
+
+const { creditModel: realCreditModel } =
+    await import('../src/lib/agents/credit-model.ts');
+
+/** The turns module with the catalogue given: `chatModel`, `modelFor`, `effortFor` are the real ones. */
+async function loadTurns({ catalogue = {}, ready = {} } = {}) {
+    return load('turns', {
+        getPref: async () => null,
+        setPref() {},
+        inTauri: () => false,
+        creditModel: realCreditModel,
+        MODELS: catalogue,
+        modelsReady: ready,
+        findModel: (agent, value) =>
+            (catalogue[agent] ?? []).find((item) => item.value === value),
+        customProviderName: () => undefined,
+        workspace: { activeId: null, sessions: [], projects: [] },
+    });
+}
+
+const claudeCatalogue = {
+    claude: [
+        { value: 'claude-opus-5-5', label: 'Opus 5.5' },
+        { value: 'claude-haiku-5-5', label: 'Haiku 5.5' },
+    ],
+};
+
+/** The run module, for startTurn and prewarmChat, with a chat and its catalogue. Records what reaches the CLI. */
+async function runWith(
+    session,
+    { catalogue = claudeCatalogue, ready = { claude: true } } = {},
+) {
+    const turns = await loadTurns({ catalogue, ready });
+    const calls = { custom: [], agent: [], prewarm: [] };
+    const localMessages = {};
+    const run = await load('run', {
+        accountEpochsLoaded: true,
+        accountEpochsReady: Promise.resolve(),
+        inTauri: () => true,
+        credentialBusy: () => false,
+        credentialScope: credentialScope,
+        isRunning: () => false,
+        workspace: { activeId: null, sessions: [session], projects: [] },
+        MODELS: catalogue,
+        modelsReady: ready,
+        chatModel: turns.chatModel,
+        modelFor: turns.modelFor,
+        effortFor: turns.effortFor,
+        messagesById: new Map(),
+        localMessages,
+        chat: { messages: [] },
+        mockMessages: [],
+        setMessages() {},
+        persistLocal() {},
+        nextId: () => 'id',
+        clock: () => '00:00',
+        SvelteDate: Date,
+        logFlow() {},
+        turnOptionsOf: () => ({ permission: 'ask', effort: 'medium' }),
+        PERMISSION_MODE: {},
+        approved: {},
+        sessionCwd: () => '/project',
+        liveModel: () => false,
+        accountEpoch: {},
+        sendCustomTurn: (args) => calls.custom.push(args),
+        sendAgentTurn: (args) => calls.agent.push(args),
+        prewarmAgent: async (args) => {
+            calls.prewarm.push(args);
+        },
+    });
+    return { run, turns, calls, localMessages };
+}
+
+test('R3.6: pickModel keeps a listed model, takes the first when none is saved, and names a missing one', async () => {
+    const turns = await loadTurns();
+    const list = [{ value: 'a' }, { value: 'b' }];
+    // The module runs in its own realm: results are compared as plain JSON.
+    const plain = (value) => JSON.parse(JSON.stringify(value));
+    assert.deepEqual(plain(turns.pickModel('b', list)), { model: 'b' });
+    assert.deepEqual(plain(turns.pickModel(undefined, list)), { model: 'a' });
+    assert.deepEqual(plain(turns.pickModel('gone', list)), { missing: 'gone' });
+    assert.deepEqual(plain(turns.pickModel('gone', [])), { missing: 'gone' });
+});
+
+test('R3.6: a listed saved model is what the chat runs on, and its effort is kept', async () => {
+    const session = { id: 'chat', agent: 'claude', model: 'claude-haiku-5-5' };
+    const { turns } = await runWith(session);
+    assert.deepEqual(JSON.parse(JSON.stringify(turns.chatModel(session))), {
+        model: 'claude-haiku-5-5',
+    });
+    assert.equal(turns.modelFor(session), 'claude-haiku-5-5');
+});
+
+test('R3.6: a chat whose saved model is gone is not sent: the chat says why, and no CLI is started', async () => {
+    const session = { id: 'chat', agent: 'claude', model: 'claude-removed-9' };
+    const { run, calls, localMessages } = await runWith(session);
+    run.startTurn(session, 'hello');
+    assert.equal(calls.agent.length, 0, 'sendAgentTurn was not called');
+    assert.equal(calls.custom.length, 0, 'sendCustomTurn was not called');
+    const said = localMessages.chat.at(-1);
+    assert.equal(said.role, 'assistant');
+    assert.equal(
+        said.blocks[0].text,
+        'The model claude-removed-9 is no longer available. Pick a model.',
+    );
+});
+
+test('R3.6: a chat whose saved model is gone is not prewarmed, and its effort is null', async () => {
+    const session = {
+        id: 'chat',
+        agent: 'claude',
+        firstAgent: 'claude',
+        model: 'claude-removed-9',
+    };
+    const { run, turns, calls } = await runWith(session);
+    run.prewarmChat('chat');
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(
+        calls.prewarm.length,
+        0,
+        'no CLI is started for a missing model',
+    );
+    assert.equal(turns.effortFor(session), null);
+});
+
+test('R3.6: a custom provider deleted under a chat that used its model blocks the send', async () => {
+    const session = {
+        id: 'chat',
+        agent: 'custom',
+        model: 'custom|providerA::m1',
+    };
+    const { run, calls } = await runWith(session, {
+        catalogue: { custom: [{ value: 'custom|providerB::m2', label: 'm2' }] },
+        ready: { custom: true },
+    });
+    run.startTurn(session, 'hello');
+    assert.equal(calls.custom.length, 0, 'sendCustomTurn was not called');
+});

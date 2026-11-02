@@ -106,7 +106,6 @@ import {
     isRunning,
     lastPrompt,
     missedTurns,
-    modelFor,
     nativeDelegationHinted,
     orchestrateTold,
     priorDelegateHinted,
@@ -118,6 +117,7 @@ import {
     turnOptionsOf,
     turns,
     effortFor,
+    chatModel,
 } from './turns.svelte';
 import {
     handleAgentEvent,
@@ -369,7 +369,10 @@ export function prewarmChat(sessionId: string) {
         isRunning(session.id)
     )
         return;
-    const selectedModel = modelFor(session);
+    const picked = chatModel(session);
+    // A model no longer offered is not started ahead: the chat's next send says so (see startTurn).
+    if ('missing' in picked) return;
+    const selectedModel = picked.model;
     const now = Date.now();
     const scope = credentialScope(session.agent, session.model);
     const epoch = accountEpoch[scope] ?? 0;
@@ -527,6 +530,22 @@ function writeBound(
     (session.syncedSeq ??= {})[agent as Agent] = bound.syncedSeq;
 }
 
+/** D-A: a send whose saved model is no longer offered is not run; the chat says so, as the agent's answer would. */
+function sayModelMissing(sessionId: string, model: string) {
+    messagesOf(sessionId).push({
+        id: nextId(),
+        role: 'assistant',
+        time: clock(new SvelteDate().toISOString()),
+        blocks: [
+            {
+                kind: 'response',
+                text: `The model ${model} is no longer available. Pick a model.`,
+            },
+        ],
+    });
+    persistLocal();
+}
+
 /** One CLI run (`claude -p`, `codex exec`) in `session`, with a fresh live reply. Images go to disk first so the CLI can open them. */
 export function startTurn(
     session: SessionItem,
@@ -562,6 +581,12 @@ export function startTurn(
         );
         return;
     }
+    // D-A: a saved model that is no longer offered is not replaced by another one. Nothing starts; the chat says why.
+    const offered = chatModel(session);
+    if ('missing' in offered) {
+        sayModelMissing(session.id, offered.missing);
+        return;
+    }
     // A new turn of the chat ends the "stopped by you" state: any start (a queued message, a recovery) clears it, or the
     // composer kept offering "Continue" for a request that had already moved on.
     if (!listener) delete manuallyStopped[session.id];
@@ -581,7 +606,7 @@ export function startTurn(
     // and reports it, so a new Codex chat starts without one.
     const first = (session.firstAgent ??=
         session.source ?? session.agents?.[0] ?? session.agent);
-    const selectedModel = modelFor(session);
+    const selectedModel = offered.model;
     rememberLastChat(
         session.agent,
         selectedModel,
