@@ -640,6 +640,19 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                         other => other.clone(),
                     };
                     events.extend(subagents_ended(&listed, &index.to_string(), agy_transcript));
+                    // A sub-agent step that lists nobody still ends its task, or the card would stay running for good.
+                    if is_subagent_tool(raw_name)
+                        && listed["subagents"].as_array().is_none_or(Vec::is_empty)
+                    {
+                        events.push(AgentEvent::Task {
+                            id: index.to_string(),
+                            tool_use_id: Some(index.to_string()),
+                            status: TaskStatus::Done,
+                            label: None,
+                            summary: None,
+                            tools: None,
+                        });
+                    }
                     // A read's streamed output is only its stat line; the file the call named is read again so the
                     // Read card can show what was read.
                     let mut output = info["output"].as_str().unwrap_or_default().to_string();
@@ -761,15 +774,25 @@ fn subagents_ended(
     read: impl Fn(&str) -> Option<String>,
 ) -> Vec<AgentEvent> {
     let mut events = Vec::new();
-    for agent in listed["subagents"].as_array().into_iter().flatten() {
+    // The first sub-agent ends the task the call started, under the call's own id: its start event used that id, so the
+    // two match. The others (a step can list several) get ids of their own, derived from the call. The conversation id
+    // is not an id: the start event never had it.
+    for (position, agent) in listed["subagents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
         let transcript = agent["log_uri"]
             .as_str()
             .and_then(&read)
             .map(|text| read_transcript(&text));
         events.push(AgentEvent::Task {
-            id: agent["conversation_id"]
-                .as_str()
-                .map_or_else(|| call.to_string(), str::to_owned),
+            id: if position == 0 {
+                call.to_string()
+            } else {
+                format!("{call}#{position}")
+            },
             tool_use_id: Some(call.to_string()),
             status: TaskStatus::Done,
             label: agent["role"]
@@ -1090,6 +1113,12 @@ mod tests {
             "{tasks:?}"
         );
         assert!(tasks.iter().any(|event| matches!(event, AgentEvent::Task { status: TaskStatus::Done, summary: Some(summary), .. } if summary.contains("17*3"))), "{tasks:?}");
+        // The task ends under the id it started with, so the card and the activity row close together.
+        let started_id = match tasks.first() {
+            Some(AgentEvent::Task { id, .. }) => id.clone(),
+            _ => unreachable!(),
+        };
+        assert!(tasks.iter().any(|event| matches!(event, AgentEvent::Task { status: TaskStatus::Done, id, .. } if *id == started_id)), "{tasks:?}");
         assert!(matches!(events.last(), Some(AgentEvent::Done { .. })));
     }
     #[test]
@@ -1397,7 +1426,7 @@ not json"#;
             events,
             vec![
                 AgentEvent::Task {
-                    id: "kid".into(),
+                    id: "2".into(),
                     tool_use_id: Some("2".into()),
                     status: TaskStatus::Done,
                     label: Some("Math Calculator".into()),

@@ -4,7 +4,7 @@
 // A block is "streaming" while the CLI is still writing it: only the last thinking or response block can be.
 // Starting any other block, or ending the turn, closes it. A command stays "running" until the turn ends.
 
-import type { Block, Message } from './mock';
+import type { Block, Message, TaskRecord } from './mock';
 import type { AgentEvent } from './agent';
 
 export type ReplyUpdate = {
@@ -47,30 +47,143 @@ function findCommand(
     return undefined;
 }
 
+type CommandBlock = Extract<Block, { kind: 'command' }>;
+type TaskEvent = Extract<AgentEvent, { kind: 'task' }>;
+
+/** A task that has ended: its late events do not reopen it. */
+const ENDED = new Set<TaskRecord['status']>(['done', 'failed', 'stopped']);
+
+/** The card's task, from all the tasks of its call: running while any runs; otherwise failed if one failed, stopped if
+ *  one was stopped, else done. Its label and summary are the last ones given. */
+function cardTask(tasks: Record<string, TaskRecord>): TaskRecord {
+    const all = Object.values(tasks);
+    const running = all.filter((task) => !ENDED.has(task.status));
+    let status: TaskRecord['status'] = 'done';
+    if (running.length > 0) {
+        status = running.some((task) => task.status === 'progress')
+            ? 'progress'
+            : 'started';
+    } else if (all.some((task) => task.status === 'failed')) {
+        status = 'failed';
+    } else if (all.some((task) => task.status === 'stopped')) {
+        status = 'stopped';
+    }
+    const starts = all.flatMap((task) =>
+        task.startedAt === undefined ? [] : [task.startedAt],
+    );
+    const ends = all.flatMap((task) =>
+        task.endedAt === undefined ? [] : [task.endedAt],
+    );
+    return {
+        status,
+        label: all.findLast((task) => task.label)?.label,
+        summary: all.findLast((task) => task.summary)?.summary,
+        tools: all.reduce<number | undefined>(
+            (sum, task) =>
+                task.tools === undefined ? sum : (sum ?? 0) + task.tools,
+            undefined,
+        ),
+        startedAt: starts.length > 0 ? Math.min(...starts) : undefined,
+        endedAt:
+            running.length === 0 && ends.length > 0
+                ? Math.max(...ends)
+                : undefined,
+    };
+}
+
+/** Applies a task event to the background call it belongs to. Each task keeps its own record, so a call that started
+ *  several (one spawn, several agents) shows each, and the card's task is the whole. A task that has ended is not
+ *  reopened by its late events (a finished worker, a stopped one). */
+function applyTaskEvent(call: CommandBlock, event: TaskEvent) {
+    const tasks = (call.tasks ??= {});
+    const before = tasks[event.id];
+    if (before && ENDED.has(before.status)) return;
+    const now = Date.now();
+    tasks[event.id] = {
+        status: event.status,
+        // Set once, when the task first shows: the activity card counts from here.
+        startedAt: before?.startedAt ?? now,
+        endedAt: ENDED.has(event.status) ? now : undefined,
+        label: event.label ?? before?.label,
+        summary: event.summary ?? before?.summary,
+        tools: event.tools ?? before?.tools,
+    };
+    call.task = cardTask(tasks);
+}
+
+/** Ends the tasks of a call that are still open, as stopped: the user stopped the chat's background work. */
+export function stopCallTasks(call: CommandBlock) {
+    const now = Date.now();
+    if (call.tasks) {
+        for (const task of Object.values(call.tasks)) {
+            if (ENDED.has(task.status)) continue;
+            task.status = 'stopped';
+            task.endedAt = now;
+        }
+        call.task = cardTask(call.tasks);
+    } else if (call.task && !ENDED.has(call.task.status)) {
+        call.task = { ...call.task, status: 'stopped', endedAt: now };
+    }
+}
+
+/** Child events that came before the call they belong to was drawn (the call's start is late or was lost). They wait
+ *  for it, at most ORPHAN_LIMIT in all and for ORPHAN_MS each; what expires is logged, never drawn in the main answer. */
+const ORPHAN_LIMIT = 200;
+const ORPHAN_MS = 60_000;
+const orphans = new Map<string, { event: AgentEvent; at: number }[]>();
+
+function expireOrphans(now: number) {
+    for (const [parent, list] of orphans) {
+        const fresh = list.filter((held) => now - held.at < ORPHAN_MS);
+        if (fresh.length < list.length)
+            console.warn(
+                `[agent] ${list.length - fresh.length} sub-agent event(s) of call ${parent} expired: its card never came`,
+            );
+        if (fresh.length > 0) orphans.set(parent, fresh);
+        else orphans.delete(parent);
+    }
+}
+
+function holdOrphan(parent: string, event: AgentEvent) {
+    const now = Date.now();
+    expireOrphans(now);
+    const list = orphans.get(parent) ?? [];
+    list.push({ event, at: now });
+    orphans.set(parent, list);
+    let total = 0;
+    for (const held of orphans.values()) total += held.length;
+    const oldest = orphans.keys().next().value;
+    if (total > ORPHAN_LIMIT && oldest !== undefined) {
+        // The oldest call's first event goes: the buffer keeps to its limit.
+        const dropped = orphans.get(oldest) ?? [];
+        dropped.shift();
+        console.warn(
+            `[agent] more than ${ORPHAN_LIMIT} sub-agent events waited for their card: one of call ${oldest} was dropped`,
+        );
+        if (dropped.length > 0) orphans.set(oldest, dropped);
+        else orphans.delete(oldest);
+    }
+}
+
+/** The held child events of a call that has just been drawn, in their order. */
+function takeOrphans(parent: string): AgentEvent[] {
+    expireOrphans(Date.now());
+    const list = orphans.get(parent) ?? [];
+    orphans.delete(parent);
+    return list.map((held) => held.event);
+}
+
 /** Updates the original task card when its provider reports progress in a later automatic turn. */
 export function updateHistoricalTask(
     messages: readonly Message[],
-    event: Extract<AgentEvent, { kind: 'task' }>,
+    event: TaskEvent,
 ): boolean {
     const id = event.tool_use_id ?? event.id;
     for (let index = messages.length - 1; index >= 0; index--) {
         const call = findCommand(messages[index].blocks, id);
         if (!call) continue;
         if (!call.background) return true;
-        // Delayed progress from a completed task cannot reopen its pinned activity indicator.
-        if (call.task?.status === 'done' || call.task?.status === 'failed')
-            return true;
-        call.task = {
-            status: event.status,
-            startedAt: call.task?.startedAt ?? Date.now(),
-            endedAt:
-                event.status === 'done' || event.status === 'failed'
-                    ? Date.now()
-                    : undefined,
-            label: event.label ?? call.task?.label,
-            summary: event.summary ?? call.task?.summary,
-            tools: event.tools ?? call.task?.tools,
-        };
+        applyTaskEvent(call, event);
         return true;
     }
     return false;
@@ -114,9 +227,9 @@ export function applyAgentEvent(
             }
             return { blocks, finished: false };
         }
-        case 'tool_call':
+        case 'tool_call': {
             close(blocks, false);
-            blocks.push({
+            const call: CommandBlock = {
                 kind: 'command',
                 id: event.id,
                 command: `${event.name}  ${event.input}`.trim(),
@@ -134,8 +247,19 @@ export function applyAgentEvent(
                           },
                       }
                     : {}),
-            });
+            };
+            blocks.push(call);
+            // The child events that came before this call was drawn belong under it now. Read back from the list, so the
+            // change goes through the same (reactive) object the list holds.
+            const drawn = blocks.at(-1);
+            if (drawn?.kind === 'command')
+                for (const held of takeOrphans(event.id))
+                    drawn.children = applyAgentEvent(
+                        drawn.children ?? [],
+                        held,
+                    ).blocks;
             return { blocks, finished: false };
+        }
         case 'tool_result': {
             const call = blocks.find(
                 (block) => block.kind === 'command' && block.id === event.id,
@@ -197,14 +321,15 @@ export function applyAgentEvent(
             };
         }
         case 'scoped': {
-            // Child work goes under the call that started it. A child whose call is not here (yet) is dropped, not drawn as
-            // part of the main answer.
+            // Child work goes under the call that started it. A child whose call is not here (yet) waits for it (see
+            // holdOrphan), and is never drawn as part of the main answer.
             const parent = findCommand(blocks, event.parent);
             if (parent)
                 parent.children = applyAgentEvent(
                     parent.children ?? [],
                     event.event,
                 ).blocks;
+            else holdOrphan(event.parent, event.event);
             return { blocks, finished: false };
         }
         case 'tool_model': {
@@ -214,26 +339,8 @@ export function applyAgentEvent(
         }
         case 'task': {
             const call = findCommand(blocks, event.tool_use_id ?? event.id);
-            if (
-                call?.task?.status === 'done' ||
-                call?.task?.status === 'failed'
-            )
-                return { blocks, finished: false };
             // A foreground call (a Bash the CLI also reports as a task) stays an ordinary command row: only background calls get a task.
-            if (call?.background) {
-                call.task = {
-                    status: event.status,
-                    // Set once, when the task first shows: the activity card counts from here.
-                    startedAt: call.task?.startedAt ?? Date.now(),
-                    endedAt:
-                        event.status === 'done' || event.status === 'failed'
-                            ? Date.now()
-                            : undefined,
-                    label: event.label ?? call.task?.label,
-                    summary: event.summary ?? call.task?.summary,
-                    tools: event.tools ?? call.task?.tools,
-                };
-            }
+            if (call?.background) applyTaskEvent(call, event);
             return { blocks, finished: false };
         }
         case 'auto_turn':

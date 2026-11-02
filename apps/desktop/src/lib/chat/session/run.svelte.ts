@@ -1,7 +1,12 @@
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { credentialBusy } from '../../agents/credential-switch';
+import { credentialScope } from '../../agents/credential-scope';
 import { inTauri, clock } from '../../app/platform/history';
-import { accountEpoch } from '../runs/account-epoch.svelte';
+import {
+    accountEpoch,
+    accountEpochsLoaded,
+    accountEpochsReady,
+} from '../runs/account-epoch.svelte';
 import {
     pictureData,
     prehandleAntigravity,
@@ -315,6 +320,26 @@ function accountConversationId(sessionId: string, epoch: number): string {
     return id;
 }
 
+/** The conversation id a chat's own id names (`claude:<uuid>`), unless the conversation was reset. */
+function idNamedByChat(
+    session: SessionItem,
+    agent: string,
+): string | undefined {
+    const prefix = `${agent}:`;
+    return session.agentStarted === false || !session.id.startsWith(prefix)
+        ? undefined
+        : session.id.slice(prefix.length);
+}
+
+/** The conversation id a chat's agent already has: the one kept on the chat, else the one its id names. Shared by
+ *  prewarmChat and startTurn (boundsOf), so both start or resume the same conversation (D10). */
+function existingConversationId(
+    session: SessionItem,
+    agent: string,
+): string | undefined {
+    return session.agentSession ?? idNamedByChat(session, agent);
+}
+
 /**
  * Starts the CLI of a chat whose next message is being typed (Claude, Codex, Antigravity keep it open between turns,
  * see warm.rs), with what `startTurn` will send, so the first turn does not wait for it to load. Nothing is changed in
@@ -322,12 +347,16 @@ function accountConversationId(sessionId: string, epoch: number): string {
  * new conversation (another model, another account) is left to start on its own.
  */
 export function prewarmChat(sessionId: string) {
+    // The epoch is compared only once the saved account counts have arrived (or their short wait ran out), so a chat
+    // does not take a switch that has not happened for one (D6).
+    if (!accountEpochsLoaded) {
+        void accountEpochsReady.then(() => prewarmChat(sessionId));
+        return;
+    }
     const selected = workspace.sessions.find((item) => item.id === sessionId);
     if (
         selected &&
-        credentialBusy(
-            selected.agent === 'antigravity' ? 'agy' : selected.agent,
-        )
+        credentialBusy(credentialScope(selected.agent, selected.model))
     )
         return;
     const session = workspace.sessions.find((item) => item.id === sessionId);
@@ -342,7 +371,8 @@ export function prewarmChat(sessionId: string) {
         return;
     const selectedModel = modelFor(session);
     const now = Date.now();
-    const epoch = accountEpoch[session.agent] ?? 0;
+    const scope = credentialScope(session.agent, session.model);
+    const epoch = accountEpoch[scope] ?? 0;
     // The account is part of the throttle: a switch makes a new CLI worth starting at once.
     const throttle = `${session.id}|${session.agent}|${selectedModel}|${epoch}`;
     if (now - (prewarmedAt.get(throttle) ?? 0) < 60_000) return;
@@ -372,16 +402,13 @@ export function prewarmChat(sessionId: string) {
             cliId = null;
             resume = false;
         } else {
-            const prefix = `${session.agent}:`;
-            const fromId =
-                session.agentStarted === false
-                    ? undefined
-                    : session.id.startsWith(prefix)
-                      ? session.id.slice(prefix.length)
-                      : undefined;
-            if (!session.agentSession && !fromId && session.agent === 'claude')
+            // The same choice of conversation id as startTurn makes (boundsOf): see existingConversationId.
+            if (
+                !existingConversationId(session, session.agent) &&
+                session.agent === 'claude'
+            )
                 session.agentSession = crypto.randomUUID();
-            cliId = session.agentSession ?? fromId ?? null;
+            cliId = existingConversationId(session, session.agent) ?? null;
             resume = cliId !== null && (session.agentStarted ?? !!session.path);
         }
     } else {
@@ -455,16 +482,9 @@ function boundsOf(
     mint: (() => string) | undefined,
 ): Partial<Record<string, Bound>> {
     const bounds: Partial<Record<string, Bound>> = {};
-    // A chat's id names its first conversation (`claude:<uuid>`), unless the conversation was reset.
-    const prefix = `${first}:`;
-    const fromId =
-        session.agentStarted === false || !session.id.startsWith(prefix)
-            ? undefined
-            : session.id.slice(prefix.length);
     bounds[first] = {
         id:
-            session.agentSession ??
-            fromId ??
+            existingConversationId(session, first) ??
             (first === session.agent ? (mint?.() ?? '') : ''),
         started: session.agentStarted ?? Boolean(session.path),
         model: session.conversationModel || undefined,
@@ -523,6 +543,25 @@ export function startTurn(
         'triggeredByMessageId' | 'taskTitle' | 'taskIds' | 'workflowRunId'
     >,
 ) {
+    // The epoch is compared only once the saved account counts have arrived (D6): the turn waits for them, as the
+    // sends behind a switch do.
+    if (!accountEpochsLoaded) {
+        void accountEpochsReady.then(() =>
+            startTurn(
+                session,
+                text,
+                images,
+                allow,
+                preface,
+                files,
+                silent,
+                runGroup,
+                listener,
+                report,
+            ),
+        );
+        return;
+    }
     // A new turn of the chat ends the "stopped by you" state: any start (a queued message, a recovery) clears it, or the
     // composer kept offering "Continue" for a request that had already moved on.
     if (!listener) delete manuallyStopped[session.id];
@@ -552,7 +591,8 @@ export function startTurn(
     // background lane never reads it here: its prompt carries its own digest (see `sendImmediate`).
     const chatHistory = messagesOf(session.id);
     const ledger = silent ? chatHistory : chatHistory.slice(0, -1);
-    const accountGen = accountEpoch[session.agent] ?? 0;
+    const accountGen =
+        accountEpoch[credentialScope(session.agent, session.model)] ?? 0;
     // The id a new conversation gets: Claude takes one we choose (an account switch keeps the id it had per account);
     // a model change starts without one, as before; the other CLIs name their own.
     const mint = (reason?: Reason) =>
@@ -897,7 +937,11 @@ export function startTurn(
                         ...history,
                         {
                             role: 'user',
-                            content: dispatchBody,
+                            // The preface (instructions of a flow, a worker, a hand-back) goes with the message, as on the CLI
+                            // path. The digest (`forkContext`) is not sent: the history above already holds every turn.
+                            content: preface
+                                ? `${preface}\n\n${dispatchBody}`
+                                : dispatchBody,
                             images: pictureSources,
                             files: files.map((file) => file.path),
                         },

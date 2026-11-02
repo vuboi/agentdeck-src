@@ -34,7 +34,16 @@ pub const AGENT_STALL_LIMIT: Duration = Duration::from_secs(20 * 60);
 
 /// Tool calls that start a sub-agent: their result does not say the work is over, and their own output is the child's.
 fn starts_sub_agent(name: &str) -> bool {
-    matches!(name, "Agent" | "Task" | "spawnAgent" | "subagent")
+    matches!(
+        name,
+        "Agent"
+            | "Task"
+            | "spawnAgent"
+            | "subagent"
+            | "invoke_subagent"
+            | "browser_subagent"
+            | "task"
+    )
 }
 
 /// Time since the last sign of life. Uses tokio's clock, so tests can pause and advance it.
@@ -85,7 +94,7 @@ impl Watchdog {
                 TaskStatus::Started | TaskStatus::Progress => {
                     self.open_tasks.insert(id.clone());
                 }
-                TaskStatus::Done | TaskStatus::Failed => {
+                TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped => {
                     self.open_tasks.remove(id);
                 }
             },
@@ -148,6 +157,22 @@ mod tests {
             dog.expired(),
             "after the tool the ordinary limit applies again"
         );
+    }
+
+    #[test]
+    fn every_provider_sub_agent_tool_name_counts_as_a_sub_agent() {
+        for name in [
+            "Agent",
+            "Task",
+            "spawnAgent",
+            "subagent",
+            "invoke_subagent",
+            "browser_subagent",
+            "task",
+        ] {
+            assert!(starts_sub_agent(name), "{name} should start a sub-agent");
+        }
+        assert!(!starts_sub_agent("Bash"));
     }
 
     #[tokio::test(start_paused = true)]

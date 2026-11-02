@@ -37,10 +37,13 @@ export const kindOfCommand = (command: string) =>
 
 // ---------- arguments ----------
 
+// The limits below are the Rust side's (src-tauri/src/delegate.rs); a node test keeps the two in step.
 export const DEFAULT_TIMEOUT_S = 1800;
 export const MIN_TIMEOUT_S = 10;
 export const MAX_TIMEOUT_S = 7200;
 export const TASK_MAX_CHARS = 30_000;
+/** How long a worker waits for its parent's answer to task_ask (`QUESTION_WAIT` in delegate.rs). */
+export const QUESTION_WAIT_MS = 15 * 60_000;
 
 export type DelegateArgs = {
     agent: string;
@@ -295,6 +298,17 @@ export function formatAgents(rows: AgentRow[]): string {
 export const RESTRICTED_NOTE =
     '[FREE TIER: may keep and train on what it is sent. Light public work only: web search, reading public pages, chat, emails, prompts, scripts and other writing, small text edits. It sees no file, project or tool of this machine: put everything it needs in `task`, with no source code, private data, secrets, passwords, environment variables, internal IPs or host names (AgentDeck blocks those).]';
 
+/**
+ * The routes a chat may fall back to. A delegated worker's prompt is the caller's text, which was checked for private
+ * content only when the task started: a free tier is never a fallback for it, whatever the user's chain says.
+ */
+export function routesForChat<T extends { restricted?: boolean }>(
+    routes: T[],
+    isWorker: boolean,
+): T[] {
+    return isWorker ? routes.filter((route) => !route.restricted) : routes;
+}
+
 /** Fenced code a task may carry to a free tier: a short public snippet, not a file of the project. */
 const CODE_LINES_MAX = 30;
 
@@ -496,9 +510,7 @@ export function formatTaskResult(head: TaskHeader, body: string): string {
 }
 
 /** The header of `formatTaskResult`, read back; null for any other text. */
-export function parseTaskResult(
-    output: string,
-): {
+export function parseTaskResult(output: string): {
     taskId: string;
     childId: string;
     verdict: Verdict | 'running';

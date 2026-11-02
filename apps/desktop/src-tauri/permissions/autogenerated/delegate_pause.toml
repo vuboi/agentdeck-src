@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delegate-pause"
+description = "Enables the delegate_pause command without any pre-configured scope."
+commands.allow = ["delegate_pause"]
+
+[[permission]]
+identifier = "deny-delegate-pause"
+description = "Denies the delegate_pause command without any pre-configured scope."
+commands.deny = ["delegate_pause"]

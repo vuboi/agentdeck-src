@@ -10,21 +10,21 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 pub const DEFAULT_TIMEOUT_S: u64 = 1800;
 pub const MIN_TIMEOUT_S: u64 = 10;
 pub const MAX_TIMEOUT_S: u64 = 7200;
 /// Longest task text accepted: it is a prompt, not a document.
-const TASK_MAX_CHARS: usize = 30_000;
+pub const TASK_MAX_CHARS: usize = 30_000;
 /// How long a quick tool (list, status, stop, a task started in the background) may wait for the webview.
 const QUICK_WAIT: Duration = Duration::from_secs(20);
 /// How long a worker may wait for another agent's answer before the question is released.
-const QUESTION_WAIT: Duration = Duration::from_secs(900);
+pub const QUESTION_WAIT: Duration = Duration::from_secs(900);
 /// What the call waits beyond the task's own timeout, which the webview enforces (stopping the worker): only a backstop.
 const BACKSTOP: Duration = Duration::from_secs(60);
 
@@ -297,6 +297,58 @@ fn fail_all(reason: &str) -> usize {
     count
 }
 
+/// What the webview tells a waiting call's clock: the task is held (queued, waiting for a dependency, paused by the user)
+/// or it runs again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clock {
+    Pause,
+    Resume,
+}
+
+static CLOCKS: LazyLock<Mutex<HashMap<String, mpsc::UnboundedSender<Clock>>>> =
+    LazyLock::new(Default::default);
+
+fn clocks() -> std::sync::MutexGuard<'static, HashMap<String, mpsc::UnboundedSender<Clock>>> {
+    CLOCKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The time a blocking call may wait for its answer. It runs only while the task runs: a held task (queued for a
+/// worker slot, waiting for a dependency, paused) keeps its remaining time, so waiting in line never times the call out.
+#[derive(Debug, PartialEq)]
+struct Budget {
+    deadline: Instant,
+    /// The time left while held; `None` while running.
+    held: Option<Duration>,
+}
+
+impl Budget {
+    fn new(limit: Duration, now: Instant) -> Self {
+        Self {
+            deadline: now + limit,
+            held: None,
+        }
+    }
+
+    fn pause(&mut self, now: Instant) {
+        if self.held.is_none() {
+            self.held = Some(self.deadline.saturating_duration_since(now));
+        }
+    }
+
+    fn resume(&mut self, now: Instant) {
+        if let Some(left) = self.held.take() {
+            self.deadline = now + left;
+        }
+    }
+
+    /// When the call times out; `None` while it is held.
+    fn due(&self) -> Option<Instant> {
+        self.held.is_none().then_some(self.deadline)
+    }
+}
+
 /// Removes the call when it is dropped without an answer, and tells the webview to stop the worker nobody waits for.
 struct Abandon<'a> {
     app: &'a AppHandle,
@@ -307,6 +359,7 @@ struct Abandon<'a> {
 
 impl Drop for Abandon<'_> {
     fn drop(&mut self) {
+        clocks().remove(&self.id);
         if self.done {
             return;
         }
@@ -344,6 +397,8 @@ pub async fn call(app: &AppHandle, tool: &str, args: &Value, chat: &str) -> Valu
     };
     let limit = wait_limit(tool, &args);
     let (id, receiver) = register();
+    let (clock_tx, mut clock_rx) = mpsc::unbounded_channel();
+    clocks().insert(id.clone(), clock_tx);
     let mut guard = Abandon {
         app,
         id: id.clone(),
@@ -358,19 +413,37 @@ pub async fn call(app: &AppHandle, tool: &str, args: &Value, chat: &str) -> Valu
     ) {
         return reply_value(format!("AgentDeck could not start the task: {error}"), true);
     }
-    match tokio::time::timeout(limit, receiver).await {
-        Ok(Ok(reply)) => {
-            guard.done = true;
-            reply_value(reply.text, reply.is_error)
+    let mut budget = Budget::new(limit, Instant::now());
+    let mut timer = Box::pin(tokio::time::sleep(limit));
+    let mut receiver = receiver;
+    loop {
+        tokio::select! {
+            answer = &mut receiver => {
+                guard.done = true;
+                return match answer {
+                    Ok(reply) => reply_value(reply.text, reply.is_error),
+                    Err(_) => reply_value("AgentDeck dropped the call.".into(), true),
+                };
+            }
+            () = &mut timer, if budget.due().is_some() => {
+                return reply_value(
+                    format!("AgentDeck did not answer within {} s.", limit.as_secs()),
+                    true,
+                );
+            }
+            Some(clock) = clock_rx.recv() => {
+                let now = Instant::now();
+                match clock {
+                    Clock::Pause => budget.pause(now),
+                    Clock::Resume => {
+                        budget.resume(now);
+                        if let Some(due) = budget.due() {
+                            timer.as_mut().reset(tokio::time::Instant::from_std(due));
+                        }
+                    }
+                }
+            }
         }
-        Ok(Err(_)) => {
-            guard.done = true;
-            reply_value("AgentDeck dropped the call.".into(), true)
-        }
-        Err(_) => reply_value(
-            format!("AgentDeck did not answer within {} s.", limit.as_secs()),
-            true,
-        ),
     }
 }
 
@@ -378,6 +451,24 @@ pub async fn call(app: &AppHandle, tool: &str, args: &Value, chat: &str) -> Valu
 #[tauri::command]
 pub fn delegate_reply(call_id: String, text: String, is_error: bool) -> bool {
     resolve(&call_id, Reply { text, is_error })
+}
+
+/// Holds a waiting call's clock: its task is queued, waiting for another task, or paused. `false` when the call is gone.
+#[tauri::command]
+pub fn delegate_pause(call_id: String) -> bool {
+    send_clock(&call_id, Clock::Pause)
+}
+
+/// The task runs again: the call's clock goes on with the time it kept when it was held.
+#[tauri::command]
+pub fn delegate_resume(call_id: String) -> bool {
+    send_clock(&call_id, Clock::Resume)
+}
+
+fn send_clock(call_id: &str, clock: Clock) -> bool {
+    clocks()
+        .get(call_id)
+        .is_some_and(|sender| sender.send(clock).is_ok())
 }
 
 /// The webview just (re)loaded: the chats and workers of the page before it are gone, so no call can be answered.
@@ -586,6 +677,22 @@ mod tests {
             QUICK_WAIT
         );
         assert_eq!(wait_limit("list_agents", &json!({})), QUICK_WAIT);
+    }
+
+    #[test]
+    fn a_held_call_keeps_its_time_and_runs_on_after_resume() {
+        let start = Instant::now();
+        let mut budget = Budget::new(Duration::from_secs(100), start);
+        assert_eq!(budget.due(), Some(start + Duration::from_secs(100)));
+        // Held (queued or paused) at 30 s: 70 s are left, and waiting does not use them.
+        budget.pause(start + Duration::from_secs(30));
+        assert_eq!(budget.due(), None);
+        budget.pause(start + Duration::from_secs(500));
+        budget.resume(start + Duration::from_secs(600));
+        assert_eq!(budget.due(), Some(start + Duration::from_secs(670)));
+        // A resume that holds nothing changes nothing.
+        budget.resume(start + Duration::from_secs(650));
+        assert_eq!(budget.due(), Some(start + Duration::from_secs(670)));
     }
 
     #[test]

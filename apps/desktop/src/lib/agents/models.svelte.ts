@@ -415,14 +415,12 @@ export async function loadModels(
     );
 }
 
-/** Re-reads model catalogues whose account-backed CLI changed, showing loading instead of the previous account's list. */
+/**
+ * Re-reads model catalogues whose account-backed CLI changed. The previous list stays until the new one has arrived and
+ * replaces it as a whole (loadModels), so a send in between never sees an empty list.
+ */
 export async function reloadModels(providers: readonly ProviderId[]) {
-    for (const provider of providers) {
-        modelsReady[provider] = false;
-        // Do not expose the previous account's catalogue while the new credential is being read.
-        if (provider === 'claude') claudeOwn = [];
-        else catalog[provider] = [];
-    }
+    for (const provider of providers) modelsReady[provider] = false;
     await loadModels(providers);
 }
 

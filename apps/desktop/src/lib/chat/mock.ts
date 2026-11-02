@@ -25,6 +25,17 @@ export type Session = {
     status: 'working' | 'idle' | 'waiting';
 };
 
+/** How far one sub-agent or background job a tool call started has got. */
+export type TaskRecord = {
+    status: 'started' | 'progress' | 'done' | 'failed' | 'stopped';
+    label?: string;
+    summary?: string;
+    tools?: number;
+    /** When the task first showed: its running time counts from here. */
+    startedAt?: number;
+    endedAt?: number;
+};
+
 export type Block =
     | { kind: 'thinking'; text: string; streaming?: boolean }
     | { kind: 'response'; text: string; streaming?: boolean }
@@ -40,14 +51,12 @@ export type Block =
           /** Work done under this call by a sub-agent: its steps and what it wrote. */ children?: Block[];
           /** Started in the background by its own flag (run_in_background, a sub agent): only such a call takes a task event as a task row. */ background?: boolean;
           /** The model a sub-agent call was given in its input. */ model?: string;
-          /** A sub-agent or background job this call started, and how far it is. */ task?: {
-              status: 'started' | 'progress' | 'done' | 'failed' | 'stopped';
-              label?: string;
-              summary?: string;
-              tools?: number;
-              /** When the task first showed: its running time counts from here. */ startedAt?: number;
-              endedAt?: number;
-          };
+          /** A sub-agent or background job this call started, and how far it is. With several tasks (`tasks`), this is
+           *  the whole of them: running while any runs. */ task?: TaskRecord;
+          /** Every task this call started, by the task's id. A call can start several (one spawn, several agents). */ tasks?: Record<
+              string,
+              TaskRecord
+          >;
       }
     | { kind: 'loading'; label: string }
     /** A sub-agent running in its own child chat; `state` follows that chat. */

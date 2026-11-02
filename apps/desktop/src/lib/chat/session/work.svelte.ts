@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { getPref, setPref } from '../../app/platform/prefs';
 import { activity } from '../runs/activity.svelte';
@@ -67,10 +68,55 @@ export function chatWork(sessionId?: string): ChatWork[] {
         : all.filter((item) => item.sessionId === sessionId);
 }
 
+/** The parts of the work a snapshot keeps that change rarely: a call's status, label or end, a worker's and a run's
+ *  state. Streamed output is left out, so the tray is not projected again for each line a worker prints. */
+function structureKey(): string {
+    const parts: string[] = [];
+    for (const item of activity)
+        parts.push(
+            [
+                item.key,
+                item.status,
+                item.taskLabel ?? '',
+                item.endedAt ?? '',
+                item.title,
+                item.input,
+                item.name,
+            ].join('\u0001'),
+        );
+    for (const task of Object.values(delegateTasks))
+        parts.push(
+            [
+                task.id,
+                task.state,
+                task.reportState ?? '',
+                task.pausedAt ?? '',
+                task.replacementChildId ?? '',
+            ].join('\u0001'),
+        );
+    for (const run of delegateRuns)
+        parts.push(
+            [
+                run.id,
+                run.handback,
+                run.endedAt ?? '',
+                run.cancelled ? 'cancelled' : '',
+                ...run.nodes.map(
+                    (node) => `${node.childId}\u0001${node.state}`,
+                ),
+            ].join('\u0002'),
+        );
+    return parts.join('\n');
+}
+let lastKey = '';
+
 $effect.root(() => {
     $effect(() => {
         if (!ready) return;
-        const all = chatWork();
+        const key = structureKey();
+        if (key === lastKey) return;
+        lastKey = key;
+        const all = untrack(() => chatWork());
         const active = all.filter(isWorkActive);
         const recent = all
             .filter((item) => !isWorkActive(item))

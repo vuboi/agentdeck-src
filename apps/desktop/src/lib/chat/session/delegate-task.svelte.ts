@@ -24,6 +24,7 @@ import {
     workerLanguageRule,
     FOLLOW_UP_PREFACE,
     RESTORED_LOST_NOTE,
+    QUESTION_WAIT_MS,
 } from '../../tasks/delegate-task';
 import { getPref, setPref } from '../../app/platform/prefs';
 import {
@@ -38,6 +39,8 @@ import {
     type DelegateCall,
     enterWorkerSlot,
     releaseWorkerSlot,
+    holdDelegateCall,
+    runDelegateCall,
     replyDelegateCall,
     delegateReady,
     listenDelegateCalls,
@@ -119,12 +122,17 @@ export const delegateTasks = $state<Record<string, TaskRecord>>({});
 const TASKS_KEY = 'delegate.tasks';
 const TASK_LIMIT = 200;
 
-type Ending = 'user' | 'caller' | 'timeout' | 'abort';
+/** `cascade`: its parent task was stopped, so it is stopped too and its report has nobody to go to. */
+type Ending = 'user' | 'caller' | 'timeout' | 'abort' | 'cascade';
+/** Endings whose report is not delivered to the caller: someone stopped the task on purpose. */
+const NO_REPORT_ENDINGS: Ending[] = ['user', 'caller', 'cascade'];
 /** What a running task needs besides its record: the tool call that waits for its report, the timer, why it is ending. */
 type TaskRun = {
     callId?: string;
     timer?: ReturnType<typeof setTimeout>;
     ending?: Ending;
+    /** The time limit of the worker, in seconds; the timer runs only while the worker runs (see `armTaskClock`). */
+    timeoutS: number;
     remainingMs: number;
     deadline: number;
     started?: boolean;
@@ -149,10 +157,57 @@ type PendingTaskAsk = {
 };
 const pendingTaskAsks = new SvelteMap<string, PendingTaskAsk>();
 
+/** Reports of background tasks waiting for their caller to be idle, per caller. Saved with the tasks (`BACKLOG_KEY`). */
+type BackgroundReport = {
+    label: string;
+    text: string;
+    taskId: string;
+    sourceMessageId?: string;
+    sourceTask: string;
+};
+export const backlog = new SvelteMap<string, BackgroundReport[]>();
+const BACKLOG_KEY = 'delegate.backlog';
+
+/** A task that was lost with the app and has no report yet: its caller hears that it stopped, when the caller is idle. */
+function queueLostReport(record: TaskRecord) {
+    if ([...backlog.values()].flat().some((item) => item.taskId === record.id))
+        return;
+    backlog.set(record.caller, [
+        ...(backlog.get(record.caller) ?? []),
+        {
+            taskId: record.id,
+            label: `${record.label} (task ${record.id}) - stopped: app restarted`,
+            text: formatTaskResult(
+                {
+                    taskId: record.id,
+                    childId: record.childId,
+                    label: record.label,
+                    verdict: 'stopped',
+                    took: span(
+                        (record.endedAt ?? Date.now()) - record.startedAt,
+                    ),
+                },
+                RESTORED_LOST_NOTE,
+            ),
+            sourceMessageId: record.sourceMessageId,
+            sourceTask: record.sourceTask ?? record.task,
+        },
+    ]);
+    record.reportState = 'waiting';
+}
+
 // Tasks outlive a reload as cards: a task whose worker was running then has no run any more, so it reads as stopped.
 const taskStore = $state({ ready: false });
-void getPref<TaskRecord[]>(TASKS_KEY)
-    .then((saved) => {
+void Promise.all([
+    getPref<TaskRecord[]>(TASKS_KEY).catch(() => undefined),
+    getPref<[string, BackgroundReport[]][]>(BACKLOG_KEY).catch(() => undefined),
+])
+    .then(([saved, savedBacklog]) => {
+        for (const [callerId, reports] of Array.isArray(savedBacklog)
+            ? savedBacklog
+            : [])
+            if (Array.isArray(reports) && reports.length)
+                backlog.set(callerId, reports);
         for (const item of Array.isArray(saved) ? saved : []) {
             if (delegateTasks[item.id]) continue;
             const lost =
@@ -179,6 +234,9 @@ void getPref<TaskRecord[]>(TASKS_KEY)
                         note: 'Worker result saved; returning its report was interrupted by reload.',
                     }
                   : item;
+            // The caller of a lost task is told it stopped; the report waits in the backlog until the caller is idle.
+            if (lost && !item.reportState)
+                queueLostReport(delegateTasks[item.id]);
         }
     })
     .catch(() => undefined)
@@ -206,6 +264,13 @@ $effect.root(() => {
             ...active,
             ...all.filter((item) => !activeIds.has(item.id)).slice(-TASK_LIMIT),
         ]);
+        setPref(
+            BACKLOG_KEY,
+            [...backlog.entries()].map(([callerId, reports]) => [
+                callerId,
+                JSON.parse(JSON.stringify(reports)) as BackgroundReport[],
+            ]),
+        );
     });
 });
 
@@ -619,22 +684,17 @@ function startTask(
               true,
           )
         : addWorkflowWorker(caller.id, id, agent, model, label, task, true);
+    // The time limit runs while the worker runs, not while it waits for a place or a dependency: the blocking call is held
+    // until then (armTaskClock starts both).
     const run: TaskRun = {
         callId: wait ? call.callId : undefined,
+        timeoutS,
         remainingMs: timeoutS * 1000,
-        deadline: Date.now() + timeoutS * 1000,
+        deadline: 0,
         generation: 0,
     };
     taskRuns.set(taskId, run);
-    run.timer = setTimeout(
-        () =>
-            stopTask(
-                taskId,
-                'timeout',
-                `Timed out after ${timeoutS} s: the worker was stopped before it finished.`,
-            ),
-        timeoutS * 1000,
-    );
+    holdTaskClock(taskId);
     // The worker runs with the settings of the chat that called it, not with those of whichever chat is on screen.
     chatTurnOptions[id] = {
         ...turnOptionsOf(caller.id),
@@ -717,12 +777,13 @@ function startTask(
                 'idle',
                 `Waiting for ${record.waitingFor.label}`,
             );
-            void releaseWorkerSlot(taskId).catch(() => undefined);
+            void releaseSlot(taskId);
             persistLocal();
             return;
         }
         delete record.waitingFor;
         record.state = 'running';
+        armTaskClock(taskId);
         if (!run.started) record.startedAt = Date.now();
         updateWorkflowWorker(record.workflowRunId, record.childId, 'running');
         delete manuallyStopped[id];
@@ -764,6 +825,74 @@ function startTask(
     requestTaskSlot(taskId);
 }
 
+/** The time limit of a task and of its blocking call (if any) runs only while the worker runs. */
+function armTaskClock(taskId: string): void {
+    const run = taskRuns.get(taskId);
+    if (!run) return;
+    if (run.callId) void runDelegateCall(run.callId).catch(() => undefined);
+    if (run.timer) return;
+    run.deadline = Date.now() + run.remainingMs;
+    run.timer = setTimeout(
+        () =>
+            stopTask(
+                taskId,
+                'timeout',
+                `Timed out after ${run.timeoutS} s: the worker was stopped before it finished.`,
+            ),
+        run.remainingMs,
+    );
+}
+
+/** The time limit stops: the task waits for a place, a dependency or the user, and keeps what is left of it. */
+function holdTaskClock(taskId: string): void {
+    const run = taskRuns.get(taskId);
+    if (!run) return;
+    if (run.timer) {
+        clearTimeout(run.timer);
+        run.timer = undefined;
+        run.remainingMs = Math.max(1, run.deadline - Date.now());
+    }
+    if (run.callId) void holdDelegateCall(run.callId).catch(() => undefined);
+}
+
+/**
+ * A worker's place in Rust's gate. A failed request is sent once more; if it fails again the error goes to the caller,
+ * which fails the task. Nothing is granted by default: a place that Rust never recorded would be lost on release.
+ */
+async function askWorkerSlot(taskId: string, owner: string): Promise<boolean> {
+    try {
+        return await enterWorkerSlot(taskId, owner);
+    } catch (error) {
+        console.warn(
+            `delegate_enter failed for ${taskId}, retrying once:`,
+            error,
+        );
+        return enterWorkerSlot(taskId, owner);
+    }
+}
+
+/**
+ * Gives a place back. A failed release is retried: a place left taken blocks the tasks queued behind it until reload.
+ * Never rejects; a release that still fails after its retries is logged.
+ */
+async function releaseSlot(taskId: string): Promise<void> {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            await releaseWorkerSlot(taskId);
+            return;
+        } catch (error) {
+            console.warn(
+                `delegate_release failed for ${taskId} (attempt ${attempt} of 3):`,
+                error,
+            );
+            if (attempt < 3)
+                await new Promise((resolve) =>
+                    setTimeout(resolve, 500 * attempt),
+                );
+        }
+    }
+}
+
 /** The worker waits for a place: the function that starts it once the place is given. */
 const slotStarts = new SvelteMap<string, () => void>();
 function startQueued(taskId: string) {
@@ -799,23 +928,36 @@ function requestTaskSlot(taskId: string): void {
     )
         return;
     slotStarts.set(taskId, run.start);
-    run.slotRequest = enterWorkerSlot(taskId, record.caller).catch(() => true);
+    run.slotRequest = askWorkerSlot(taskId, record.caller);
     const generation = run.generation;
-    void run.slotRequest.then((granted) => {
-        run.slotRequest = undefined;
-        logFlow(
-            record.childId,
-            'worker slot',
-            `task=${taskId} ${granted ? 'granted' : 'waits in line'}`,
-        );
-        if (!taskRuns.has(taskId)) {
-            void releaseWorkerSlot(taskId).catch(() => undefined);
-            return;
-        }
-        run.announce?.(!granted);
-        if (generation !== run.generation) return;
-        if (granted) startQueued(taskId);
-    });
+    void run.slotRequest.then(
+        (granted) => {
+            run.slotRequest = undefined;
+            logFlow(
+                record.childId,
+                'worker slot',
+                `task=${taskId} ${granted ? 'granted' : 'waits in line'}`,
+            );
+            if (!taskRuns.has(taskId)) {
+                void releaseSlot(taskId);
+                return;
+            }
+            run.announce?.(!granted);
+            if (generation !== run.generation) return;
+            if (granted) startQueued(taskId);
+        },
+        (error: unknown) => {
+            run.slotRequest = undefined;
+            if (!taskRuns.has(taskId) || generation !== run.generation) return;
+            slotStarts.delete(taskId);
+            finishTask(taskId, 'failed', slotFailure(error), '');
+        },
+    );
+}
+
+/** Why a task could not get a worker place: the caller is told, and the task fails. */
+function slotFailure(error: unknown): string {
+    return `AgentDeck could not reserve a worker slot (${String(error)}), so the worker did not start.`;
 }
 
 function wakeDependentTasks(completedId: string): void {
@@ -932,7 +1074,7 @@ function askParent(
                 questionId,
                 `No answer arrived for ${label} before the coordination wait expired.`,
             ),
-        15 * 60_000,
+        QUESTION_WAIT_MS,
     );
     pendingTaskAsks.set(questionId, {
         id: questionId,
@@ -1061,7 +1203,7 @@ function finishTask(
         'worker slot',
         `task=${taskId} released (${verdict})`,
     );
-    void releaseWorkerSlot(taskId).catch(() => undefined);
+    void releaseSlot(taskId);
     taskWaiters.delete(record.childId);
     record.endedAt = Date.now();
     delete record.pausedAt;
@@ -1077,7 +1219,9 @@ function finishTask(
             ? 'you stopped it with task_stop'
             : run.ending === 'abort'
               ? 'the agent that asked was stopped'
-              : detail;
+              : run.ending === 'cascade'
+                ? 'the task that asked for it was stopped'
+                : detail;
     const body =
         verdict === 'done'
             ? reportDigest(answer)
@@ -1095,8 +1239,8 @@ function finishTask(
         workerReply,
     );
     wakeDependentTasks(taskId);
-    // Stopped by the user or the caller: no report is delivered, so nothing else would ever close the flow run.
-    if (run.ending === 'user' || run.ending === 'caller') {
+    // Stopped by the user, the caller or a stopped parent: no report is delivered, so nothing else would ever close the flow run.
+    if (run.ending && NO_REPORT_ENDINGS.includes(run.ending)) {
         const sameRun = (other: TaskRecord) =>
             other.id !== taskId && other.workflowRunId === record.workflowRunId;
         const pending =
@@ -1124,23 +1268,29 @@ function finishTask(
         },
         body,
     );
-    if (run.callId) {
-        void replyDelegateCall(
-            run.callId,
-            text,
-            verdict === 'failed' || verdict === 'timed out',
-        ).catch(() => undefined);
-        return;
-    }
     // A task in the background: its report goes to the caller, unless the user or the caller itself stopped it.
-    if (run.ending !== 'user' && run.ending !== 'caller')
-        deliverReport(record.caller, {
-            taskId,
-            sourceMessageId: record.sourceMessageId,
-            sourceTask: record.sourceTask ?? record.task,
-            label: `${record.label} (task ${taskId})`,
-            text: verdict === 'done' ? body : reasonLine(verdict, detailOf),
-        });
+    const toCaller = () => {
+        if (!run.ending || !NO_REPORT_ENDINGS.includes(run.ending))
+            deliverReport(record.caller, {
+                taskId,
+                sourceMessageId: record.sourceMessageId,
+                sourceTask: record.sourceTask ?? record.task,
+                label: `${record.label} (task ${taskId})`,
+                text: verdict === 'done' ? body : reasonLine(verdict, detailOf),
+            });
+    };
+    if (!run.callId) return toCaller();
+    // A waiting caller whose call was already dropped on the Rust side (its timeout, or its connection closed) gets the
+    // report through the backlog instead: a report that nobody receives is lost otherwise.
+    void replyDelegateCall(
+        run.callId,
+        text,
+        verdict === 'failed' || verdict === 'timed out',
+    )
+        .then((delivered) => {
+            if (!delivered) toCaller();
+        })
+        .catch(toCaller);
 }
 
 /** Stops a task: its worker's run is killed and the task ends as stopped (or timed out). */
@@ -1156,6 +1306,14 @@ function stopTask(taskId: string, how: Ending, detail = '') {
                 true,
             );
     run.ending = how;
+    // The tasks this worker delegated work for it: they stop with it, and their reports would go to a chat nobody waits for.
+    for (const child of Object.values(delegateTasks))
+        if (child.caller === record.childId && taskRuns.has(child.id))
+            stopTask(
+                child.id,
+                'cascade',
+                `Its parent task ${taskId} was stopped.`,
+            );
     // The worker's run ends with an error event that settles the task (see `settle`). One with no run (it waits on an
     // approval card) is ended here.
     stopTurn(record.childId);
@@ -1195,16 +1353,15 @@ export function pauseDelegateTask(taskId: string): void {
     )
         return;
     record.pausedAt = Date.now();
-    run.remainingMs = Math.max(1, run.deadline - Date.now());
-    clearTimeout(run.timer);
+    holdTaskClock(taskId);
     run.generation++;
     slotStarts.delete(taskId);
     manuallyStopped[record.childId] = true;
     if (run.started) stopTurn(record.childId);
     // Wait for an outstanding grant before releasing it; a quick Resume must not lose its new slot.
     run.release = (run.slotRequest ?? Promise.resolve(false))
-        .then(() => releaseWorkerSlot(taskId))
-        .catch(() => undefined);
+        .catch(() => false)
+        .then(() => releaseSlot(taskId));
     updateWorkflowWorker(
         record.workflowRunId,
         record.childId,
@@ -1221,33 +1378,27 @@ export async function resumeDelegateTask(taskId: string): Promise<void> {
     delete record.pausedAt;
     record.state = 'queued';
     const generation = ++run.generation;
-    run.deadline = Date.now() + run.remainingMs;
-    run.timer = setTimeout(
-        () => stopTask(taskId, 'timeout', 'Worker time limit reached.'),
-        run.remainingMs,
-    );
+    // The time limit starts again when the worker runs (run.start), not now: it waits in line first.
     await run.release;
     if (!taskRuns.has(taskId) || generation !== run.generation) return;
     slotStarts.set(taskId, run.start);
-    run.slotRequest = enterWorkerSlot(taskId, record.caller).catch(() => true);
-    const granted = await run.slotRequest;
+    run.slotRequest = askWorkerSlot(taskId, record.caller);
+    let granted: boolean;
+    try {
+        granted = await run.slotRequest;
+    } catch (error) {
+        if (generation !== run.generation || !taskRuns.has(taskId)) return;
+        slotStarts.delete(taskId);
+        finishTask(taskId, 'failed', slotFailure(error), '');
+        return;
+    }
     if (generation !== run.generation) return;
     if (!taskRuns.has(taskId)) {
-        void releaseWorkerSlot(taskId).catch(() => undefined);
+        void releaseSlot(taskId);
         return;
     }
     if (granted) startQueued(taskId);
 }
-
-/** Reports of background tasks waiting for their caller to be idle, per caller. */
-type BackgroundReport = {
-    label: string;
-    text: string;
-    taskId: string;
-    sourceMessageId?: string;
-    sourceTask: string;
-};
-export const backlog = new SvelteMap<string, BackgroundReport[]>();
 
 function deliverReport(callerId: string, report: BackgroundReport) {
     const list = backlog.get(callerId) ?? [];
@@ -1325,6 +1476,30 @@ export function flushReports(callerId: string) {
                 if (delegateTasks[id])
                     delegateTasks[id].reportState = 'waiting';
         },
+    });
+}
+
+/**
+ * A worker's turn failed and AgentDeck is recovering it (a retry, or another agent takes over): its caller gets a check-in
+ * with the reason, through the watchdog's check-in path. A caller that waits for the report gets nothing here (it is blocked).
+ */
+export function noteWorkerRecovering(childId: string, reason: string) {
+    const record = Object.values(delegateTasks).find(
+        (item) => item.childId === childId && taskRuns.has(item.id),
+    );
+    const run = record ? taskRuns.get(record.id) : undefined;
+    if (!record || !run || run.callId) return;
+    logFlow(
+        record.childId,
+        'watchdog',
+        `task=${record.id} recovering: ${reason}`,
+    );
+    deliverReport(record.caller, {
+        taskId: `${record.id}#recover${Date.now()}`,
+        sourceMessageId: record.sourceMessageId,
+        sourceTask: record.sourceTask ?? record.task,
+        label: `${record.label} (task ${record.id}) - recovering`,
+        text: `recovering: ${reason}. The worker is being recovered by AgentDeck, not finished yet. Check it with task_status ${record.id} if you need to; the report comes when it ends.`,
     });
 }
 
@@ -1515,14 +1690,15 @@ if (inTauri()) {
     // The Preview agent's memory of pages (page-memory.ts): its tools read and write the store through this.
     void startPageMemoryBridge();
     void listenDelegateAborts((callId) => {
+        // A question whose call was dropped (the worker's connection to AgentDeck closed) is cancelled; the task stays
+        // running. A worker that really died is caught by the watchdog.
         for (const pending of pendingTaskAsks.values()) {
             if (pending.callId === callId) {
                 cancelTaskAsk(
                     pending.id,
-                    'The worker that asked the question was stopped.',
+                    'The question was not delivered: the worker lost its connection to AgentDeck while it waited. It keeps working; ask again if the answer is still needed.',
                     true,
                 );
-                stopTask(pending.taskId, 'abort');
                 return;
             }
         }

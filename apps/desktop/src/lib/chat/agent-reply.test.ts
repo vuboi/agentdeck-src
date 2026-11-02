@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyAgentEvent, updateHistoricalTask } from './agent-reply.ts';
+import {
+    applyAgentEvent,
+    stopCallTasks,
+    updateHistoricalTask,
+} from './agent-reply.ts';
 import type { AgentEvent } from './agent';
 import type { Block } from './mock';
 import type { Message } from './mock';
@@ -223,5 +227,73 @@ test('a foreground Bash that the CLI also reports as a task stays an ordinary co
         shell?.kind === 'command' && shell.task?.status,
         'started',
         'a background call takes its task',
+    );
+});
+
+const taskEvent = (
+    id: string,
+    status: 'started' | 'progress' | 'done' | 'failed' | 'stopped',
+    extra: Record<string, unknown> = {},
+): AgentEvent =>
+    ({
+        kind: 'task',
+        id,
+        tool_use_id: 'agent1',
+        status,
+        label: null,
+        summary: null,
+        tools: null,
+        ...extra,
+    }) as AgentEvent;
+
+test('a task that was stopped stays stopped when its late progress arrives', () => {
+    let blocks = run([spawn, taskEvent('t1', 'started', { label: 'Scan' })]);
+    const call = blocks.find((block) => block.kind === 'command');
+    if (call?.kind === 'command') stopCallTasks(call);
+    blocks = applyAgentEvent(
+        blocks,
+        taskEvent('t1', 'progress', { tools: 4 }),
+    ).blocks;
+    const card = blocks.find((block) => block.kind === 'command');
+    assert.equal(card?.kind === 'command' && card.task?.status, 'stopped');
+});
+
+test('a call with several tasks is one card: running while any of them runs', () => {
+    let blocks = run([
+        spawn,
+        taskEvent('a', 'started', { label: 'A' }),
+        taskEvent('b', 'started', { label: 'B' }),
+        taskEvent('a', 'done', { summary: 'A done' }),
+    ]);
+    let card = blocks.find((block) => block.kind === 'command');
+    assert.equal(card?.kind === 'command' && card.task?.status, 'started');
+    // A late progress of the finished task does not reopen it, nor freeze the card.
+    blocks = applyAgentEvent(blocks, taskEvent('a', 'progress')).blocks;
+    blocks = applyAgentEvent(blocks, taskEvent('b', 'done')).blocks;
+    card = blocks.find((block) => block.kind === 'command');
+    assert.equal(card?.kind === 'command' && card.task?.status, 'done');
+    assert.deepEqual(
+        card?.kind === 'command' ? Object.keys(card.tasks ?? {}) : [],
+        ['a', 'b'],
+    );
+});
+
+test('a sub-agent event that comes before its call waits for the call and never shows in the answer', () => {
+    let blocks = applyAgentEvent([], {
+        kind: 'scoped',
+        parent: 'orphan-call',
+        event: { kind: 'delta', text: 'early' },
+    }).blocks;
+    assert.equal(blocks.length, 0, 'not drawn in the main answer');
+    blocks = applyAgentEvent(blocks, {
+        ...spawn,
+        id: 'orphan-call',
+    } as AgentEvent).blocks;
+    const card = blocks.find((block) => block.kind === 'command');
+    assert.equal(
+        card?.kind === 'command' && card.children?.[0]?.kind === 'response'
+            ? card.children[0].text
+            : undefined,
+        'early',
     );
 });

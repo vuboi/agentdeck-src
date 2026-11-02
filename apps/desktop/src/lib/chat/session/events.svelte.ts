@@ -15,6 +15,7 @@ import {
     planRecovery,
     continuePrompt,
     recoveryNote,
+    waitUnlessAborted,
 } from '../recovery/turn-failure';
 import { inTauri, isPreviewCopy, clock } from '../../app/platform/history';
 import { type Message, type Block } from '../mock';
@@ -43,7 +44,7 @@ import {
     persistCommandImage,
 } from '../content/command-images';
 import { recordUsage, estimateCost } from '../runs/usage';
-import { toolKindOf } from '../../tasks/delegate-task';
+import { routesForChat, toolKindOf } from '../../tasks/delegate-task';
 import { archiveTurn } from '../content/archive';
 import {
     MODELS,
@@ -54,13 +55,18 @@ import {
     workspace,
     type Agent,
     type Effort,
+    type Attachment,
+    type FileAttachment,
+    type PageElement,
     type SessionItem,
 } from './state.svelte';
 import {
     agentLabel,
     chatTurnOptions,
+    pendingSwitch,
     failSessionWork,
     hiddenPrompt,
+    forgetUnstartedConversation,
     isRunning,
     openServedPage,
     queued,
@@ -90,11 +96,13 @@ import {
     bindTasks,
     delegateTasks,
     endWaitingTasks,
+    isWorkerChat,
+    noteWorkerRecovering,
     pauseDelegateTask,
     resumeDelegateTask,
     taskRuns,
 } from './delegate-task.svelte';
-import { handoffFor, send } from './sending.svelte';
+import { attachmentsOf, handoffFor, send } from './sending.svelte';
 import {
     clipText,
     finishCoordinationPrompt,
@@ -108,6 +116,7 @@ import {
     transcripts,
 } from './history.svelte';
 import type { CredentialAttempt } from '../../agents/credential-switch';
+import { credentialScope } from '../../agents/credential-scope';
 import { isBackgroundWait, isLongRunningWork } from '../runs/run-lanes';
 
 const credentialAttempts = new SvelteMap<
@@ -173,10 +182,48 @@ export function resumeStoppedTurn(sessionId: string) {
 // ---------- keeping work going when a turn fails ----------
 // A turn that ends in an error is not the end of the work: a passing fault is tried again, and otherwise (a usage
 // limit, a sign-out, a crash) the next agent of the user's chain, another provider, takes over the chat (it is told
-// what the others did, see `missedTurns`). Accounts are never switched here: that stays a manual step of the user. The decision is `planRecovery` (turn-failure.ts); the chat shows
-// one line for each step. A new message of the user starts the count again.
-type RecoveryState = { retries: number; tried: string[] };
+// what the others did, see `missedTurns`). `planRecovery` (turn-failure.ts) decides; the chat shows one line for each
+// step. A new message of the user starts the count again.
+// Account switching is a different path: the opt-in auto-switch (`runAutoSwitch`) rotates the account or key of the
+// same provider, and only when its toggle is on. Turning it off leaves provider fallback as the only recovery.
+type RecoveryState = {
+    retries: number;
+    tried: string[];
+    /** Numbered for each continuation: a deferred send of an older one finds the number changed and is dropped. */
+    generation: number;
+    /** Set while a retry waits: Stop aborts it. */
+    wait?: AbortController;
+    /** The attachments of the user's request, sent again with each continuation. */
+    attachments: {
+        images: Attachment[];
+        elements: PageElement[];
+        files: FileAttachment[];
+    };
+};
 export const recoveries: Record<string, RecoveryState> = {};
+let continuationCount = 0;
+const newRecovery = (): RecoveryState => ({
+    retries: 0,
+    tried: [],
+    generation: 0,
+    attachments: { images: [], elements: [], files: [] },
+});
+/**
+ * A failed turn whose end is held back because the chat goes on (a retry, a fallback, an account switch). It is closed
+ * by `closeOwedTurn` when no further turn is started, or by Stop; a turn that starts instead takes it over.
+ */
+const owed = new SvelteMap<string, { reply: Message; reason: string }>();
+/** The chat has a failed turn still to be closed: it counts as running (Stop is offered, the chat is not idle). */
+export const owesTurn = (sessionId: string) => owed.has(sessionId);
+/** A new turn of the chat takes over from the failed one: its end is no longer owed. */
+export function supersedeOwedTurn(sessionId: string) {
+    owed.delete(sessionId);
+}
+/** Ends a recovery record: a waiting retry is aborted, nothing of it runs any more. */
+export function dropRecovery(sessionId: string) {
+    recoveries[sessionId]?.wait?.abort();
+    delete recoveries[sessionId];
+}
 const CLI_OF: Record<string, string> = {
     claude: 'claude',
     codex: 'codex',
@@ -186,10 +233,6 @@ const CLI_OF: Record<string, string> = {
     copilot: 'gh',
     'command-code': 'command-code',
 };
-/** What a provider's CLI says when the conversation an id names does not exist (a run stopped before it wrote anything,
- *  or a session cleaned up): Codex rollout, Claude session, OpenCode session, Antigravity conversation, Copilot thread. */
-const NO_CONVERSATION =
-    /(?:\b(?:no|unknown)\s+(?:rollout|conversation|session|thread)\b.{0,120}\b(?:found|exist)|\b(?:rollout|conversation|session|thread)\b.{0,120}\b(?:not found|does not exist|doesn't exist|missing))/i;
 
 type RecoveryRoute = {
     key: string;
@@ -197,6 +240,8 @@ type RecoveryRoute = {
     agent: Agent;
     model: string;
     effort?: string;
+    /** A free tier: it may keep what it is sent (see RESTRICTED_NOTE in tasks/delegate-task.ts). */
+    restricted?: boolean;
 };
 
 /** Resolve saved fallback rows to exact, currently available CLI or custom-connector routes. */
@@ -208,6 +253,7 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
         if (!provider) continue;
         let agent: Agent;
         let model: string | undefined;
+        let restricted = false;
         if (CLI_OF[provider]) {
             const installed = Boolean(
                 connectors.detected?.tools.find(
@@ -241,6 +287,7 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
                 ? models.find((item) => item === pickedModel)
                 : models[0];
             agent = 'custom';
+            restricted = Boolean(connector.restricted);
         }
         if (!model) continue;
         const key = `${provider}|${model}${effort ? `|${effort}` : ''}`;
@@ -252,21 +299,39 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
             agent,
             model,
             ...(effort ? { effort } : {}),
+            ...(restricted ? { restricted } : {}),
         });
     }
     return result;
 }
 
 /** The route identities a chat can move to now, in the user's order. */
-export function recoveryChain(): string[] {
-    return availableRecoveryRoutes().map((route) => route.key);
+/** The routes for a chat: a delegated worker never falls back to a free tier (its prompt was checked at start only). */
+function routesFor(forChat?: string): RecoveryRoute[] {
+    return routesForChat(
+        availableRecoveryRoutes(),
+        forChat ? isWorkerChat(forChat) : false,
+    );
+}
+
+export function recoveryChain(forChat?: string): string[] {
+    return routesFor(forChat).map((route) => route.key);
 }
 
 /** Find the exact route's chat model; custom providers need their provider id embedded in the model id. */
 export function recoveryTarget(
     key: string,
-): { agent: Agent; model: string; effort?: string } | undefined {
-    const route = availableRecoveryRoutes().find((item) => item.key === key);
+    forChat?: string,
+):
+    | {
+          agent: Agent;
+          model: string;
+          effort?: string;
+          /** The provider id (a custom connector's id, or the CLI's own id): what `findAgent` takes. */
+          provider: string;
+      }
+    | undefined {
+    const route = routesFor(forChat).find((item) => item.key === key);
     if (!route) return undefined;
     return {
         agent: route.agent,
@@ -274,6 +339,7 @@ export function recoveryTarget(
             route.agent === 'custom'
                 ? customModelId(route.provider, route.model)
                 : route.model,
+        provider: route.provider,
         ...(route.effort ? { effort: route.effort } : {}),
     };
 }
@@ -299,12 +365,17 @@ export function recoveryEffortFor(key: string): string | undefined {
     );
 }
 
-function currentRecoveryRoute(session: SessionItem, chain: string[]): string {
-    const custom =
-        session.agent === 'custom' ? parseCustomModel(session.model) : null;
-    const provider = custom?.providerId ?? session.agent;
-    const model = custom?.model ?? session.model;
-    const effort = turnOptionsOf(session.id).effort;
+/** The chain key of the route a turn ran on: its agent and model (a custom model names its provider inside). */
+function routeKeyOf(
+    sessionId: string,
+    agent: string,
+    rawModel: string | undefined,
+    chain: string[],
+): string {
+    const custom = agent === 'custom' ? parseCustomModel(rawModel) : null;
+    const provider = custom?.providerId ?? agent;
+    const model = custom?.model ?? rawModel;
+    const effort = turnOptionsOf(sessionId).effort;
     const matching =
         chain.find((key) => {
             const [routeProvider, routeModel] = key.split('|');
@@ -326,13 +397,20 @@ function currentRecoveryRoute(session: SessionItem, chain: string[]): string {
 function recoveryFor(
     session: SessionItem,
     message: string,
+    reply: Message,
 ): { kind: FailureKind; plan: Recovery } | null {
     if (!connectors.recovery.enabled || !inTauri()) return null;
     const kind = classifyFailure(message);
     if (kind === 'stopped') return null;
-    const state = (recoveries[session.id] ??= { retries: 0, tried: [] });
-    const chain = recoveryChain();
-    const current = currentRecoveryRoute(session, chain);
+    const state = (recoveries[session.id] ??= newRecovery());
+    const chain = recoveryChain(session.id);
+    // The route the failed turn ran on, from its own reply: the chat's model may have changed since (see noteModelFallback).
+    const current = routeKeyOf(
+        session.id,
+        reply.agent ?? session.agent,
+        reply.model ?? session.model,
+        chain,
+    );
     if (!state.tried.includes(current)) state.tried.push(current);
     const plan = planRecovery({
         kind,
@@ -366,18 +444,28 @@ function noteModelFallback(session: SessionItem, reply: Message, line: string) {
     const to = text('fallback_model', 'fallbackModel');
     const from = text('original_model', 'originalModel');
     const local = data.scope === 'local';
+    // The agent that answered this turn (reply.agent): a fallback of an earlier route must not rewrite the chat's pick.
+    const agent = reply.agent ?? session.agent;
     // Only a model the picker knows is taken over: `modelFor` would replace any other one with the agent's first model.
-    const known = (MODELS[session.agent] ?? []).some(
-        (item) => item.value === to,
-    );
+    const known = (MODELS[agent] ?? []).some((item) => item.value === to);
     const moves = !local && data.direction !== 'revert' && known;
-    if (moves && session.model !== to) {
+    if (moves && agent === session.agent && session.model !== to) {
+        // The route the turn started on still counts as tried, and the reply names the model that now serves it (A6).
+        const started = routeKeyOf(
+            session.id,
+            agent,
+            session.model,
+            recoveryChain(),
+        );
+        const record = (recoveries[session.id] ??= newRecovery());
+        if (!record.tried.includes(started)) record.tried.push(started);
+        reply.model = to;
         session.model = to;
         session.conversationModel = to;
         // The effort belongs to the route of this very model, never to another route of the same agent.
         const served = availableRecoveryRoutes().find(
             (route) =>
-                route.agent === session.agent &&
+                route.agent === agent &&
                 (route.agent === 'custom'
                     ? customModelId(route.provider, route.model)
                     : route.model) === to,
@@ -386,7 +474,7 @@ function noteModelFallback(session: SessionItem, reply: Message, line: string) {
             new CustomEvent('agentdeck:agent-moved', {
                 detail: {
                     sessionId: session.id,
-                    agent: session.agent,
+                    agent,
                     model: to,
                     effort: served?.effort,
                 },
@@ -408,6 +496,8 @@ export function moveChatTo(
     agent: Agent,
     picked?: string,
     pickedEffort?: string,
+    /** The provider id of the route (a custom connector's id for `custom`): the task keeps it so `continue` finds it. */
+    providerId?: string,
 ) {
     const model = picked ?? MODELS[agent]?.[0]?.value ?? session.model;
     if (session.agent !== agent && !session.draft) {
@@ -433,7 +523,7 @@ export function moveChatTo(
     );
     if (task) {
         task.agent = agent;
-        task.agentId = agent;
+        task.agentId = providerId ?? agent;
         task.model = model;
         task.label = `${agentLabel(agent, model)} · ${modelLabel(model)}`;
     }
@@ -450,22 +540,137 @@ export function moveChatTo(
     );
 }
 
-/** Carries out the plan after the failed turn has been put away. */
-async function runRecovery(sessionId: string, plan: Recovery, reason: string) {
+/** The attachments of the user's latest request, sent again with a continuation (the request is what they were given). */
+function lastAttachments(sessionId: string): RecoveryState['attachments'] {
+    const asked = [...messagesOf(sessionId)]
+        .reverse()
+        .find((message) => message.role === 'user' && !hiddenPrompt(message));
+    if (!asked) return { images: [], elements: [], files: [] };
+    const { images, elements, files } = attachmentsOf(asked);
+    return { images, elements, files };
+}
+
+/**
+ * The steps a turn's normal end runs, for a failed turn that is not continued: the work of its parent (a worker's report,
+ * a workflow, the tasks waiting on it), the browser tabs it held, the project activity. Then the queue goes on.
+ */
+function finalizeTurn(
+    sessionId: string,
+    reply: Message,
+    reason: string,
+    stopped: boolean,
+) {
+    const session = workspace.sessions.find((item) => item.id === sessionId);
+    failSessionWork(sessionId);
+    onDelegateDone(sessionId, reply, reason);
+    finishWorkflowTurn(sessionId, true, reply);
+    finishWorkflowIntegration(sessionId, reply, true);
+    endWaitingTasks(sessionId);
+    releaseBrowserChat(sessionId);
+    if (session) {
+        const project = workspace.projects.find(
+            (item) => item.id === session.projectId,
+        );
+        void recordProjectActivity({
+            root: project?.path ?? '',
+            project: project?.name ?? '',
+            sessionId,
+            chatTitle: session.title,
+            agent: reply.agent ?? session.agent,
+            model: reply.model ?? session.model,
+            status: stopped ? 'stopped' : 'failed',
+            reply,
+            note: stopped ? undefined : reason,
+        });
+    }
+    sendNextQueued(sessionId);
+}
+
+/** Closes the failed turn that is still owed, when no turn of the chat took it over (see `owed`). */
+function closeOwedTurn(sessionId: string, stopped = false) {
+    const owing = owed.get(sessionId);
+    if (!owing) return;
+    owed.delete(sessionId);
+    finalizeTurn(
+        sessionId,
+        owing.reply,
+        stopped ? 'stopped' : owing.reason,
+        stopped,
+    );
+}
+
+/** Stop pressed while the chat waits for a retry or an account switch: nothing of it runs, and the turn is closed. */
+export function stopOwedTurn(sessionId: string) {
+    dropRecovery(sessionId);
+    cancelAutoSwitch(sessionId);
+    closeOwedTurn(sessionId, true);
+}
+
+/**
+ * Carries out the plan after the failed turn has been put away. Every exit that starts no turn closes the failed turn
+ * (`closeOwedTurn`), so its parent, queue and workers still end. A Stop, or a message of the user, supersedes the plan.
+ */
+async function runRecovery(
+    sessionId: string,
+    plan: Recovery,
+    reason: string,
+    failedAgent?: Agent,
+) {
     const session = workspace.sessions.find((item) => item.id === sessionId);
     const state = recoveries[sessionId];
-    if (!session || !state || plan.action === 'stop') return;
+    if (!session || !state || plan.action === 'stop') {
+        closeOwedTurn(sessionId);
+        return;
+    }
+    // Each continuation has its own number: a send deferred behind a credential or a chat load checks it again (A4).
+    const generation = ++continuationCount;
+    state.generation = generation;
+    state.attachments = lastAttachments(sessionId);
+    // A message of the user is already waiting: it runs now, and no continuation is put in front of it (A3).
+    const userWaiting = () => (queued[sessionId]?.length ?? 0) > 0;
     if (plan.action === 'retry') {
+        if (userWaiting()) {
+            dropRecovery(sessionId);
+            closeOwedTurn(sessionId);
+            return;
+        }
         state.retries++;
-        await new Promise((resolve) => setTimeout(resolve, plan.delayMs));
+        const wait = new AbortController();
+        state.wait = wait;
+        const passed = await waitUnlessAborted(plan.delayMs, wait.signal);
+        if (state.wait === wait) state.wait = undefined;
+        // Stopped meanwhile: stopOwedTurn has closed the failed turn already.
+        if (!passed) return;
         // The user may have sent something meanwhile: their turn runs now, so the conversation is not reset under it.
         if (replies[sessionId] || recoveries[sessionId] !== state) return;
-        forgetUnstartedConversation(session);
+        forgetUnstartedConversation(sessionId, failedAgent ?? session.agent);
     } else {
-        const target = recoveryTarget(plan.agent);
-        if (!target) return;
+        const target = recoveryTarget(plan.agent, sessionId);
+        if (!target) {
+            // Nothing to move to any more (the limits or sign-ins changed while the turn ended): the work stops here.
+            const owing = owed.get(sessionId);
+            if (owing)
+                owing.reply.blocks = [
+                    ...owing.reply.blocks,
+                    {
+                        kind: 'response',
+                        text: '> ↻ No other agent is available now: the work stops here.',
+                    },
+                ];
+            dropRecovery(sessionId);
+            closeOwedTurn(sessionId);
+            return;
+        }
         const from = session.agent;
-        moveChatTo(session, target.agent, target.model, target.effort);
+        // The route is left: an id that never started on it is forgotten with it, so a later return does not resume it (A8).
+        forgetUnstartedConversation(sessionId, failedAgent ?? from);
+        moveChatTo(
+            session,
+            target.agent,
+            target.model,
+            target.effort,
+            target.provider,
+        );
         // The provider changed without the user asking: the chat says so, in its own list, so the agents that answer
         // next are told it, and the user sees it.
         const at = new SvelteDate().toISOString();
@@ -485,14 +690,24 @@ async function runRecovery(sessionId: string, plan: Recovery, reason: string) {
         persistLocal();
         state.retries = 0;
         state.tried.push(plan.agent);
+        if (userWaiting()) {
+            dropRecovery(sessionId);
+            closeOwedTurn(sessionId);
+            return;
+        }
     }
     // The user may have sent something meanwhile, or stopped the chat: their message wins. A newer failure has its own
     // state, so this older plan is dropped too.
     if (replies[sessionId] || recoveries[sessionId] !== state) return;
     const same = plan.action !== 'fallback';
-    send(sessionId, '', [], [], [], {
+    const { images, elements, files } = state.attachments;
+    send(sessionId, '', images, elements, [], {
         prompt: continuePrompt(reason, same, lastRequest(sessionId)),
         silent: NO_HANDOUT,
+        files,
+        recovery: { generation },
+        // Refused because the chat is busy after all: the failed turn is closed here, so the queue is not held.
+        onDropped: () => closeOwedTurn(sessionId),
     });
 }
 
@@ -504,18 +719,22 @@ async function runAutoSwitch(
     blockId: string,
 ) {
     const session = workspace.sessions.find((item) => item.id === sessionId);
-    if (!session) return;
-    const scope =
-        session.agent === 'custom'
-            ? parseCustomModel(session.model)?.providerId
-            : session.agent === 'antigravity'
-              ? 'agy'
-              : session.agent;
+    if (!session) {
+        closeOwedTurn(sessionId);
+        return;
+    }
+    // The route of the turn that failed (reply.agent/model), not the chat's current pick: the rotation is that
+    // provider's, even when the user has picked another model since (see credentialScope).
+    const route = {
+        agent: reply.agent ?? session.agent,
+        model: reply.model ?? session.model,
+    };
+    const scope = credentialScope(route.agent, route.model);
     const expectedModel = session.model;
     const modelId =
-        session.agent === 'custom'
-            ? (parseCustomModel(session.model)?.model ?? '')
-            : (session.model ?? '');
+        route.agent === 'custom'
+            ? (parseCustomModel(route.model)?.model ?? '')
+            : (route.model ?? '');
     let attempt = credentialAttempts.get(sessionId);
     if (attempt && (attempt.scope !== scope || attempt.model !== modelId)) {
         cancelAutoSwitch(sessionId);
@@ -540,11 +759,7 @@ async function runAutoSwitch(
         credentialAttempts.get(sessionId) === currentAttempt &&
         workspace.sessions.some((item) => item.id === sessionId) &&
         session.model === expectedModel &&
-        (session.agent === 'custom'
-            ? parseCustomModel(session.model)?.providerId
-            : session.agent === 'antigravity'
-              ? 'agy'
-              : session.agent) === scope;
+        credentialScope(session.agent, session.model) === scope;
     const block = () =>
         reply.blocks.find(
             (item): item is Extract<Block, { kind: 'command' }> =>
@@ -560,8 +775,8 @@ async function runAutoSwitch(
     let selected: string | null = null;
     try {
         if (!session) return;
-        if (session.agent === 'custom') {
-            const providerId = parseCustomModel(session.model)?.providerId;
+        if (route.agent === 'custom') {
+            const providerId = parseCustomModel(route.model)?.providerId;
             const provider = connectors.custom.find(
                 (item) => item.id === providerId,
             );
@@ -579,8 +794,8 @@ async function runAutoSwitch(
                 }
             }
         } else {
-            const connector = (
-                session.agent === 'antigravity' ? 'agy' : session.agent
+            const connector = credentialScope(
+                route.agent,
             ) as AccountConnectorId;
             const switched = await autoSwitchConnectorAccount(
                 connector,
@@ -594,6 +809,8 @@ async function runAutoSwitch(
                 current.status = 'fail';
                 current.output = 'Account switching cancelled';
             }
+            // The chat changed under the switch (a Stop closed the turn already; a message of the user owns it now).
+            if (!replies[sessionId]) closeOwedTurn(sessionId);
             return;
         }
         if (selected && session && !replies[sessionId]) {
@@ -626,8 +843,8 @@ async function runAutoSwitch(
         }
         if (session) scheduleResume(session, reason);
         cancelAutoSwitch(sessionId);
-        // The failed turn skipped the queue while this switch ran: nothing else will start it, so it goes on now.
-        if (!replies[sessionId]) sendNextQueued(sessionId);
+        // The failed turn was held for this switch and nothing else will end it: it is closed now, and the queue goes on.
+        if (!replies[sessionId]) closeOwedTurn(sessionId);
     } catch (error) {
         const current = block();
         const cancelled =
@@ -641,7 +858,7 @@ async function runAutoSwitch(
         }
         if (!cancelled) scheduleResume(session, reason);
         cancelAutoSwitch(sessionId);
-        if (!cancelled && !replies[sessionId]) sendNextQueued(sessionId);
+        if (!cancelled && !replies[sessionId]) closeOwedTurn(sessionId);
     } finally {
         clearInterval(timer);
         persistLocal();
@@ -799,28 +1016,6 @@ function lastRequest(sessionId: string): string {
             .join('\n')
             .trim() ?? ''
     );
-}
-
-/**
- * A turn that failed before the CLI ever answered leaves an id with no conversation behind it (or, for Claude, one
- * it may refuse to reuse with `--session-id`). The retry then starts a new conversation instead.
- */
-function forgetUnstartedConversation(session: SessionItem) {
-    const first =
-        session.firstAgent ??
-        session.source ??
-        session.agents?.[0] ??
-        session.agent;
-    if (session.agent === first) {
-        if (session.agentStarted === true) return;
-        session.agentSession = undefined;
-        session.agentStarted = false;
-    } else if (
-        session.agentIds?.[session.agent] &&
-        !session.agentIds[session.agent]?.started
-    ) {
-        delete session.agentIds[session.agent];
-    }
 }
 
 /** Apply one agent event to the reply it belongs to. */
@@ -1048,6 +1243,12 @@ const STREAMED = new Set<AgentEvent['kind']>([
     'thinking',
     'tool_output_delta',
 ]);
+/** A streamed event, or a sub-agent's streamed event (scoped under its call): both are coalesced, in order. */
+function isStreamed(event: AgentEvent): boolean {
+    return event.kind === 'scoped'
+        ? isStreamed(event.event)
+        : STREAMED.has(event.kind);
+}
 const streamQueue = new SvelteMap<
     string,
     { event: AgentEvent; turn?: string; messageId?: string }[]
@@ -1100,7 +1301,7 @@ export function handleAgentEvent(
     turn?: string,
     messageId?: string,
 ) {
-    if (STREAMED.has(event.kind)) {
+    if (isStreamed(event)) {
         const items = streamQueue.get(sessionId) ?? [];
         items.push({ event, turn, messageId });
         streamQueue.set(sessionId, items);
@@ -1269,7 +1470,7 @@ function handleEventNow(
     if (
         !ownedRun?.listener &&
         event.kind === 'error' &&
-        NO_CONVERSATION.test(event.message)
+        classifyFailure(event.message) === 'conversation'
     ) {
         // The CLI no longer has the conversation this id named (a thread whose run was cut short, a cleaned-up session).
         // The next turn starts a new one, and is given what was said so far as text, so the work in progress is not lost.
@@ -1457,17 +1658,20 @@ function handleEventNow(
     // gets a line saying what happens, and the steps below that close the work (failure, reports) are skipped.
     const failureKind =
         event.kind === 'error' ? classifyFailure(event.message) : null;
+    // The provider that failed is the turn's route, not the chat's current pick (see runAutoSwitch).
+    const failedAgent = reply.agent ?? session.agent;
+    const failedModel = reply.model ?? session.model;
     const customProviderId =
-        session.agent === 'custom'
-            ? parseCustomModel(session.model)?.providerId
+        failedAgent === 'custom'
+            ? parseCustomModel(failedModel)?.providerId
             : undefined;
     const autoSwitchConnector =
-        session.agent === 'antigravity' ? 'agy' : session.agent;
+        failedAgent === 'antigravity' ? 'agy' : failedAgent;
     const autoSwitchRequested = Boolean(
         update.finished &&
         event.kind === 'error' &&
         (failureKind === 'limit' || failureKind === 'auth') &&
-        (session.agent === 'custom'
+        (failedAgent === 'custom'
             ? connectors.custom.some(
                   (provider) =>
                       provider.id === customProviderId && provider.autoSwitch,
@@ -1479,15 +1683,22 @@ function handleEventNow(
     );
     const recovery =
         update.finished && event.kind === 'error' && !autoSwitchRequested
-            ? recoveryFor(session, event.message)
+            ? recoveryFor(session, event.message, reply)
             : null;
     const recovering =
         autoSwitchRequested ||
         (recovery !== null && recovery.plan.action !== 'stop');
+    // The chat goes on from this failure (a retry, a fallback, an account switch): its end is owed until one of them
+    // closes it, or a Stop does. Only the steps that close the work wait for that.
+    if (recovering && event.kind === 'error')
+        owed.set(sessionId, { reply, reason: clipText(event.message, 200) });
     let autoSwitchBlockId: string | null = null;
     if (update.finished && event.kind !== 'error') {
         cancelAutoSwitch(sessionId);
-        delete recoveries[sessionId];
+        dropRecovery(sessionId);
+        // A turn that finished well while a failed one was still owed (a continuation takes it over when it starts, so this
+        // is another turn): the failed turn is closed now rather than left open.
+        closeOwedTurn(sessionId);
         delete resumeAutoChoice[sessionId];
         delete resumeSince[sessionId];
     }
@@ -1502,9 +1713,11 @@ function handleEventNow(
     if (recovery) {
         const plan = recovery.plan;
         const fallbackTarget =
-            plan.action === 'fallback' ? recoveryTarget(plan.agent) : undefined;
+            plan.action === 'fallback'
+                ? recoveryTarget(plan.agent, sessionId)
+                : undefined;
         const note = recoveryNote(recovery.kind, plan, {
-            from: agentLabel(session.agent, session.model),
+            from: agentLabel(failedAgent, failedModel),
             to: fallbackTarget
                 ? agentLabel(fallbackTarget.agent, fallbackTarget.model)
                 : undefined,
@@ -1630,6 +1843,17 @@ function handleEventNow(
                     event.kind === 'error',
                 );
                 endWaitingTasks(sessionId);
+            } else {
+                // The worker is being recovered: its caller hears why, through the watchdog's check-in, and the task goes on.
+                const failure = (
+                    event.kind === 'error' ? event.message : ''
+                ).slice(0, 200);
+                noteWorkerRecovering(
+                    sessionId,
+                    autoSwitchRequested
+                        ? 'waiting for an account switch'
+                        : `${recovery?.plan.action === 'fallback' ? 'moving to another agent' : 'retrying'} after: ${failure}`,
+                );
             }
             // Our own copy of the turn (agent, model, time), apart from what the CLIs store: the base for syncing later.
             archiveTurn(
@@ -1680,6 +1904,13 @@ function handleEventNow(
             delete liveReplies[sessionId];
             delete liveAsks[sessionId];
             delete liveHandouts[sessionId];
+            // A picker change made while this turn ran applies now that it has ended (D3).
+            const pick = pendingSwitch[sessionId];
+            if (pick && update.finished) {
+                delete pendingSwitch[sessionId];
+                session.agent = pick.agent;
+                session.model = pick.model;
+            }
             session.status =
                 (sessionLanes[sessionId]?.length ?? 0) > 0 ? 'working' : 'idle';
             persistLocal();
@@ -1708,6 +1939,7 @@ function handleEventNow(
                     sessionId,
                     recovery.plan,
                     clipText(event.message, 200),
+                    failedAgent,
                 );
             else if (
                 sessionId === workspace.activeId &&

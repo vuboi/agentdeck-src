@@ -12,8 +12,13 @@ import {
 } from '../../app/platform/system-notifications';
 import { stopAgentTurn } from '../agent';
 import { logFlow } from '../../tasks/flow-log';
-import { applyAgentEvent } from '../agent-reply';
-import { customProviderName, findModel } from '../../agents/models.svelte';
+import { applyAgentEvent, stopCallTasks } from '../agent-reply';
+import {
+    customProviderName,
+    findModel,
+    modelsReady,
+    type ProviderId,
+} from '../../agents/models.svelte';
 import { agentDisplayName } from '../../agents/provider-registry';
 import { isHandbackPrompt } from '../runs/handback';
 import {
@@ -41,8 +46,10 @@ import {
 } from './run.svelte';
 import {
     cancelAutoSwitch,
+    dropRecovery,
     handleAgentEvent,
-    recoveries,
+    owesTurn,
+    stopOwedTurn,
     userStoppedAt,
 } from './events.svelte';
 import { delegateRuns } from './delegation.svelte';
@@ -295,8 +302,19 @@ export const chatTurnOptions: Record<
     string,
     { permission: Permission; effort: Effort }
 > = {};
+/** Used only for a chat whose own settings are not known yet: the safest one (ask before acting, medium effort). It is
+ *  never the settings of the chat on screen, which would give a background turn another chat's permission. */
+const SAFE_TURN_OPTIONS: { permission: Permission; effort: Effort } = {
+    permission: 'ask',
+    effort: 'medium',
+};
+/** An agent and model picked in the picker while the chat's turn runs. They are applied when that turn ends (D3): the
+ *  turn keeps the route it started with, and the picker shows that the pick applies after this turn. */
+export const pendingSwitch = $state<
+    Record<string, { agent: Agent; model: string }>
+>({});
 export const turnOptionsOf = (sessionId: string) =>
-    chatTurnOptions[sessionId] ?? turnOptions;
+    chatTurnOptions[sessionId] ?? SAFE_TURN_OPTIONS;
 
 /** The run of each chat that is current: events of an older (stopped) run are ignored. */
 export const turns: Record<string, string> = {};
@@ -336,8 +354,8 @@ export const continuationGroups: Record<string, string> = {};
 /** An agent whose account is being switched: a send to it waits, since the CLI it would start keeps the old sign-in
  *  until the switch is done (see account-epoch.svelte.ts). The sends are kept whole (prompt, preface, silent turn) and
  *  made, in order, when the switch ends. */
-export const switchingAgent = (agent: string) =>
-    Boolean(connectors.busy[`switch:${agent}`]);
+export const switchingAgent = (scope: string) =>
+    Boolean(connectors.busy[`switch:${scope}`]);
 export const afterSwitch = new SvelteMap<string, (() => void)[]>();
 let switchingBefore = new Set<string>();
 $effect.root(() => {
@@ -375,19 +393,29 @@ export function hasTurnWork(sessionId: string): boolean {
     return Boolean(replies[sessionId] || needsUserInput(sessionId));
 }
 
-/** Drops a provider conversation id only when the stopped turn never received a confirmed session/rollout. */
-export function forgetUnstartedConversation(sessionId: string) {
+/**
+ * Drops a provider conversation id only when the turn that used it never received a confirmed session/rollout. The one
+ * copy for every caller (Stop, Send now, retry, fallback). `failedAgent` is the agent whose turn it was (reply.agent);
+ * the chat's current agent when left out.
+ */
+export function forgetUnstartedConversation(
+    sessionId: string,
+    failedAgent?: Agent,
+) {
     const session = workspace.sessions.find((item) => item.id === sessionId);
     if (!session) return;
-    const first = session.source ?? session.agents?.[0] ?? session.agent;
-    if (session.agent === first) {
+    const first =
+        session.firstAgent ??
+        session.source ??
+        session.agents?.[0] ??
+        session.agent;
+    const agent = failedAgent ?? session.agent;
+    if (agent === first) {
         if (session.agentStarted === true) return;
         session.agentSession = undefined;
         session.agentStarted = false;
-    } else {
-        const own = session.agentIds?.[session.agent];
-        if (own && !own.started && session.agentIds)
-            delete session.agentIds[session.agent];
+    } else if (session.agentIds?.[agent] && !session.agentIds[agent]?.started) {
+        delete session.agentIds[agent];
     }
 }
 
@@ -459,9 +487,12 @@ export function toggleNotifyDone(sessionId: string) {
 }
 
 /** Whether a chat has a reply in progress (for the send / stop button). */
+/** A chat whose failed turn is still owed (a retry or an account switch waits) counts as running: Stop is offered. */
 export const isRunning = (sessionId: string) =>
     workspace.sessions.find((item) => item.id === sessionId)?.status ===
-        'working' || (sessionLanes[sessionId]?.length ?? 0) > 0;
+        'working' ||
+    (sessionLanes[sessionId]?.length ?? 0) > 0 ||
+    owesTurn(sessionId);
 
 /** Stops the reply of a chat now. What was written so far stays. `quiet`: the stop is only to make room for a newer
  *  message (sent while the reply ran, an edit), not the user's Stop button: the reply does not say "You stopped after". */
@@ -480,11 +511,8 @@ export function stopChatWork(sessionId: string) {
                     block.task?.status !== 'progress')
             )
                 continue;
-            block.task = {
-                ...block.task,
-                status: 'stopped',
-                endedAt: Date.now(),
-            };
+            // Every task of the call ends too, so a late progress from one of them cannot bring the card back.
+            stopCallTasks(block);
             changed = true;
         }
     }
@@ -497,6 +525,9 @@ export function stopTurn(sessionId: string, quiet = false) {
     if (!quiet) forgetUnstartedConversation(sessionId);
     if (!quiet && (queued[sessionId]?.length ?? 0) > 0)
         queuePaused[sessionId] = 'interrupted';
+    // A retry or an account switch that waits for a failed turn ends here: the turn is closed as stopped (A2). The queue is
+    // paused above first, so closing the turn does not start a queued message.
+    if (!quiet) stopOwedTurn(sessionId);
     if (!quiet) {
         const listeners = [...runReplies.entries()].filter(
             ([, run]) => run.sessionId === sessionId && run.listener,
@@ -536,7 +567,7 @@ export function stopTurn(sessionId: string, quiet = false) {
     // already runs in the background goes on, and a stop aimed at one side lane returned above.
     if (!quiet) stopChatWork(sessionId);
     // Stopped by the user: a retry or a hand-over waiting to start does not start.
-    delete recoveries[sessionId];
+    dropRecovery(sessionId);
     advanceRun(sessionId, { type: 'cancel' });
     // Delegated workers stop with the lead chat that started them.
     for (const run of delegateRuns) {
@@ -612,23 +643,11 @@ export function modelFor(session: SessionItem): string | null {
     const list = MODELS[session.agent] ?? [];
     if (session.model && list.some((item) => item.value === session.model))
         return session.model;
-    const fallback = list[0]?.value ?? null;
-    if (fallback && session.model !== fallback) {
-        const previous = session.model;
-        session.model = fallback;
-        // The picker follows the model the chat really runs on (Composer listens for agent-moved).
-        if (previous)
-            window.dispatchEvent(
-                new CustomEvent('agentdeck:agent-moved', {
-                    detail: {
-                        sessionId: session.id,
-                        agent: session.agent,
-                        model: fallback,
-                    },
-                }),
-            );
-    }
-    return fallback;
+    // Until the CLI's own list has been read, the catalogue is only a fallback: the saved model is trusted as it is.
+    if (session.model && modelsReady[session.agent as ProviderId] === false)
+        return session.model;
+    // Pure: the chat is not written here. The picker shows what is no longer offered (see ModelPicker).
+    return list[0]?.value ?? null;
 }
 
 export const agentLabel = (agent?: Agent, model?: string | null) =>
