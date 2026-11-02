@@ -175,9 +175,27 @@ pub fn merge(root: &str, branch: &str, base: &str) -> Result<(), String> {
     })
 }
 
+/// Only a folder under `<repo>/.agentdeck/worktrees/` and a branch named `agentdeck/...` may be removed. Anything else
+/// (the main checkout, a user's own worktree, `main`) is refused before git touches it.
+fn guard_removal(top: &Path, path: &str, branch: &str) -> Result<(), String> {
+    if !branch.starts_with("agentdeck/") {
+        return Err(format!(
+            "refusing to remove branch {branch}: only agentdeck/ branches are removed"
+        ));
+    }
+    let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    let folder = format!("{}/", norm(&top.join(DIR).to_string_lossy()));
+    let target = norm(path);
+    if target.contains("/../") || !target.starts_with(&folder) {
+        return Err(format!("refusing to remove {path}: it is not under {DIR}"));
+    }
+    Ok(())
+}
+
 /// Removes a worktree. Refuses local changes unless `force`. The branch is deleted only when merged, unless `force`.
 pub fn remove(root: &str, path: &str, branch: &str, force: bool) -> Result<(), String> {
     let top = toplevel(root)?;
+    guard_removal(&top, path, branch)?;
     let mut args = vec!["worktree", "remove"];
     if force {
         args.push("--force");
@@ -387,6 +405,51 @@ mod tests {
             }
         );
         assert!(commit(&wt.path, "nothing new").is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn remove_refuses_a_branch_that_is_not_an_agentdeck_branch() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let wt = create(&r, "guard", "main").unwrap();
+        // Forced removal of a worktree with a branch outside agentdeck/ is refused before anything is deleted.
+        let err = remove(&r, &wt.path, "main", true).unwrap_err();
+        assert!(err.contains("agentdeck/"), "{err}");
+        assert!(Path::new(&wt.path).join("a.txt").exists());
+        assert!(!git_ok(&root, &["branch", "--list", "main"])
+            .unwrap()
+            .is_empty());
+        remove(&r, &wt.path, &wt.branch, true).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn remove_refuses_a_worktree_outside_the_agentdeck_folder() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let outside = std::env::temp_dir().join(format!("agentdeck-wt-out-{}", unique_name("o")));
+        let outside_text = outside.to_string_lossy().to_string();
+        git_ok(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "agentdeck/outside",
+                &outside_text,
+                "main",
+            ],
+        )
+        .unwrap();
+        assert!(remove(&r, &outside_text, "agentdeck/outside", true).is_err());
+        assert!(
+            outside.join("a.txt").exists(),
+            "a folder outside .agentdeck is never removed"
+        );
+        git_ok(&root, &["worktree", "remove", "--force", &outside_text]).ok();
+        std::fs::remove_dir_all(&outside).ok();
         std::fs::remove_dir_all(&root).ok();
     }
 
