@@ -16,7 +16,7 @@
     } from '../../terminal/terminal.svelte';
     import PickerPopover, { type PickerItem } from '../ui/PickerPopover.svelte';
     import { TRIGGER_ON } from '../../app/ui/popover';
-    import { activeSession, projectOf } from '../../chat/sessions.svelte';
+    import { activeSession, sessionCwd } from '../../chat/sessions.svelte';
     import { saveFileAttachment } from '../../chat/agent';
     import { toast } from '../../app/platform/toast';
     import {
@@ -176,10 +176,10 @@
         };
     });
 
-    /** The folder of the open chat's project: a new shell starts there. */
+    /** The folder of the open chat (its worktree, else its project): a new shell starts there. */
     const folder = () => {
         const session = activeSession();
-        return session ? projectOf(session)?.path || undefined : undefined;
+        return session ? sessionCwd(session) || undefined : undefined;
     };
 
     const hooksOf = (id: string): SessionHooks => ({

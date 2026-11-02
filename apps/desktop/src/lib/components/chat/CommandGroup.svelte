@@ -44,7 +44,11 @@
     import { openProjectFile } from '../../files/file-viewer.svelte';
     import { displayPath, withinRoot } from '../../files/paths';
     import { inTauri } from '../../app/platform/history';
-    import { activeSession, workspace } from '../../chat/sessions.svelte';
+    import {
+        activeSession,
+        sessionCwd,
+        workspace,
+    } from '../../chat/sessions.svelte';
     import { toast } from '../../app/platform/toast';
     import Markdown from '../ui/Markdown.svelte';
     import CodeView from '../files/CodeView.svelte';
@@ -232,12 +236,10 @@
     const showMoreDiff = (key: string) =>
         (visibleDiffCounts[key] =
             (visibleDiffCounts[key] ?? INITIAL_DIFF_ROWS) + DIFF_ROW_BATCH);
+    /** The folder the changes panel reads: the open chat's worktree, else its project. */
     function projectRoot() {
-        return (
-            workspace.projects.find(
-                (project) => project.id === activeSession()?.projectId,
-            )?.path ?? ''
-        );
+        const session = activeSession();
+        return (session && sessionCwd(session)) || '';
     }
     async function currentGitPath(root: string, path: string) {
         const relative = withinRoot(root, path);
