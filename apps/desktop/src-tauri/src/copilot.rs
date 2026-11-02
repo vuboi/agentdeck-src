@@ -452,6 +452,7 @@ async fn run_session(
         .lock()
         .map(|mut list| std::mem::take(&mut *list))
         .unwrap_or_default();
+    children.finish();
     if !refusals.is_empty() {
         out(AgentEvent::PermissionDenied { requests: refusals });
     }
@@ -628,6 +629,8 @@ struct Children {
     tools: HashMap<String, u32>,
     /// A sub-agent's events that came before its start named the call that started it: held until it does.
     pending: HashMap<String, Vec<AgentEvent>>,
+    /// Events dropped for each sub-agent because its `pending` list was full.
+    dropped: HashMap<String, usize>,
 }
 
 /// The most events held for one sub-agent before its start: beyond it the newest are dropped.
@@ -639,7 +642,25 @@ impl Children {
         let held = self.pending.entry(agent.to_owned()).or_default();
         if held.len() < HELD_PER_AGENT {
             held.push(event);
+            return;
         }
+        let count = self.dropped.entry(agent.to_owned()).or_default();
+        *count += 1;
+        if *count == 1 {
+            eprintln!("copilot: sub-agent {agent} reached {HELD_PER_AGENT} held events before its start; newer ones are dropped");
+        }
+    }
+
+    /// The turn is over: what is still held for a sub-agent whose start never came is dropped, and the count is logged.
+    fn finish(&mut self) {
+        for (agent, held) in self.pending.drain() {
+            let dropped = self.dropped.remove(&agent).unwrap_or(0);
+            eprintln!(
+                "copilot: sub-agent {agent} ended without a start: {} held events and {dropped} over the limit are dropped",
+                held.len()
+            );
+        }
+        self.dropped.clear();
     }
 
     /// The events held for a sub-agent, now that its call is known, drawn under that call. Nothing is released while the
@@ -1191,6 +1212,26 @@ mod tests {
             }]
         );
         assert!(children.release("a").is_empty(), "released once");
+    }
+
+    #[test]
+    fn events_held_for_a_sub_agent_without_a_start_are_gone_when_the_turn_ends() {
+        let mut children = Children::default();
+        let delta = AgentEvent::Delta { text: "x".into() };
+        for _ in 0..(HELD_PER_AGENT + 3) {
+            children.hold("orphan", delta.clone());
+        }
+        assert_eq!(
+            children.pending["orphan"].len(),
+            HELD_PER_AGENT,
+            "the limit holds"
+        );
+        children.finish();
+        assert!(
+            children.pending.is_empty(),
+            "nothing stays held after the turn"
+        );
+        assert!(children.dropped.is_empty(), "the count is reset with it");
     }
 
     #[test]

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::{AgentEvent, TaskStatus};
+use super::AgentEvent;
 
 /// How long a turn may print nothing while one of its tools runs: the CLI writes nothing until a build or a test suite
 /// returns, so the ordinary limit would end real work. Still bounded, so a tool that hangs is caught.
@@ -91,11 +91,11 @@ impl Watchdog {
                 self.open_tools.remove(id);
             }
             AgentEvent::Task { id, status, .. } => match status {
-                TaskStatus::Started | TaskStatus::Progress => {
-                    self.open_tasks.insert(id.clone());
-                }
-                TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped => {
+                status if status.is_end() => {
                     self.open_tasks.remove(id);
+                }
+                _ => {
+                    self.open_tasks.insert(id.clone());
                 }
             },
             _ => {}
@@ -133,6 +133,7 @@ impl Watchdog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::TaskStatus;
 
     #[tokio::test(start_paused = true)]
     async fn a_running_tool_is_not_taken_for_a_hang() {

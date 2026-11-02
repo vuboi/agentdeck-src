@@ -248,15 +248,8 @@ fn hold(held: &mut Vec<AgentEvent>, event: AgentEvent, chat: &str) {
         held.push(event);
         return;
     }
-    let is_end = |event: &AgentEvent| {
-        matches!(
-            event,
-            AgentEvent::Task {
-                status: TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped,
-                ..
-            }
-        )
-    };
+    let is_end =
+        |event: &AgentEvent| matches!(event, AgentEvent::Task { status, .. } if status.is_end());
     let is_progress = |event: &AgentEvent| {
         matches!(
             event,
@@ -276,7 +269,9 @@ fn hold(held: &mut Vec<AgentEvent>, event: AgentEvent, chat: &str) {
                 chat,
                 "{HELD} events held for an answer; one was dropped to keep a task's end"
             );
-            held[at] = event;
+            // The end goes last, after the progress of its own task that is still held.
+            held.remove(at);
+            held.push(event);
         }
         _ => tracing::warn!(
             chat,
@@ -288,6 +283,18 @@ fn hold(held: &mut Vec<AgentEvent>, event: AgentEvent, chat: &str) {
 enum Fate {
     Park,
     Drop,
+}
+
+/// The open tasks a tail closes as stopped when it ends. Only a dropped process closes them: nothing will end them.
+/// A parked process is kept and reused, so its tasks stay open and the next turn on it ends them.
+fn tasks_to_stop(
+    open: BTreeMap<String, Option<String>>,
+    fate: &Fate,
+) -> Vec<(String, Option<String>)> {
+    match fate {
+        Fate::Drop => open.into_iter().collect(),
+        Fate::Park => Vec::new(),
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // the process, its provider, and the four channels the tail is driven through
@@ -394,13 +401,10 @@ async fn run(
                 ..
             } = &event
             {
-                match status {
-                    TaskStatus::Started | TaskStatus::Progress => {
-                        open.insert(id.clone(), tool_use_id.clone());
-                    }
-                    TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped => {
-                        open.remove(id);
-                    }
+                if status.is_end() {
+                    open.remove(id);
+                } else {
+                    open.insert(id.clone(), tool_use_id.clone());
                 }
             }
             if turn.is_empty() {
@@ -453,8 +457,8 @@ async fn run(
         };
         sink(&chat, &turn, closing);
     }
-    // Task events held for an answer that never came go out, and each task still open ends as stopped: the process
-    // is parked or gone, so nothing will end it, and its card would show it running for good.
+    // Task events held for an answer that never came go out. A task still open ends as stopped only when the process
+    // is dropped (see tasks_to_stop); a parked process keeps it running, and its next turn ends it.
     let closing_turn = if turn.is_empty() {
         last_turn.clone()
     } else {
@@ -465,7 +469,7 @@ async fn run(
             sink(&chat, &closing_turn, event);
         }
     }
-    for (id, tool_use_id) in std::mem::take(&mut open) {
+    for (id, tool_use_id) in tasks_to_stop(std::mem::take(&mut open), &fate) {
         sink(
             &chat,
             &closing_turn,
@@ -561,10 +565,27 @@ mod tests {
         assert_eq!(held.len(), HELD);
         assert!(held.iter().any(|e| matches!(e, AgentEvent::Task { id, status: TaskStatus::Done, .. } if id == "end")), "the end is kept");
         assert!(
+            matches!(held.last(), Some(AgentEvent::Task { id, status: TaskStatus::Done, .. }) if id == "end"),
+            "the end is the last held event, after the progress of its own task"
+        );
+        assert!(
             !held
                 .iter()
                 .any(|e| matches!(e, AgentEvent::Task { id, .. } if id == "p0")),
             "the oldest progress made room"
+        );
+    }
+
+    #[test]
+    fn a_parked_process_keeps_its_open_tasks_and_a_dropped_one_stops_them() {
+        let open = || BTreeMap::from([("a".to_string(), Some("t1".to_string()))]);
+        assert!(
+            tasks_to_stop(open(), &Fate::Park).is_empty(),
+            "a parked process runs its tasks on: they are not stopped"
+        );
+        assert_eq!(
+            tasks_to_stop(open(), &Fate::Drop),
+            vec![("a".to_string(), Some("t1".to_string()))]
         );
     }
 
