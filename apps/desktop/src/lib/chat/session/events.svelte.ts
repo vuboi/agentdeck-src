@@ -1682,8 +1682,7 @@ function handleEventNow(
         failedAgent === 'custom'
             ? parseCustomModel(failedModel)?.providerId
             : undefined;
-    const autoSwitchConnector =
-        failedAgent === 'antigravity' ? 'agy' : failedAgent;
+    const autoSwitchConnector = credentialScope(failedAgent);
     const autoSwitchRequested = Boolean(
         update.finished &&
         event.kind === 'error' &&

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { load } from './support/load-session.mjs';
 import { updateHistoricalTask } from '../src/lib/chat/agent-reply.ts';
+import { credentialScopeOf } from '../src/lib/chat/recovery/turn-failure.ts';
+import { credentialScope } from '../src/lib/agents/credential-scope.ts';
 import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
 
 /** Lets the promise that answers a delegate call (and its fallback) run. */
@@ -193,4 +195,17 @@ test('R3.4: a historical card that ended stays ended when a late progress event 
     assert.equal(updateHistoricalTask(messages, late), true);
     assert.equal(messages[0].blocks[0].task.status, 'done');
     assert.equal(messages[0].blocks[0].task.endedAt, 2);
+});
+
+// ---------- R3.8: one rule for the credential of a route ----------
+
+test("R3.8: credentialScopeOf names a custom provider's credential, the same as credentialScope", () => {
+    assert.equal(credentialScopeOf('custom|p::m'), 'custom:p');
+    assert.equal(credentialScopeOf('custom|plain'), 'custom');
+    assert.equal(credentialScopeOf('antigravity|x'), 'agy');
+    assert.equal(credentialScopeOf('codex|gpt'), 'codex');
+    assert.equal(
+        credentialScopeOf('custom|p::m'),
+        credentialScope('custom', 'p::m'),
+    );
 });
