@@ -6,6 +6,7 @@ import { updateHistoricalTask } from '../src/lib/chat/agent-reply.ts';
 import { credentialScopeOf } from '../src/lib/chat/recovery/turn-failure.ts';
 import { credentialScope } from '../src/lib/agents/credential-scope.ts';
 import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
+import { planTask } from '../src/lib/tasks/delegate-plan.ts';
 
 /** Lets the promise that answers a delegate call (and its fallback) run. */
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -39,6 +40,7 @@ async function delegateWith({
     const replies = [];
     const api = await load('delegate-task', {
         ...taskHelpers,
+        planTask,
         elapsed: (ms) => `${ms} ms`,
         workspace: { activeId: 'chat', sessions: [session], projects: [] },
         getPref: async (key) => prefs[key] ?? null,

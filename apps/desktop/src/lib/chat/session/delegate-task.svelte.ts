@@ -10,11 +10,8 @@ import {
     kindOfCommand,
     pickTask,
     argsOfCall,
-    parseDelegateArgs,
-    findAgent,
     formatAgents,
     privateContentIn,
-    resolveModel,
     newTaskId,
     REPORT_RULE,
     startedText,
@@ -54,6 +51,7 @@ import {
 } from '../../agents/models.svelte';
 import { logFlow } from '../../tasks/flow-log';
 import { WORKTREE_RULE, worktreeSlug } from '../../tasks/worktree';
+import { type PlanState, planTask } from '../../tasks/delegate-plan';
 import { inTauri } from '../../app/platform/history';
 import { startPageMemoryBridge } from '../../browser/page-memory-bridge';
 import {
@@ -487,25 +485,54 @@ function discardWorktree(root: string | null, info: WorktreeInfo) {
     }).catch(() => undefined);
 }
 
+/** What planTask reads from the module: the chats, tasks, routes and provider rows as they are now. */
+function planStateOf(depth: number): PlanState {
+    return {
+        depth,
+        maxDepth: MAX_DELEGATION_DEPTH,
+        tasks: delegateTasks,
+        sessions: workspace.sessions,
+        rows: agentRows,
+        routesFor: (role) => routesOf(taskRoles, role),
+        routedFor: (role, rows) => firstRouted(role, rows),
+        isRunning: (taskId) => taskRuns.has(taskId),
+        customModelId,
+        agentKindOf,
+    };
+}
+
+/** The agent kind a provider row runs as: a built-in CLI, or `custom` for a local provider. */
+function agentKindOf(rowId: string): Agent {
+    return rowId === 'claude' ||
+        rowId === 'codex' ||
+        rowId === 'antigravity' ||
+        rowId === 'opencode' ||
+        rowId === 'workbuddy' ||
+        rowId === 'copilot' ||
+        rowId === 'command-code'
+        ? rowId
+        : 'custom';
+}
+
 function startTask(
     call: DelegateCall,
     answer: (text: string, isError?: boolean) => void,
     prepared?: WorktreeInfo,
 ) {
-    const parsed = parseDelegateArgs(call.args);
-    if (!parsed.ok) return answer(parsed.error, true);
-    const {
-        agent: wanted,
-        model: requestedModel,
-        task,
-        wait,
-        timeoutS,
-        continueId,
-        role,
-        dependsOn,
-        worktree: isolated,
-    } = parsed.args;
     const caller = callerOf(call.caller);
+    // Every check runs first (planTask): a refused call makes no worktree, no chat and no worker.
+    const planned = planTask(
+        {
+            call,
+            caller: caller && {
+                id: caller.id,
+                side: caller.side,
+                agent: caller.agent,
+                model: caller.model,
+            },
+        },
+        planStateOf(caller ? taskDepth(caller.id) : 0),
+    );
     // A worktree made for this call is removed again when the call ends in an error: no worker will ever use it.
     const reply =
         prepared && caller
@@ -514,56 +541,17 @@ function startTask(
                   answer(text, isError);
               }
             : answer;
-    if (!caller)
-        return reply(
-            'AgentDeck could not tell which chat is calling. Do the task yourself, or ask the user to run it from the chat.',
-            true,
-        );
-    // A /btw side chat answers one question read-only: it hands no work to another chat, and no worktree is made for it.
-    if (caller.side)
-        return reply(
-            'side chats cannot delegate: answer the question yourself, read-only.',
-            true,
-        );
-    if (taskDepth(caller.id) >= MAX_DELEGATION_DEPTH)
-        return reply(
-            `Delegation depth is limited to ${MAX_DELEGATION_DEPTH} levels. Finish this task yourself and report back.`,
-            true,
-        );
-    const roleId = role ? canonicalRole(role) : undefined;
-    if (role && !roleId)
-        return reply(
-            `Unknown task role "${role}". Use one of: read, research, plan, review, security, refactor, coding, write, text, logic.`,
-            true,
-        );
-    const configuredRoutes = roleId ? routesOf(taskRoles, roleId) : [];
-    if (roleId && !configuredRoutes.length)
-        return reply(
-            `No route is configured for task role "${roleId}" in Settings > Tasks. Choose an agent there or call delegate_task without role to select one directly.`,
-            true,
-        );
-    const dependencies = [...new Set(dependsOn)];
-    for (const dependencyId of dependencies) {
-        const dependency = delegateTasks[dependencyId];
-        if (!dependency)
-            return reply(
-                `depends_on=${dependencyId} is unknown: use a task_id returned by delegate_task.`,
-                true,
-            );
-    }
+    if (!planned.ok) return reply(planned.error, true);
+    const plan = planned.plan;
+    const { task, wait, timeoutS, worktree: isolated } = plan.args;
     // The worktree is made only once the call is known to be valid, so a refused call leaves no folder or branch behind.
     // The call then runs again with the worktree in hand (prepared), and discards it if it still fails.
-    if (isolated && !prepared) {
-        if (continueId)
-            return reply(
-                'isolation worktree cannot be used with continue: a reused chat keeps its folder. Start a new task instead.',
-                true,
-            );
+    if (caller && isolated && !prepared) {
         // While the worktree is made the call is not a task yet: a stop of its chat in the meantime cancels it (endWaitingTasks).
         const pending = { caller: caller.id, cancelled: false };
         preparingWorktrees.add(pending);
         const root = sessionCwd(caller);
-        void makeWorkerWorktree(caller, parsed.args.task).then(
+        void makeWorkerWorktree(caller, task).then(
             (info) => {
                 preparingWorktrees.delete(pending);
                 if (pending.cancelled) {
@@ -585,99 +573,25 @@ function startTask(
         );
         return;
     }
-    // `continue`: reuse an idle worker chat (found by task id or chat id) instead of creating a new one.
-    let reuse: { session: SessionItem; record?: TaskRecord } | undefined;
-    if (continueId) {
-        const prior = delegateTasks[continueId];
-        let childId = prior?.childId ?? continueId;
-        // Follow persisted replacement links without changing historical task cards.
-        const seen = new SvelteSet<string>();
-        while (!seen.has(childId)) {
-            seen.add(childId);
-            const next = Object.values(delegateTasks).find(
-                (item) => item.childId === childId && item.replacementChildId,
-            )?.replacementChildId;
-            if (!next) break;
-            childId = next;
-        }
-        const session = workspace.sessions.find(
-            (item) => item.id === childId && item.parentId,
-        );
-        if (!session)
-            return reply(
-                `continue="${continueId}" is unknown: no delegated task or worker chat has that id. Use a task_id from an earlier delegate_task result or a worker chat id.`,
-                true,
-            );
-        const records = Object.values(delegateTasks).filter(
-            (item) => item.childId === childId,
-        );
-        if (
-            session.status === 'working' ||
-            records.some((item) => taskRuns.has(item.id))
-        )
-            return reply(
-                'worker is still running, use task_status or wait',
-                true,
-            );
-        reuse = {
-            session,
-            record: records.sort((a, b) => a.startedAt - b.startedAt).at(-1),
-        };
-    }
-    const rows = agentRows();
-    // A role with agents set in Task roles: the first of them that is available is used, whatever agent the caller named.
-    const routed = roleId ? firstRouted(roleId, rows) : undefined;
-    if (roleId && !routed)
+    if (!caller)
         return reply(
-            `None of the configured routes for task role "${roleId}" is currently available with its exact provider and model. Check Settings > Tasks and the provider's account or model catalogue.`,
+            'AgentDeck could not tell which chat is calling. Do the task yourself, or ask the user to run it from the chat.',
             true,
         );
-    const wantedModel = routed ? routed.model : requestedModel;
-    const oldRowId = reuse?.record?.agentId ?? reuse?.session.agent;
-    const row = findAgent(rows, routed?.agent ?? (wanted || oldRowId || ''));
-    if (!row)
-        return reply(
-            `No agent "${wanted || oldRowId}" is available. ${formatAgents(rows)}`,
-            true,
-        );
-    const inheritedModel =
-        row.id === caller.agent &&
-        row.models.some((item) => item.value === caller.model)
-            ? caller.model
-            : undefined;
-    const sameProvider = Boolean(reuse && row.id === oldRowId);
-    const chosen =
-        sameProvider && !wantedModel
-            ? { model: reuse!.session.model ?? '' }
-            : resolveModel(
-                  row.models,
-                  wantedModel ?? inheritedModel,
-                  row.id === 'claude' ? 'sonnet' : undefined,
-              );
-    if ('error' in chosen) return reply(chosen.error, true);
-    const agent: Agent =
-        row.id === 'claude' ||
-        row.id === 'codex' ||
-        row.id === 'antigravity' ||
-        row.id === 'opencode' ||
-        row.id === 'workbuddy' ||
-        row.id === 'copilot' ||
-        row.id === 'command-code'
-            ? row.id
-            : 'custom';
-    const model =
-        sameProvider && !wantedModel
-            ? chosen.model
-            : agent === 'custom'
-              ? customModelId(row.id, chosen.model)
-              : chosen.model;
-    const old = reuse;
-    const failed =
-        old?.record &&
-        (old.record.state === 'failed' || old.record.state === 'stopped');
-    const replace = Boolean(
-        old && (failed || !sameProvider || model !== old.session.model),
-    );
+    const { row, routed, agent, model, dependencies } = plan;
+    // `continue`: the chat the plan reuses (found by task id or chat id), or replaced by a new one (`replace`).
+    const old = plan.reuse
+        ? {
+              session: workspace.sessions.find(
+                  (item) => item.id === plan.reuse?.sessionId,
+              )!,
+              record: plan.reuse.recordId
+                  ? delegateTasks[plan.reuse.recordId]
+                  : undefined,
+          }
+        : undefined;
+    const replace = Boolean(old && plan.reuse?.replace);
+    const reuse = old && !replace ? old : undefined;
     let workerTask = task;
     if (replace && old) {
         const transcript = digestOf(
@@ -691,6 +605,9 @@ function startTask(
             ),
         );
         const report = old.record?.digest ?? '';
+        // A failed or stopped worker's note says why, and the replacement starts from it.
+        const failed =
+            old.record?.state === 'failed' || old.record?.state === 'stopped';
         const reason = failed
             ? (old.record?.note ?? `Previous worker ${old.record?.state}.`)
             : '';
@@ -702,7 +619,6 @@ function startTask(
             report,
             reason,
         );
-        reuse = undefined;
     }
     // Check every byte of the seed as well as the new request before selecting a restricted provider.
     const leak = row.restricted ? privateContentIn(workerTask) : null;
