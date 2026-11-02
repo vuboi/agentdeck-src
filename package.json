@@ -10,6 +10,7 @@
     "build:win": "node scripts/build.mjs win",
     "build:mac": "node scripts/build.mjs mac",
     "build:linux": "node scripts/build.mjs linux",
+    "release:check": "node scripts/release-check.mjs",
     "check": "node scripts/cargo.mjs check --workspace && node scripts/cargo.mjs clippy --workspace -- -D warnings && pnpm -r check",
     "test": "node scripts/cargo.mjs test --workspace && pnpm -r --if-present test",
     "lint": "eslint apps/desktop/src apps/desktop/scripts apps/desktop/svelte.config.js packages scripts eslint.config.mjs lint-staged.config.mjs",
