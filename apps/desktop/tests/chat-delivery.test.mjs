@@ -25,6 +25,12 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 function prepareLaunch(f, preparing) {
     Object.assign(f.bindings, {
         modelFor: () => 'model',
+        chatModel: () => ({ model: 'model' }),
+        firstAgentOf: (session) =>
+            session.firstAgent ??
+            session.source ??
+            session.agents?.[0] ??
+            session.agent,
         rememberLastChat() {},
         pendingNew: new Set(),
         chat: { messages: f.messages },
