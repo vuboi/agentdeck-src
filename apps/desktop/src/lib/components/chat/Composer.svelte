@@ -37,7 +37,6 @@
         messagesView,
         needsUserInput,
         lastChat,
-        rememberMixed,
         queued,
         queuePaused,
         type Queued,
@@ -49,6 +48,7 @@
         turnOptions,
         chatTurnOptions,
         pendingSwitch,
+        applyPendingSwitch,
         workspace,
         type Agent,
         type Effort,
@@ -540,25 +540,11 @@
                 setPref('composer.pickers', pickers);
                 return;
             }
-            delete pendingSwitch[id];
             pickers[id] = current;
             setPref('composer.pickers', pickers);
-            if (session) {
-                // A chat continued with another agent lists every agent it has had (the sidebar shows them stacked).
-                if (session.agent !== current.agent && !session.draft) {
-                    session.agents = [
-                        ...new Set([
-                            ...(session.agents ?? [
-                                session.source ?? session.agent,
-                            ]),
-                            current.agent,
-                        ]),
-                    ];
-                    rememberMixed(session);
-                }
-                session.agent = current.agent;
-                session.model = current.model;
-            }
+            // No turn runs: the pick is the chat's route now. applyPendingSwitch makes that change (R3.3).
+            pendingSwitch[id] = { agent: current.agent, model: current.model };
+            applyPendingSwitch(id);
         });
     });
 

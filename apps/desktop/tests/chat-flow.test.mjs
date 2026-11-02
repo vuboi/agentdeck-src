@@ -172,12 +172,13 @@ async function eventsWith(pending) {
         status: 'idle',
         projectId: 'project',
     };
-    const calls = { persist: 0, cancelAutoSwitch: 0 };
+    const calls = { persist: 0, cancelAutoSwitch: 0, remember: 0 };
     const api = await load('events', {
         workspace: { activeId: 'chat', sessions: [session], projects: [] },
         pendingSwitch: pending,
         persistLocal: () => calls.persist++,
         cancelAutoSwitch: () => calls.cancelAutoSwitch++,
+        rememberMixed: () => calls.remember++,
         getPref: async () => null,
         setPref() {},
         logFlow() {},
@@ -454,4 +455,25 @@ test('R3.6: a custom provider deleted under a chat that used its model blocks th
     });
     run.startTurn(session, 'hello');
     assert.equal(calls.custom.length, 0, 'sendCustomTurn was not called');
+});
+
+// R3.3 (plan_next.md): the picker's route change is made in one place, applyPendingSwitch, at once or when the turn ends.
+
+test('R3.3: a route applied from the picker lists the agent the chat has had, and remembers the chat', async () => {
+    const pending = { chat: { agent: 'codex', model: 'gpt-next' } };
+    const { api, session, calls } = await eventsWith(pending);
+    api.applyPendingSwitch('chat');
+    // The module runs in its own realm: the list is compared as JSON.
+    assert.equal(JSON.stringify(session.agents), '["claude","codex"]');
+    assert.equal(calls.remember, 1, 'the chat is remembered with its agents');
+    assert.equal(session.agent, 'codex');
+});
+
+test('R3.3: a pick made during a retry applies when the retry is stopped', async () => {
+    const pending = { chat: { agent: 'codex', model: 'gpt-next' } };
+    const { api, session } = await eventsWith(pending);
+    api.stopOwedTurn('chat');
+    assert.equal(session.agent, 'codex');
+    assert.equal(session.model, 'gpt-next');
+    assert.equal(pending.chat, undefined, 'the pending pick is used up');
 });
