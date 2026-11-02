@@ -12,7 +12,8 @@ export type ToolKind =
     | 'task_status'
     | 'task_stop'
     | 'task_ask'
-    | 'task_answer';
+    | 'task_answer'
+    | 'propose_session';
 
 /** Which of the delegation tools a tool-call name is, whatever the CLI calls it; null for any other tool. */
 export function toolKindOf(name: string): ToolKind | null {
@@ -25,7 +26,8 @@ export function toolKindOf(name: string): ToolKind | null {
         bare === 'task_status' ||
         bare === 'task_stop' ||
         bare === 'task_ask' ||
-        bare === 'task_answer'
+        bare === 'task_answer' ||
+        bare === 'propose_session'
         ? bare
         : null;
 }
