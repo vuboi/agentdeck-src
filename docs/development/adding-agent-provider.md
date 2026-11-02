@@ -101,3 +101,13 @@ Every provider maps what its CLI prints onto the same `AgentEvent`s (`crates/ada
 - **A CLI that goes on by itself** when background work ends (Claude, Copilot's shell notification): the turn still ends at its result. Implement `Provider::tail_provider` (Claude) so `tail.rs` keeps reading the kept process and sends the unsolicited answer as `AutoTurn { reason }` followed by its events; the frontend opens a new reply for it (`beginAutoTurn`). Never hold the chat lock or swallow the result while background work is open: a dev server never ends.
 - **Response contract:** override `Provider::chat_capabilities(&TurnRequest)` with `ChatResponseCapabilities`, which describes integrated delivery, answer association, interruption, turn end, background work and child-output semantics for that request. Keep provider behavior overridable; use the `custom()` app-queue profile when behavior is unknown. The coordinator keeps one user message per reply and uses a native mid-turn path only when the provider can preserve that message/reply association. `agent_inject` is gated by this guarantee; do not infer support from the provider name or a CLI feature list.
 - Probe the real CLI first (`docs/development/probe-reports/`): how a turn ends, what a message sent mid-turn does, how an interrupt ends, how child events are linked.
+
+## Chat history checklist
+
+Use this when the CLI keeps its own transcript on disk (see `docs/plans/chat-history-mapping/plan.md`). The reader lives in `crates/adapters/src/history/`.
+
+- **Reader:** add the provider's `Source` variant (`history/mod.rs`), its folder in `Roots`, a `list_native` arm, and a `load` arm. In `manage.rs`, put rename and delete in the read-only arm (`Source::Copilot | Source::Antigravity`) unless the provider has a verified writer.
+- **Message id:** set `HistoryMessage.id` to the CLI's own message id. The chat index uses it to dedupe native messages against AgentDeck's copy; do not invent an id from position or time.
+- **Resume and export:** before "Continue in CLI" is offered, the provider needs its resume command (`claude --resume <id>`, `codex resume <id>`, ...) and an export writer in `history/export.rs`. Follow the export rules in plan section 3.5: write only new files, atomically, never touch existing native files or the project's working tree.
+- **No readable transcript:** a provider with no readable transcript, or no verified writer, stays off. Today that means Antigravity export (its step DB is protobuf) and the Copilot writer (experimental). Leave "Continue in CLI" hidden for them.
+- **Tests:** add reader fixtures under `crates/adapters/tests/fixtures`. For a writer, add a round-trip test (export → own reader → same ledger), then run `cargo test -p ag-adapters`.

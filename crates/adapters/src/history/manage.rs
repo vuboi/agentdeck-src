@@ -19,11 +19,17 @@ use super::{HistoryError, Roots, Source};
 /// Longest title accepted; the sidebar and the tools show one line.
 const TITLE_MAX: usize = 200;
 
+/// Only Claude and Codex can be renamed or deleted: their folders are the ones AgentDeck has been taught to write.
+const READ_ONLY: &str = "this provider's history cannot be renamed or deleted yet";
+
 /// `path` canonicalized and proven to live inside the folder of `source`.
 fn checked(roots: &Roots, source: Source, path: &Path) -> Result<PathBuf, HistoryError> {
     let root = match source {
         Source::Claude => &roots.claude,
         Source::Codex => &roots.codex,
+        Source::Copilot | Source::Antigravity => {
+            return Err(HistoryError::Invalid(READ_ONLY.into()))
+        }
     };
     let path = path.canonicalize()?;
     if !path.starts_with(root.canonicalize()?) || path.extension().is_none_or(|ext| ext != "jsonl")
@@ -69,6 +75,7 @@ pub fn rename(roots: &Roots, source: Source, path: &Path, title: &str) -> Result
             &roots.codex_index,
             &json!({"id":id,"thread_name":title,"updated_at":now_iso()}),
         ),
+        Source::Copilot | Source::Antigravity => Err(HistoryError::Invalid(READ_ONLY.into())),
     }
 }
 
@@ -79,6 +86,9 @@ pub fn delete(roots: &Roots, source: Source, path: &Path) -> Result<PathBuf, His
     let (root, label) = match source {
         Source::Claude => (&roots.claude, "claude"),
         Source::Codex => (&roots.codex, "codex"),
+        Source::Copilot | Source::Antigravity => {
+            return Err(HistoryError::Invalid(READ_ONLY.into()))
+        }
     };
     let relative = path
         .strip_prefix(root.canonicalize()?)

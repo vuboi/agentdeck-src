@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-sync-native"
+description = "Enables the chat_sync_native command without any pre-configured scope."
+commands.allow = ["chat_sync_native"]
+
+[[permission]]
+identifier = "deny-chat-sync-native"
+description = "Denies the chat_sync_native command without any pre-configured scope."
+commands.deny = ["chat_sync_native"]

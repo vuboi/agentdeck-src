@@ -12,6 +12,7 @@ mod caller;
 mod cdp;
 mod changes;
 mod channel;
+mod chat_index;
 mod claude_bash;
 mod computer;
 mod connectors;
@@ -752,6 +753,24 @@ async fn history_rename(source: Source, path: String, title: String) -> Result<(
     let roots = roots()?;
     tauri::async_runtime::spawn_blocking(move || {
         history::rename(&roots, source, Path::new(&path), &title)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())
+}
+
+/// Writes the chat as a new Claude Code or Codex session and returns its resume command. Runs only when the user asks:
+/// the turns come from the chat on screen, and nothing existing in the CLI folders is changed.
+#[tauri::command]
+async fn export_chat(
+    chat_id: String,
+    target: ag_adapters::history::ExportTarget,
+    chat: ag_adapters::history::ExportChat,
+) -> Result<ag_adapters::history::ExportResult, String> {
+    let roots = roots()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        tracing::info!(chat = %chat_id, ?target, "exporting chat to a CLI session");
+        ag_adapters::history::export_chat(&roots, target, &chat)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2746,8 +2765,20 @@ pub fn run() {
             models_list,
             history_load,
             history_load_page,
+            chat_index::chat_index_status,
+            chat_index::chat_index_set_rollback,
+            chat_index::chat_index_migrate,
+            chat_index::chat_list,
+            chat_index::chat_save,
+            chat_index::chat_open,
+            chat_index::chat_bind,
+            chat_index::chat_resolve_native,
+            chat_index::chat_append,
+            chat_index::chat_sync_native,
+            chat_index::chat_delete,
             history_rename,
             history_delete,
+            export_chat,
             file_read,
             run_file_write,
             run_file_read,

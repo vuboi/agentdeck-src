@@ -72,11 +72,18 @@ import {
     runEpochs,
     sessionCwd,
     workspace,
+    type Agent,
     type Attachment,
     type Effort,
     type FileAttachment,
     type SessionItem,
 } from './state.svelte';
+import {
+    type Bound,
+    type Reason,
+    type ChatBindings,
+    resolveBinding,
+} from './binding';
 import {
     AGENTDECK_HINT,
     KNOWS_PREVIEW,
@@ -132,7 +139,13 @@ import {
     send,
     sendImmediate,
 } from './sending.svelte';
-import { chat, rememberMixed, settleKeptPermission } from './history.svelte';
+import {
+    chat,
+    messagesById,
+    rememberMixed,
+    setMessages,
+    settleKeptPermission,
+} from './history.svelte';
 
 /** The chats that ran a turn since the app started: the first turn of any other chat that resumes a conversation resumes a session from before. */
 const touchedThisRun = new SvelteSet<string>();
@@ -334,7 +347,11 @@ export function prewarmChat(sessionId: string) {
     const throttle = `${session.id}|${session.agent}|${selectedModel}|${epoch}`;
     if (now - (prewarmedAt.get(throttle) ?? 0) < 60_000) return;
     prewarmedAt.set(throttle, now);
-    const first = session.source ?? session.agents?.[0] ?? session.agent;
+    const first =
+        session.firstAgent ??
+        session.source ??
+        session.agents?.[0] ??
+        session.agent;
     let cliId: string | null;
     let resume: boolean;
     if (session.agent === first) {
@@ -430,6 +447,66 @@ function prewarmFallback(session: SessionItem) {
     }).catch(() => {});
 }
 
+/** The chat's CLI conversations as the binding rules see them (see binding.ts). The chat's first agent keeps its
+ *  conversation in `agentSession` / `agentStarted` / `conversationModel` / `agentEpoch`; the others in `agentIds`. */
+function boundsOf(
+    session: SessionItem,
+    first: Agent,
+    mint: (() => string) | undefined,
+): Partial<Record<string, Bound>> {
+    const bounds: Partial<Record<string, Bound>> = {};
+    // A chat's id names its first conversation (`claude:<uuid>`), unless the conversation was reset.
+    const prefix = `${first}:`;
+    const fromId =
+        session.agentStarted === false || !session.id.startsWith(prefix)
+            ? undefined
+            : session.id.slice(prefix.length);
+    bounds[first] = {
+        id:
+            session.agentSession ??
+            fromId ??
+            (first === session.agent ? (mint?.() ?? '') : ''),
+        started: session.agentStarted ?? Boolean(session.path),
+        model: session.conversationModel || undefined,
+        epoch: session.agentEpoch,
+        syncedSeq: session.syncedSeq?.[first] ?? 0,
+    };
+    for (const [agent, own] of Object.entries(session.agentIds ?? {})) {
+        if (!own || agent === first) continue;
+        bounds[agent] = {
+            id: own.id || (agent === session.agent ? (mint?.() ?? '') : ''),
+            started: own.started,
+            model: session.agentModels?.[agent as Agent] || undefined,
+            epoch: own.epoch,
+            syncedSeq: session.syncedSeq?.[agent as Agent] ?? 0,
+        };
+    }
+    return bounds;
+}
+
+/** Stores a conversation back on the chat, in the fields `boundsOf` reads. */
+function writeBound(
+    session: SessionItem,
+    first: Agent,
+    agent: string,
+    bound: Bound,
+) {
+    if (agent === first) {
+        session.agentSession = bound.id || undefined;
+        session.agentStarted = bound.started;
+        session.conversationModel = bound.model;
+        session.agentEpoch = bound.epoch;
+    } else {
+        (session.agentIds ??= {})[agent as Agent] = {
+            id: bound.id,
+            started: bound.started,
+            epoch: bound.epoch,
+        };
+        (session.agentModels ??= {})[agent as Agent] = bound.model ?? '';
+    }
+    (session.syncedSeq ??= {})[agent as Agent] = bound.syncedSeq;
+}
+
 /** One CLI run (`claude -p`, `codex exec`) in `session`, with a fresh live reply. Images go to disk first so the CLI can open them. */
 export function startTurn(
     session: SessionItem,
@@ -463,132 +540,82 @@ export function startTurn(
     if (images.length || !allow.length) lastPrompt[session.id] = text;
     // The CLI's own id for the conversation. Claude takes one we choose; Codex names its thread on the first turn
     // and reports it, so a new Codex chat starts without one.
-    const first = session.source ?? session.agents?.[0] ?? session.agent;
-    const prefix = `${session.agent}:`;
-    let cliId: string | null;
-    let resume: boolean;
-    /** The conversation so far was put in `forkContext` for a new session (model or account change). */
-    let digested = false;
-    /** The turn starts another CLI conversation than the chat had (a model or account change, an edited message). */
-    let conversationChanged = !listener && pendingNew.delete(session.id);
+    const first = (session.firstAgent ??=
+        session.source ?? session.agents?.[0] ?? session.agent);
     const selectedModel = modelFor(session);
     rememberLastChat(
         session.agent,
         selectedModel,
         turnOptionsOf(session.id).effort as Effort,
     );
-    if (listener) {
-        // Never resume the background conversation: this lane gets an independent provider conversation.
-        cliId = session.agent === 'claude' ? crypto.randomUUID() : null;
-        resume = false;
-    } else if (session.agent === first) {
-        // A conversation whose last run never started is not resumed from its id (see handleAgentEvent).
-        const fromId =
-            session.agentStarted === false
-                ? undefined
-                : session.id.startsWith(prefix)
-                  ? session.id.slice(prefix.length)
-                  : undefined;
-        const known = session.agentSession ?? fromId;
-        cliId =
-            known ?? (session.agent === 'claude' ? crypto.randomUUID() : null);
-        const modelChanged = Boolean(
-            session.conversationModel &&
-            session.conversationModel !== selectedModel &&
-            !liveModel(session.agent),
-        );
-        if (modelChanged) {
-            // Keep the old transcript attached to this AgentDeck chat, but never offer its id to the new model.
+    // The chat's ledger: the turns before the one being sent (a hand-back, `silent`, has no message of its own). A
+    // background lane never reads it here: its prompt carries its own digest (see `sendImmediate`).
+    const chatHistory = messagesOf(session.id);
+    const ledger = silent ? chatHistory : chatHistory.slice(0, -1);
+    const accountGen = accountEpoch[session.agent] ?? 0;
+    // The id a new conversation gets: Claude takes one we choose (an account switch keeps the id it had per account);
+    // a model change starts without one, as before; the other CLIs name their own.
+    const mint = (reason?: Reason) =>
+        session.agent !== 'claude' || reason === 'model'
+            ? ''
+            : reason === 'account' && session.agent === first
+              ? accountConversationId(session.id, accountGen)
+              : crypto.randomUUID();
+    const view: ChatBindings = {
+        bindings: boundsOf(
+            session,
+            first,
+            session.agent === 'claude' ? () => crypto.randomUUID() : undefined,
+        ),
+        ledger: ledger.map((message) => ({
+            agent:
+                message.role === 'assistant'
+                    ? (message.agent ?? session.source ?? session.agent)
+                    : undefined,
+        })),
+    };
+    const resolved = resolveBinding(view, {
+        agent: session.agent,
+        model: selectedModel ?? undefined,
+        epoch: accountGen,
+        listener,
+        edited: !listener && pendingNew.delete(session.id),
+        liveModel: liveModel(session.agent),
+        mint,
+    });
+    const { binding, catchUp, reason } = resolved;
+    const cliId = binding.id || null;
+    const resume = !listener && resolved.resume;
+    /** The conversation so far was put in `forkContext` for a new session (model or account change, an edit). */
+    let digested = false;
+    const conversationChanged = !listener && reason !== undefined;
+    if (!listener) {
+        // The conversations this turn ends are cleared (an edit ends every one of them).
+        for (const agent of resolved.closed) {
+            const old = view.bindings[agent];
+            if (agent !== session.agent && old)
+                writeBound(session, first, agent, {
+                    ...old,
+                    id: '',
+                    started: false,
+                    syncedSeq: 0,
+                });
+        }
+        if (reason === 'model' || reason === 'account') {
+            // Keep the old transcript attached to this AgentDeck chat, but never offer its id to the new conversation.
             rememberMixed(session);
-            cliId = null;
-            session.agentSession = undefined;
-            session.agentStarted = false;
             session.forkContext =
                 (session.forkContext ?? '') +
-                handoffDigest(messagesOf(session.id), MODEL_LEAD);
+                handoffDigest(
+                    messagesOf(session.id),
+                    reason === 'model' ? MODEL_LEAD : undefined,
+                );
             digested = true;
-            conversationChanged = true;
         }
-        // A conversation begun under another account starts a new session: resuming the old one stalls. What was said
-        // so far goes with the first message, so the agent does not lose the work in progress.
-        const epoch = accountEpoch[session.agent] ?? 0;
-        const accountChanged =
-            session.agentEpoch !== undefined && session.agentEpoch !== epoch;
-        if (accountChanged) {
-            rememberMixed(session);
-            cliId =
-                session.agent === 'claude'
-                    ? accountConversationId(session.id, epoch)
-                    : null;
-            session.agentStarted = false;
-            session.agentSession = undefined;
-            if (!digested)
-                session.forkContext =
-                    (session.forkContext ?? '') +
-                    handoffDigest(messagesOf(session.id));
-            digested = true;
-            conversationChanged = true;
-        }
-        session.agentEpoch = epoch;
-        if (cliId) session.agentSession = cliId;
-        resume =
-            cliId !== null &&
-            !modelChanged &&
-            !accountChanged &&
-            (session.agentStarted ?? !!session.path);
-        session.conversationModel = selectedModel ?? undefined;
-        if (modelChanged || accountChanged) rememberMixed(session);
-    } else {
-        // Another agent in this chat: its own conversation, started the first time it is used here. The entry is made on
-        // that first turn even before the agent has an id (Codex names its thread later), so the account it began under
-        // is known from the start.
-        const epoch = accountEpoch[session.agent] ?? 0;
-        const known = session.agentIds?.[session.agent];
-        const own =
-            known ??
-            ((session.agentIds ??= {})[session.agent] = {
-                id: '',
-                started: false,
-                epoch,
-            });
-        cliId =
-            own.id || (session.agent === 'claude' ? crypto.randomUUID() : null);
-        if (cliId && !own.id) own.id = cliId;
-        const modelChanged = Boolean(
-            session.agentModels?.[session.agent] &&
-            session.agentModels[session.agent] !== selectedModel &&
-            !liveModel(session.agent),
-        );
-        if (modelChanged) {
-            rememberMixed(session);
-            cliId = null;
-            own.id = '';
-            own.started = false;
-            session.forkContext =
-                (session.forkContext ?? '') +
-                handoffDigest(messagesOf(session.id), MODEL_LEAD);
-            digested = true;
-            conversationChanged = true;
-        }
-        // The same account rule as the chat's first agent: a new session, with the conversation so far.
-        const accountChanged = own.epoch !== undefined && own.epoch !== epoch;
-        if (accountChanged) {
-            rememberMixed(session);
-            cliId = session.agent === 'claude' ? crypto.randomUUID() : null;
-            own.started = false;
-            own.id = cliId ?? '';
-            if (!digested)
-                session.forkContext =
-                    (session.forkContext ?? '') +
-                    handoffDigest(messagesOf(session.id));
-            digested = true;
-            conversationChanged = true;
-        }
-        own.epoch = epoch;
-        resume =
-            cliId !== null && !modelChanged && !accountChanged && own.started;
-        (session.agentModels ??= {})[session.agent] = selectedModel ?? '';
-        if (modelChanged || accountChanged) rememberMixed(session);
+        // An edit: `editMessage` already put the ledger that is left into `forkContext`.
+        if (reason === 'edit') digested = true;
+        writeBound(session, first, session.agent, binding);
+        if (reason === 'model' || reason === 'account') rememberMixed(session);
     }
     // A turn still marked live is replaced by this one: its events are ignored from now on (see `turns`), so it would
     // show "Thinking" for ever. It ends here, with what it wrote.
@@ -665,7 +692,7 @@ export function startTurn(
           // are in it, so they are not added a second time.
           preface +
           (session.forkContext ?? '') +
-          (digested ? '' : missedTurns(session, list, !silent));
+          (digested ? '' : missedTurns(session, ledger, catchUp));
     if (!listener) session.forkContext = undefined;
     // The line that says a session was resumed, compacted or replaced goes above the user's message that starts it (or
     // above the reply, for the compaction, which has no message of the user). A silent turn has none.
@@ -1346,13 +1373,16 @@ export function withLive(sessionId: string, list: Message[]): Message[] {
     return next;
 }
 
-/** Messages of a session: the live list for the active one, the remembered list for the others. */
+/** Messages of a session: its own list (see `messagesById`), whichever chat is open. */
 export function messagesOf(sessionId: string): Message[] {
-    if (sessionId === workspace.activeId) {
-        if (chat.messages === mockMessages) chat.messages = [...mockMessages];
-        return chat.messages;
+    if (sessionId === workspace.activeId && chat.messages === mockMessages)
+        setMessages(sessionId, [...mockMessages]);
+    let list = messagesById.get(sessionId);
+    if (!list) {
+        list = localMessages[sessionId] ??= [];
+        messagesById.set(sessionId, list);
     }
-    return (localMessages[sessionId] ??= []);
+    return list;
 }
 
 /** What the latest user turn still waits for: a permission request, or questions the agent asked. */

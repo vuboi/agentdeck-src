@@ -13,7 +13,7 @@ import {
 import { agentLabel } from './turns.svelte';
 import { liveReplies } from './run.svelte';
 import { taskWaiters } from './orchestration.svelte';
-import { chat, transcripts } from './history.svelte';
+import { messagesById, transcripts } from './history.svelte';
 import { connectors } from '../../agents/connectors.svelte';
 
 // Dynamic sub-agent runs and inline mention context. Inline model mentions are resolved through AgentDeck MCP tools.
@@ -334,10 +334,7 @@ export const liveStats = (sessionId: string, startedAt: number) =>
 export const isDelegating = (childId: string) => taskWaiters.has(childId);
 /** Whether the chat `childId` stopped on an approval card that waits for the user. Not reactive: read it with a ticker. */
 export const needsApproval = (childId: string) => {
-    const list =
-        childId === workspace.activeId
-            ? chat.messages
-            : (localMessages[childId] ?? []);
+    const list = messagesById.get(childId) ?? localMessages[childId] ?? [];
     return list
         .slice(-3)
         .some((message) =>

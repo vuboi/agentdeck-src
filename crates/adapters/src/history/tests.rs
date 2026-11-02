@@ -563,3 +563,110 @@ fn history_classifies_projects_without_promoting_ordinary_chat_folders() {
     fs::create_dir_all(&child).unwrap();
     assert!(!is_project_directory(&child));
 }
+
+#[test]
+fn codex_rollout_compressed_with_zstd_is_listed_and_read() {
+    let home = Home::new("codex-zst");
+    let lines = [
+        json!({"type":"session_meta","timestamp":"2026-01-01T00:00:00Z","payload":{"id":"zst-1","cwd":"C:\\work\\demo","timestamp":"2026-01-01T00:00:00Z"}}),
+        json!({"type":"response_item","timestamp":"2026-01-01T00:00:01Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"compressed hello"}]}}),
+        json!({"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"compressed answer"}]}}),
+    ];
+    let body: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+    let packed = zstd::encode_all(body.join("\n").as_bytes(), 0).unwrap();
+    let dir = home.0.join(".codex/sessions/2026/01/01");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("rollout-2026-01-01T00-00-00-zst-1.jsonl.zst"),
+        packed,
+    )
+    .unwrap();
+
+    let roots = home.roots();
+    let sessions = list_native(&roots, Source::Codex);
+    let session = sessions
+        .iter()
+        .find(|session| session.id == "codex:zst-1")
+        .expect("the compressed rollout is listed");
+    assert_eq!(session.message_count, 2);
+    let messages = load(&roots, Source::Codex, Path::new(&session.path)).unwrap();
+    assert_eq!(
+        responses(&messages),
+        vec!["compressed hello", "compressed answer"]
+    );
+}
+
+#[test]
+fn copilot_session_reads_its_answers_tools_and_usage() {
+    let home = Home::new("copilot");
+    let path = home.write(
+        ".copilot/session-state/cp-1/events.jsonl",
+        &[
+            json!({"type":"session.start","timestamp":"2026-01-02T00:00:00Z","data":{"sessionId":"cp-1","selectedModel":"gpt-5.6-luna","startTime":"2026-01-02T00:00:00Z","context":{"cwd":"C:\\work\\copilot"}}}),
+            json!({"type":"user.message","timestamp":"2026-01-02T00:00:01Z","data":{"messageId":"m-user","content":"list the files","parentAgentTaskId":null}}),
+            json!({"type":"assistant.message","timestamp":"2026-01-02T00:00:02Z","data":{"messageId":"m-a","model":"gpt-5.6-luna","content":"Listing now.","toolRequests":[{"toolCallId":"call-1","name":"powershell","arguments":{"command":"dir"}}]}}),
+            json!({"type":"tool.execution_complete","timestamp":"2026-01-02T00:00:03Z","data":{"toolCallId":"call-1","success":true,"result":{"content":"a.txt\nb.txt"}}}),
+            json!({"type":"assistant.message","timestamp":"2026-01-02T00:00:04Z","data":{"messageId":"m-b","model":"gpt-5.6-luna","content":"Two files.","toolRequests":[]}}),
+            json!({"type":"session.usage_record","timestamp":"2026-01-02T00:00:05Z","data":{"usage":{"model":"gpt-5.6-luna","inputTokens":100,"outputTokens":20,"cacheReadTokens":5,"cacheWriteTokens":0}}}),
+        ],
+    );
+    let roots = home.roots();
+    let sessions = list_native(&roots, Source::Copilot);
+    let session = sessions
+        .iter()
+        .find(|session| session.id == "copilot:cp-1")
+        .expect("the session is listed");
+    assert_eq!(session.title, "list the files");
+    assert_eq!(session.message_count, 3);
+    assert_eq!(session.cwd, "C:\\work\\copilot");
+    assert_eq!(session.model.as_deref(), Some("gpt-5.6-luna"));
+
+    let messages = load(&roots, Source::Copilot, &path).unwrap();
+    assert_eq!(messages.len(), 2, "two assistant events are one answer");
+    assert_eq!(
+        responses(&messages),
+        vec!["list the files", "Listing now.", "Two files."]
+    );
+    let answer = &messages[1];
+    assert!(answer.blocks.iter().any(|block| matches!(
+        block,
+        HistoryBlock::Command { command, output, status, .. }
+            if command == "Bash  dir" && output == "a.txt\nb.txt" && status == "ok"
+    )));
+    let usage = answer.usage.expect("usage is attached");
+    assert_eq!((usage.input, usage.output, usage.cache_read), (100, 20, 5));
+}
+
+#[test]
+fn antigravity_transcript_reads_finished_steps_only() {
+    let home = Home::new("agy");
+    let path = home.write(
+        ".gemini/antigravity-cli/brain/conv-1/.system_generated/logs/transcript.jsonl",
+        &[
+            json!({"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-01-03T00:00:00Z","content":"read b.txt"}),
+            json!({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-01-03T00:00:01Z","thinking":"need to read","tool_calls":[{"name":"read_file","args":{"file_path":"b.txt"}}],"input_tokens":10,"output_tokens":3,"cache_read_tokens":0}),
+            json!({"step_index":2,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-01-03T00:00:02Z","content":"hello"}),
+            json!({"step_index":3,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-01-03T00:00:03Z","content":"b.txt says hello","input_tokens":12,"output_tokens":4}),
+            json!({"step_index":4,"source":"MODEL","type":"PLANNER_RESPONSE","status":"RUNNING","created_at":"2026-01-03T00:00:04Z","content":"partial"}),
+        ],
+    );
+    let roots = home.roots();
+    let sessions = list_native(&roots, Source::Antigravity);
+    let session = sessions
+        .iter()
+        .find(|session| session.id == "antigravity:conv-1")
+        .expect("the conversation is listed");
+    assert_eq!(session.title, "read b.txt");
+    assert_eq!(session.message_count, 3);
+
+    let messages = load(&roots, Source::Antigravity, &path).unwrap();
+    assert_eq!(responses(&messages), vec!["read b.txt", "b.txt says hello"]);
+    let answer = &messages[1];
+    assert_eq!(
+        answer.blocks.len(),
+        3,
+        "thinking, the tool call and the answer"
+    );
+    let usage = answer.usage.expect("usage is attached");
+    assert_eq!((usage.input, usage.output), (22, 7));
+}

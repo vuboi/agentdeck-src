@@ -6,10 +6,12 @@ use std::{
 
 use serde_json::Value;
 
+use super::HistoryMessage;
+
 /// Lines longer than this are request blobs, never messages; skip them without parsing.
 const MAX_LINE: usize = 2_000_000;
 
-/// All `*.jsonl` files below `root`, any depth. A missing folder yields nothing.
+/// All `*.jsonl` and `*.jsonl.zst` files below `root`, any depth. A missing folder yields nothing.
 pub fn jsonl_files(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -21,7 +23,7 @@ pub fn jsonl_files(root: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "jsonl") {
+            } else if is_jsonl(&path) {
                 found.push(path);
             }
         }
@@ -29,13 +31,28 @@ pub fn jsonl_files(root: &Path) -> Vec<PathBuf> {
     found
 }
 
+fn is_jsonl(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    name.ends_with(".jsonl") || name.ends_with(".jsonl.zst")
+}
+
 /// Parsed JSON lines of a file. Bad lines, oversize lines and lines for which `wanted` is false
 /// are skipped, so a damaged or huge file still loads.
 pub fn read_lines(path: &Path, wanted: impl Fn(&str) -> bool) -> std::io::Result<Vec<Value>> {
-    let reader = BufReader::new(File::open(path)?);
+    let file = File::open(path)?;
+    // Codex compresses finished rollouts with zstd; everything else is plain text.
+    let reader: Box<dyn BufRead> = if path.extension().is_some_and(|ext| ext == "zst") {
+        Box::new(BufReader::new(zstd::Decoder::new(file)?))
+    } else {
+        Box::new(BufReader::new(file))
+    };
     let mut out = Vec::new();
     for line in reader.lines() {
-        let Ok(line) = line else { continue };
+        // A read error ends the file: a corrupt zstd stream must not keep this loop going.
+        let Ok(line) = line else { break };
         if line.is_empty() || line.len() > MAX_LINE || !wanted(&line) {
             continue;
         }
@@ -44,6 +61,27 @@ pub fn read_lines(path: &Path, wanted: impl Fn(&str) -> bool) -> std::io::Result
         }
     }
     Ok(out)
+}
+
+/// Appends an assistant event to the answer in progress, or starts one. Returns its index.
+pub fn assistant_slot(
+    messages: &mut Vec<HistoryMessage>,
+    id: &str,
+    time: String,
+    model: Option<String>,
+) -> usize {
+    if messages.last().is_some_and(|last| last.role == "assistant") {
+        return messages.len() - 1;
+    }
+    messages.push(HistoryMessage {
+        id: id.to_owned(),
+        role: "assistant".into(),
+        time,
+        blocks: Vec::new(),
+        usage: None,
+        model,
+    });
+    messages.len() - 1
 }
 
 /// At most `max` characters, with an ellipsis when cut.
