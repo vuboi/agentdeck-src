@@ -293,7 +293,10 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../packages/protocol-ts/src/index.ts"
         );
-        let on_disk = std::fs::read_to_string(path).expect("read index.ts");
+        // core.autocrlf=true checks the file out with CRLF on Windows; the generator writes LF. Compare the LF text.
+        let on_disk = std::fs::read_to_string(path)
+            .expect("read index.ts")
+            .replace("\r\n", "\n");
         assert_eq!(
             on_disk,
             export_typescript().expect("export"),
