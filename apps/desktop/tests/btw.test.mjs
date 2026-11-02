@@ -191,3 +191,35 @@ test('R4.5: the /btw snapshot reads the parent through messagesView, not only lo
     assert.match(prompt, /User: earlier question/);
     assert.match(prompt, /Assistant: earlier answer/);
 });
+
+test('R6.3: the /btw snapshot leaves out a reply still streaming, and keeps the newest turns within its budget', async () => {
+    const body = 'x'.repeat(900);
+    const turns = Array.from({ length: 30 }, (_, index) => {
+        const text = `turn ${index} ${body}`;
+        return {
+            role: index % 2 ? 'assistant' : 'user',
+            blocks: [{ kind: 'response', text }],
+            text,
+        };
+    });
+    turns.push({
+        role: 'assistant',
+        blocks: [{ kind: 'response', text: 'partial answer', streaming: true }],
+        text: 'partial answer',
+    });
+    const { api, sent } = await setup(
+        'claude',
+        {},
+        {
+            messagesView: (id) => (id === 'chat' ? turns : []),
+            askText: (message) => message.text,
+        },
+    );
+    api.askBtw('chat', 'and now?');
+    const prompt = sent[0][1];
+    assert.doesNotMatch(prompt, /partial answer/);
+    // The newest finished turn is kept, the oldest is cut (the budget is CONTEXT_CHARS, 12000).
+    assert.match(prompt, /turn 29 /);
+    assert.doesNotMatch(prompt, /turn 0 /);
+    assert.ok(prompt.length < 13000, `${prompt.length} characters`);
+});

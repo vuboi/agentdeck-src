@@ -55,3 +55,19 @@ test('the check finds a writer in $derived and in a template, and passes the rea
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('R6.4: a wrapper that calls messagesOf is flagged in a template and in $derived too', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'derived-writes-'));
+    try {
+        writeFileSync(
+            join(dir, 'Wrapper.svelte'),
+            '<script>\n  const view = $derived(handoffFor(id, text));\n</script>\n<p>{continueCurrentRun(id)}</p>\n',
+        );
+        const result = run(dir);
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /handoffFor\( inside \$derived/);
+        assert.match(result.stderr, /continueCurrentRun\( in template/);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
