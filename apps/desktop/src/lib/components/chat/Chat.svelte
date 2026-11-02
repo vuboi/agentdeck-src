@@ -930,11 +930,26 @@
                                         'app',
                                         'chat row failed to draw',
                                         error instanceof Error
-                                            ? `${error.message}\n${error.stack?.split('\n').slice(1, 4).join('\n') ?? ''}`
+                                            ? `${error.name}: ${error.message}`
                                             : String(error),
                                         {
                                             chat: workspace.activeId,
                                             row: message.id,
+                                            // Full stack goes to ctx (not detail, which logError cuts at 1500 chars). No message content.
+                                            stack:
+                                                error instanceof Error
+                                                    ? (error.stack ?? '').slice(
+                                                          0,
+                                                          2048,
+                                                      )
+                                                    : '',
+                                            rowKinds: message.blocks
+                                                .map((block) => block.kind)
+                                                .join(',')
+                                                .slice(0, 200),
+                                            blockCount: message.blocks.length,
+                                            role: message.role,
+                                            messageCount: chat.messages.length,
                                         },
                                     )}
                             >
