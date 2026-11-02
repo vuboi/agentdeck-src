@@ -484,6 +484,12 @@ async function makeWorkerWorktree(
     });
 }
 
+/** Calls whose worktree is still being made, by their chat. A stop of that chat cancels the worker (see endWaitingTasks). */
+const preparingWorktrees = new SvelteSet<{
+    caller: string;
+    cancelled: boolean;
+}>();
+
 /** Removes a worktree made for a call that never started its worker. Best effort: a folder that stays is listed by the repository. */
 function discardWorktree(root: string | null, info: WorktreeInfo) {
     if (!root) return;
@@ -567,13 +573,29 @@ function startTask(
                 'isolation worktree cannot be used with continue: a reused chat keeps its folder. Start a new task instead.',
                 true,
             );
+        // While the worktree is made the call is not a task yet: a stop of its chat in the meantime cancels it (endWaitingTasks).
+        const pending = { caller: caller.id, cancelled: false };
+        preparingWorktrees.add(pending);
+        const root = sessionCwd(caller);
         void makeWorkerWorktree(caller, parsed.args.task).then(
-            (info) => startTask(call, reply, info),
-            (error: unknown) =>
-                reply(
+            (info) => {
+                preparingWorktrees.delete(pending);
+                if (pending.cancelled) {
+                    discardWorktree(root, info);
+                    return reply(
+                        'the chat was stopped before its worker started, so no worker was made',
+                        true,
+                    );
+                }
+                return startTask(call, reply, info);
+            },
+            (error: unknown) => {
+                preparingWorktrees.delete(pending);
+                return reply(
                     `Could not create a worktree: ${String(error)}. Run the task with isolation shared, or fix the repository.`,
                     true,
-                ),
+                );
+            },
         );
         return;
     }
@@ -1603,6 +1625,10 @@ export function noteWorkerRecovering(childId: string, reason: string) {
  * `stopped`: the user stopped the caller, so the tasks end as stopped by the chat (no report).
  */
 export function endWaitingTasks(callerId: string, stopped = false) {
+    // A worktree still being made for this chat's call: a stop cancels its worker (see startTask).
+    if (stopped)
+        for (const pending of preparingWorktrees)
+            if (pending.caller === callerId) pending.cancelled = true;
     for (const record of Object.values(delegateTasks)) {
         if (
             record.caller === callerId &&

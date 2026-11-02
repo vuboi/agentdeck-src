@@ -13,10 +13,13 @@ const WORKTREE = {
  * A delegate module on the desktop app (inTauri), whose caller is `chat` (or any chat in `sessions`). `invoke` records every
  * Tauri call; worktree_create answers with WORKTREE.
  */
-async function worktreeCaller(sessions) {
+async function worktreeCaller(sessions, { hold = false } = {}) {
     const workspace = { activeId: 'chat', sessions, projects: [] };
     const replies = [];
     const invoked = [];
+    // With `hold`, worktree_create waits until `release()` is called: the chat can be stopped while the worktree is made.
+    let release = () => {};
+    const gate = new Promise((resolve) => (release = resolve));
     // The module starts the Tauri listeners when it loads on the desktop app: off until it is loaded, on for the calls.
     const env = { tauri: false };
     const api = await load('delegate-task', {
@@ -50,7 +53,9 @@ async function worktreeCaller(sessions) {
         },
         invoke: async (command, args) => {
             invoked.push([command, args]);
-            return command === 'worktree_create' ? WORKTREE : undefined;
+            if (command !== 'worktree_create') return undefined;
+            if (hold) await gate;
+            return WORKTREE;
         },
         releaseWorkerSlot: async () => {},
         stopTurn() {},
@@ -59,7 +64,7 @@ async function worktreeCaller(sessions) {
         taskWaiters: new Map(),
     });
     env.tauri = true;
-    return { api, workspace, replies, invoked };
+    return { api, workspace, replies, invoked, release };
 }
 
 const chat = {
@@ -167,4 +172,40 @@ test('R5.2: a worktree made for a call that then fails is removed again', async 
             },
         ],
     ]);
+});
+
+test('R5.3: a chat stopped while its worktree is being made gets no worker, and the worktree is removed', async () => {
+    const { api, workspace, replies, invoked, release } = await worktreeCaller(
+        [chat],
+        { hold: true },
+    );
+    api.onDelegateCall({
+        callId: 'c1',
+        caller: 'chat',
+        tool: 'delegate_task',
+        args: {
+            agent: 'claude',
+            task: 'write the file',
+            isolation: 'worktree',
+        },
+    });
+    await settle();
+    assert.equal(
+        invoked.filter(([command]) => command === 'worktree_create').length,
+        1,
+        'the worktree is being made',
+    );
+    // The user stops the chat: its turn ends stopped, and its waiting work is cancelled.
+    api.endWaitingTasks('chat', true);
+    release();
+    await settle();
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0][2], true);
+    assert.match(replies[0][1], /stopped before its worker started/);
+    assert.equal(workspace.sessions.length, 1, 'no worker chat is added');
+    assert.equal(
+        invoked.filter(([command]) => command === 'worktree_remove').length,
+        1,
+        'the worktree made for the stopped call is removed',
+    );
 });
