@@ -769,7 +769,12 @@ async fn export_chat(
 ) -> Result<ag_adapters::history::ExportResult, String> {
     let roots = roots()?;
     tauri::async_runtime::spawn_blocking(move || {
-        tracing::info!(chat = %chat_id, ?target, "exporting chat to a CLI session");
+        flow_log::note(
+            "rust",
+            &chat_id,
+            "export",
+            "exporting chat to a CLI session",
+        );
         ag_adapters::history::export_chat(&roots, target, &chat)
     })
     .await
