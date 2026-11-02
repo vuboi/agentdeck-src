@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { load } from './support/load-session.mjs';
+import { updateHistoricalTask } from '../src/lib/chat/agent-reply.ts';
 import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
 
 /** Lets the promise that answers a delegate call (and its fallback) run. */
@@ -155,4 +156,41 @@ test('R3.3: the pick made during the turn is applied once the turns end, and the
         0,
         'applying a model does not cancel an account switch',
     );
+});
+
+// ---------- R3.4: a card drawn from history that already ended is not reopened by a late event ----------
+
+test('R3.4: a historical card that ended stays ended when a late progress event arrives', () => {
+    const messages = [
+        {
+            id: 'old',
+            role: 'assistant',
+            time: '',
+            blocks: [
+                {
+                    kind: 'command',
+                    id: 'agent1',
+                    name: 'Agent',
+                    input: 'scan',
+                    background: true,
+                    task: {
+                        status: 'done',
+                        label: 'Scan',
+                        startedAt: 1,
+                        endedAt: 2,
+                    },
+                },
+            ],
+        },
+    ];
+    const late = {
+        kind: 'task',
+        id: 'task-1',
+        tool_use_id: 'agent1',
+        status: 'progress',
+        label: 'Scan',
+    };
+    assert.equal(updateHistoricalTask(messages, late), true);
+    assert.equal(messages[0].blocks[0].task.status, 'done');
+    assert.equal(messages[0].blocks[0].task.endedAt, 2);
 });

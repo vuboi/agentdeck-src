@@ -95,6 +95,8 @@ function cardTask(tasks: Record<string, TaskRecord>): TaskRecord {
  *  several (one spawn, several agents) shows each, and the card's task is the whole. A task that has ended is not
  *  reopened by its late events (a finished worker, a stopped one). */
 function applyTaskEvent(call: CommandBlock, event: TaskEvent) {
+    // A card drawn from history has its ended task but no record per task: its late events do not reopen it either.
+    if (!call.tasks && call.task && ENDED.has(call.task.status)) return;
     const tasks = (call.tasks ??= {});
     const before = tasks[event.id];
     if (before && ENDED.has(before.status)) return;
