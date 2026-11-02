@@ -199,6 +199,20 @@ const mixedReady = getPref<typeof mixed>('chat.mixed')
         mixedHydrated = true;
     });
 
+/** Whether `a` names the same provider files as `b` (the index values of a file are not compared). */
+function sameFiles(a: NativeFile[] | undefined, b: NativeFile[]): boolean {
+    return (
+        !!a &&
+        a.length === b.length &&
+        b.every((file) =>
+            a.some(
+                (other) =>
+                    other.source === file.source && other.path === file.path,
+            ),
+        )
+    );
+}
+
 /** Replaces the mock workspace with what Claude Code and Codex already saved on this machine. */
 export async function importHistory({ refresh = false } = {}) {
     if (fakeData) {
@@ -329,6 +343,40 @@ function applyHistory(all: HistorySession[]) {
         for (const [agent, ids] of Object.entries(item.agentIds ?? {}))
             if (ids?.id) aliasOf.set(`${agent}:${ids.id}`, item.id);
     }
+    // Every native file of a chat, in index order. A chat that went on with another agent has one file per provider:
+    // the first (the newest) is the chat's file, and the rest are read and merged in when the chat is opened.
+    const filesOf = new SvelteMap<string, NativeFile[]>();
+    for (const item of all) {
+        const id = aliasOf.get(item.id) ?? item.id;
+        const files = filesOf.get(id) ?? [];
+        if (
+            !files.some(
+                (file) =>
+                    file.source === item.source && file.path === item.path,
+            )
+        )
+            files.push({
+                source: item.source,
+                path: item.path,
+                nativeId: item.id,
+                updatedAt: item.updated_at ?? undefined,
+                messageCount: item.message_count,
+            });
+        filesOf.set(id, files);
+    }
+    let filesChanged = false;
+    for (const [id, files] of filesOf) {
+        const saved = mixed[id];
+        if (files.length > 1) {
+            if (!sameFiles(saved?.paths, files)) filesChanged = true;
+            mixed[id] ??= {} as SavedProviderState;
+            mixed[id].paths = files;
+        } else if (saved?.paths) {
+            delete saved.paths;
+            filesChanged = true;
+        }
+    }
+    if (filesChanged) void mixedReady.then(() => setPref('chat.mixed', mixed));
     const seen = new SvelteSet<string>();
     const found = all
         .map((item) => {

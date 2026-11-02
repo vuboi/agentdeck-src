@@ -114,3 +114,59 @@ test('N4.1: a chat keeps the native files it was read from when its provider sta
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(prefs['chat.mixed'].chat.paths, paths);
 });
+
+test('N4.2: a chat whose history has two native files lists both, and the newest one stays its file', async () => {
+    const mixed = {
+        chat: {
+            agent: 'codex',
+            agents: ['claude', 'codex'],
+            source: 'claude',
+            firstAgent: 'claude',
+            agentSession: 'C1',
+            agentIds: { codex: { id: 'T2' } },
+            providerAliases: ['claude:C1', 'codex:T2'],
+        },
+    };
+    const rows = [
+        row('codex:T2', 'codex', '/t2.jsonl', {
+            updated_at: '2026-11-03T03:00:00Z',
+            message_count: 2,
+        }),
+        row('claude:C1', 'claude', '/c1.jsonl', {
+            updated_at: '2026-11-03T01:00:00Z',
+            message_count: 3,
+        }),
+    ];
+    const { api, workspace, prefs } = await historyWith({ mixed, rows });
+    await api.importHistory({ refresh: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(workspace.sessions.length, 1, 'both files are one chat');
+    assert.equal(workspace.sessions[0].id, 'chat');
+    assert.equal(
+        workspace.sessions[0].path,
+        '/t2.jsonl',
+        'the newest file is the chat file, as before',
+    );
+    const files = prefs['chat.mixed'].chat.paths.map((file) => [
+        file.source,
+        file.path,
+        file.messageCount,
+    ]);
+    assert.deepEqual(files.sort(), [
+        ['claude', '/c1.jsonl', 3],
+        ['codex', '/t2.jsonl', 2],
+    ]);
+});
+
+test('N4.2: a chat with one native file gets no paths entry', async () => {
+    const rows = [
+        row('claude:C1', 'claude', '/c1.jsonl', { message_count: 3 }),
+    ];
+    const { api, prefs } = await historyWith({
+        rows,
+        sessions: [chatSession()],
+    });
+    await api.importHistory({ refresh: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(prefs['chat.mixed']?.chat?.paths, undefined);
+});
