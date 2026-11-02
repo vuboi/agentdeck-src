@@ -1277,8 +1277,11 @@ function parentModel(chatId: string): string | undefined {
     return workspace.sessions.find((item) => item.id === chatId)?.model;
 }
 
-/** Ends a task: the record, the worker's chat, and the answer: to the tool call that waits, or to the caller in line. */
-function finishTask(
+/**
+ * Ends a task: the record, the worker's chat, and the answer: to the tool call that waits, or to the caller in line.
+ * Exported for the tests (tests/chat-flow.test.mjs); the app ends tasks through stopTask and settle.
+ */
+export function finishTask(
     taskId: string,
     verdict: Verdict,
     detail: string,
@@ -1366,10 +1369,11 @@ function finishTask(
         },
         body,
     );
-    // The backlog is the fallback for a report nobody waits for. Only a task that ended on its own (or timed out) keeps
-    // it: a stopped task, or one aborted with its caller, has no one left to read it (so a timeout gets one notice).
+    // The backlog is the fallback for a report nobody waits for. Only a task someone stopped on purpose (NO_REPORT_ENDINGS)
+    // loses it. An aborted one (its connection lost, or its caller ended the turn) still reports (D-B, plan_next.md); a
+    // timed-out one gets one notice: the waiting call, or else this fallback.
     const toCaller = () => {
-        if (run.ending && run.ending !== 'timeout') return;
+        if (run.ending && NO_REPORT_ENDINGS.includes(run.ending)) return;
         deliverReport(record.caller, {
             taskId,
             sourceMessageId: record.sourceMessageId,

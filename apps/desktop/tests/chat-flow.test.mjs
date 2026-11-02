@@ -36,6 +36,7 @@ async function delegateWith({
         projectId: 'project',
     };
     const sent = [];
+    const replies = [];
     const api = await load('delegate-task', {
         ...taskHelpers,
         elapsed: (ms) => `${ms} ms`,
@@ -53,14 +54,18 @@ async function delegateWith({
         sendNextQueued() {},
         handbackPrompt: () => 'handback',
         NO_HANDOUT: {},
-        replyDelegateCall: async () => delivered,
+        replyDelegateCall: async (...args) => {
+            replies.push(args);
+            return delivered;
+        },
         releaseWorkerSlot: async () => {},
         stopTurn() {},
+        failSessionWork() {},
         updateWorkflowWorker() {},
         settleWorkflowRun() {},
         taskWaiters: new Map(),
     });
-    return { api, sent };
+    return { api, sent, replies };
 }
 
 /** A running wait=true task of the chat, as startTask leaves it. */
@@ -115,13 +120,45 @@ test('R3.2: stopping the caller ends its wait task without any report to it', as
     assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
 });
 
-test('R3.2: a task aborted with its caller leaves no report in the backlog', async () => {
+// D-B (plan_next.md): a task that ends without a user stop (its connection lost, or its caller ended the turn normally)
+// still reports to its caller, through the backlog when nobody waits for the call any more.
+test('D-B: a task aborted when its caller ends its turn keeps its report in the caller backlog', async () => {
     const { api } = await delegateWith({ delivered: false });
     runningWaitTask(api);
     api.endWaitingTasks('chat', false);
     await settle();
     assert.equal(api.taskRuns.has('t1'), false, 'the task ended');
+    const held = api.backlog.get('chat') ?? [];
+    assert.equal(held.length, 1, 'exactly one report');
+    assert.equal(held[0].taskId, 't1');
+});
+
+test('D-B: the user stopping the task itself leaves no report anywhere', async () => {
+    const { api } = await delegateWith({ delivered: false });
+    runningWaitTask(api);
+    api.stopDelegateTask('t1');
+    await settle();
+    assert.equal(api.taskRuns.has('t1'), false, 'the task ended');
     assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
+});
+
+// N1.1: a timed-out task gives its caller one notice: the waiting call if it still waits, else the backlog.
+test('N1.1: a timed-out task answers its waiting call and adds nothing to the backlog', async () => {
+    const { api, replies } = await delegateWith({ delivered: true });
+    runningWaitTask(api);
+    api.finishTask('t1', 'timed out', 'timed out', '');
+    await settle();
+    assert.equal(replies.length, 1, 'one reply to the call');
+    assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
+});
+
+test('N1.1: a timed-out task whose call is gone leaves exactly one report in the backlog', async () => {
+    const { api, replies } = await delegateWith({ delivered: false });
+    runningWaitTask(api);
+    api.finishTask('t1', 'timed out', 'timed out', '');
+    await settle();
+    assert.equal(replies.length, 1, 'the reply was refused');
+    assert.equal(api.backlog.get('chat')?.length, 1, 'one notice, not two');
 });
 
 // ---------- R3.3: a picker change made during a turn applies when the chat's turns end ----------
