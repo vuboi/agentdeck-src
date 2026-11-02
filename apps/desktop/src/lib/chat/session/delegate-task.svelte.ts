@@ -101,7 +101,12 @@ import {
     taskWaiters,
 } from './orchestration.svelte';
 import { handbackPrompt, send } from './sending.svelte';
-import { lastEventAt, lastEventKind, manuallyStopped } from './events.svelte';
+import {
+    lastEventAt,
+    lastEventKind,
+    manuallyStopped,
+    owesTurn,
+} from './events.svelte';
 import { activity } from '../runs/activity.svelte';
 import { continuePrompt } from '../recovery/turn-failure';
 import {
@@ -1488,8 +1493,11 @@ export function flushReports(callerId: string) {
         backlog.delete(callerId);
         return;
     }
+    // A failed turn still owed a retry or an account switch is not finished: a hand-back sent now would take it over
+    // (sendNextQueued runs again when that turn ends, so the report goes out then).
     if (
         hasTurnWork(callerId) ||
+        owesTurn(callerId) ||
         queuePaused[callerId] ||
         queued[callerId]?.length
     )
