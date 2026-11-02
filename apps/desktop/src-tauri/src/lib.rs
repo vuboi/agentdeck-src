@@ -2644,6 +2644,7 @@ pub fn run() {
             worktree::worktree_merge,
             worktree::worktree_commit,
             worktree::worktree_remove,
+            process_guard::stop_chat_processes,
             changes::change_diff,
             changes::change_revert,
             changes::change_revert_all,

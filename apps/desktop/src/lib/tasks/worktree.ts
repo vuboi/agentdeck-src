@@ -69,3 +69,38 @@ export function repoOfWorktreeFolder(cwd: string): string {
     // The same separator style as the input, up to the repository folder.
     return cwd.slice(0, at);
 }
+
+/** What removing a worker's worktree needs from the app: stop the chat's turn, end its processes, remove the folder. */
+export type WorkerWorktreeIo = {
+    stopTurn: (chatId: string) => void;
+    stopProcesses: (chatId: string) => Promise<unknown>;
+    removeWorktree: (args: {
+        root: string;
+        path: string;
+        branch: string;
+        force: boolean;
+    }) => Promise<unknown>;
+};
+
+/**
+ * Removes a worker's worktree. The worker is stopped and its processes ended first: a process still running in the folder
+ * would write into a folder that is gone. If a process cannot be ended the folder is kept, and the error goes up.
+ */
+export async function removeWorkerWorktree(
+    input: {
+        childId: string;
+        root: string;
+        worktree: { path: string; branch: string };
+        force: boolean;
+    },
+    io: WorkerWorktreeIo,
+): Promise<void> {
+    io.stopTurn(input.childId);
+    await io.stopProcesses(input.childId);
+    await io.removeWorktree({
+        root: input.root,
+        path: input.worktree.path,
+        branch: input.worktree.branch,
+        force: input.force,
+    });
+}

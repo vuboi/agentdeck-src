@@ -3,6 +3,7 @@ import test from 'node:test';
 import { load } from './support/load-session.mjs';
 import { btwQuestionOf } from '../src/lib/chat/session/btw-command.ts';
 import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
+import { planTask } from '../src/lib/tasks/delegate-plan.ts';
 
 /** A parent chat on `agent`, and the stubs `btw.svelte.ts` reaches through its imports. */
 async function setup(agent = 'claude', saved = {}, extra = {}) {
@@ -70,6 +71,7 @@ async function delegateCaller(caller) {
     const invoked = [];
     const api = await load('delegate-task', {
         ...taskHelpers,
+        planTask,
         elapsed: (ms) => `${ms} ms`,
         workspace: { activeId: 'chat', sessions: [caller], projects: [] },
         getPref: async () => null,

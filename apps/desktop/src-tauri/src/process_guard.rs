@@ -31,6 +31,22 @@ pub fn kill_tree_now(pid: u32) {
     ag_adapters::agent::runner::kill_tree(pid);
 }
 
+/// The CLI processes a chat has started (its warm one too): what a stop of that chat must end.
+pub fn chat_pids_to_stop(chat: &str) -> Vec<u32> {
+    ag_adapters::agent::runner::pids_of_chat(chat)
+}
+
+/// Ends the CLI processes of a chat, and their trees, and answers which pids it ended. The UI calls it before a worker's
+/// worktree is removed, so no process is left writing in a folder that is gone.
+#[tauri::command]
+pub fn stop_chat_processes(chat_id: String) -> Vec<u32> {
+    let pids = chat_pids_to_stop(&chat_id);
+    for pid in &pids {
+        kill_tree(*pid);
+    }
+    pids
+}
+
 /// The watchdog's script: while the app lives and the process lives, wait; when the app is gone, end the process.
 #[cfg(any(unix, test))]
 pub fn watchdog_script(app: u32, pid: u32) -> String {
@@ -65,6 +81,21 @@ mod tests {
             "while kill -0 100 2>/dev/null; do kill -0 200 2>/dev/null || exit 0; sleep 2; done;"
         ));
         assert!(script.contains("kill -KILL -- -200"));
+    }
+
+    #[test]
+    fn a_chat_stop_lists_only_the_pids_claimed_for_that_chat() {
+        // Fake pids: the listing only reads the claims, it never kills them.
+        ag_adapters::agent::runner::claim_pid(4_100_001, "n2-stop-chat-a");
+        ag_adapters::agent::runner::claim_pid(4_100_002, "n2-stop-chat-a");
+        ag_adapters::agent::runner::claim_pid(4_100_003, "n2-stop-chat-b");
+        let mut pids = chat_pids_to_stop("n2-stop-chat-a");
+        pids.sort();
+        assert_eq!(pids, vec![4_100_001, 4_100_002]);
+        assert!(chat_pids_to_stop("n2-stop-chat-none").is_empty());
+        for pid in [4_100_001, 4_100_002, 4_100_003] {
+            ag_adapters::agent::runner::release_pid(pid);
+        }
     }
 
     #[cfg(unix)]

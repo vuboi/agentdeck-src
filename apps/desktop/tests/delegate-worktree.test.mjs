@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { load } from './support/load-session.mjs';
 import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
+import { planTask } from '../src/lib/tasks/delegate-plan.ts';
 import { worktreeSlug } from '../src/lib/tasks/worktree.ts';
 
 const WORKTREE = {
@@ -25,14 +26,22 @@ async function worktreeCaller(sessions, { hold = false } = {}) {
     const env = { tauri: false };
     const api = await load('delegate-task', {
         ...taskHelpers,
+        planTask,
         worktreeSlug,
         elapsed: (ms) => `${ms} ms`,
         workspace,
         // The folder of a chat: its worktree, else its project (none in these fixtures, so the chat's own folder).
         sessionCwd: (session) =>
             session.worktree?.path || session.workingDirectory || null,
-        // No agent is installed here: the agent list is empty, so an unknown agent name is refused after the worktree is made.
-        connectors: { detected: undefined, custom: [] },
+        // One installed agent, claude, with one model: a call for it passes every check and reaches the worktree step.
+        // Any other agent name is refused by planTask, before any worktree is made.
+        MODELS: {
+            claude: [{ value: 'model', label: 'model', description: '' }],
+        },
+        connectors: {
+            detected: { tools: [{ id: 'claude', path: 'C:/claude.exe' }] },
+            custom: [],
+        },
         roomLine: () => '',
         agentHasRoom: () => true,
         agentLabel: (id) => id,
@@ -142,7 +151,7 @@ test('R5.2: a call past the delegation depth creates no worktree', async () => {
     );
 });
 
-test('R5.2: a worktree made for a call that then fails is removed again', async () => {
+test('N2.1: a call refused for its agent makes no worktree at all', async () => {
     const { api, replies, invoked } = await worktreeCaller([chat]);
     api.onDelegateCall({
         callId: 'c1',
@@ -157,23 +166,17 @@ test('R5.2: a worktree made for a call that then fails is removed again', async 
     await settle();
     assert.equal(replies.length, 1);
     assert.equal(replies[0][2], true);
-    // Objects made inside the module's vm context have another prototype: compare plain copies.
-    const removed = JSON.parse(
-        JSON.stringify(
-            invoked.filter(([command]) => command === 'worktree_remove'),
-        ),
+    assert.match(replies[0][1], /No agent "no-such-agent"/);
+    assert.equal(
+        invoked.filter(([command]) => command === 'worktree_create').length,
+        0,
+        'a refused call is checked before its worktree is made',
     );
-    assert.deepEqual(removed, [
-        [
-            'worktree_remove',
-            {
-                root: 'E:/repo',
-                path: WORKTREE.path,
-                branch: WORKTREE.branch,
-                force: true,
-            },
-        ],
-    ]);
+    assert.equal(
+        invoked.filter(([command]) => command === 'worktree_remove').length,
+        0,
+        'nothing was made, so nothing is removed',
+    );
 });
 
 test('R5.3: a chat stopped while its worktree is being made gets no worker, and the worktree is removed', async () => {
