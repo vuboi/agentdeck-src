@@ -5,6 +5,20 @@
 export const WORKTREE_RULE =
     'You work in your own git worktree. Commit your changes on its branch before you report.';
 
+/** A short, ASCII folder and branch part from the task text: "Fix export PDF" -> "fix-export-pdf". */
+export function worktreeSlug(task: string): string {
+    const slug = task
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 20)
+        .replace(/-+$/, '');
+    return slug || 'task';
+}
+
 export type WorktreeGate =
     { ok: true } | { ok: false; message: string; canCommit: boolean };
 

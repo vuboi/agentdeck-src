@@ -53,7 +53,7 @@ import {
     modelLabel,
 } from '../../agents/models.svelte';
 import { logFlow } from '../../tasks/flow-log';
-import { WORKTREE_RULE } from '../../tasks/worktree';
+import { WORKTREE_RULE, worktreeSlug } from '../../tasks/worktree';
 import { inTauri } from '../../app/platform/history';
 import { startPageMemoryBridge } from '../../browser/page-memory-bridge';
 import {
@@ -452,20 +452,6 @@ function firstRouted(
     const id = canonicalRole(role);
     if (!id) return undefined;
     return firstAvailableRoute(routesOf(taskRoles, id), rows, agentHasRoom);
-}
-
-/** A short, ASCII folder and branch part from the task text: "Fix export PDF" -> "fix-export-pdf". */
-export function worktreeSlug(task: string): string {
-    const slug = task
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[̀-ͯ]/g, '')
-        .replace(/đ/g, 'd')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 20)
-        .replace(/-+$/, '');
-    return slug || 'task';
 }
 
 /** Creates the worker's worktree from the caller's branch. The caller's own worktree, if any, is the repository. */

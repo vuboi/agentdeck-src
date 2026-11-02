@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { load } from './support/load-session.mjs';
 import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
+import { worktreeSlug } from '../src/lib/tasks/worktree.ts';
 
 const WORKTREE = {
     path: 'E:/repo/.agentdeck/worktrees/write-1a2b',
@@ -24,6 +25,7 @@ async function worktreeCaller(sessions, { hold = false } = {}) {
     const env = { tauri: false };
     const api = await load('delegate-task', {
         ...taskHelpers,
+        worktreeSlug,
         elapsed: (ms) => `${ms} ms`,
         workspace,
         // The folder of a chat: its worktree, else its project (none in these fixtures, so the chat's own folder).
