@@ -289,3 +289,16 @@ test('N4.3: the files are read again only when one of them changed in the index'
     await api.openTranscript(workspace.sessions[0]);
     assert.equal(reads.length, 4, 'both files are read again');
 });
+
+test('N4.4: the export of a chat with two native files has every turn, in time order', async () => {
+    const { api } = await twoFileChat();
+    const exported = await api.conversationForExport('chat');
+    assert.deepEqual(textsOf(exported.messages), [
+        'claude q1',
+        'claude a1',
+        'codex q2',
+        'codex a2',
+        'claude q3',
+    ]);
+    assert.equal(exported.sourcePath, '/t2.jsonl');
+});

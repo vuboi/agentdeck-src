@@ -124,12 +124,17 @@ export async function conversationForExport(
     const session = workspace.sessions.find((item) => item.id === sessionId);
     if (!session) throw new Error('This conversation no longer exists.');
     if (session.source && session.path) {
-        const raw = await loadHistory(session.source, session.path);
-        const own = await restoreArchivedWork(
-            session,
-            await toMessages(session, raw),
-        );
-        const all = assemble(session, own, own[0]?.at);
+        const files = wholeFilesOf(session);
+        let all: Message[];
+        if (files) all = await readWhole(session, files);
+        else {
+            const raw = await loadHistory(session.source, session.path);
+            const own = await restoreArchivedWork(
+                session,
+                await toMessages(session, raw),
+            );
+            all = assemble(session, own, own[0]?.at);
+        }
         return {
             title: session.title,
             messages: await restoreCommandImages(session.id, all),
