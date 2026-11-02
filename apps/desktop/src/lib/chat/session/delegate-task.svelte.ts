@@ -484,6 +484,17 @@ async function makeWorkerWorktree(
     });
 }
 
+/** Removes a worktree made for a call that never started its worker. Best effort: a folder that stays is listed by the repository. */
+function discardWorktree(root: string | null, info: WorktreeInfo) {
+    if (!root) return;
+    void invoke('worktree_remove', {
+        root,
+        path: info.path,
+        branch: info.branch,
+        force: true,
+    }).catch(() => undefined);
+}
+
 function startTask(
     call: DelegateCall,
     answer: (text: string, isError?: boolean) => void,
@@ -503,7 +514,14 @@ function startTask(
         worktree: isolated,
     } = parsed.args;
     const caller = callerOf(call.caller);
-    const reply = answer;
+    // A worktree made for this call is removed again when the call ends in an error: no worker will ever use it.
+    const reply =
+        prepared && caller
+            ? (text: string, isError?: boolean) => {
+                  if (isError) discardWorktree(sessionCwd(caller), prepared);
+                  answer(text, isError);
+              }
+            : answer;
     if (!caller)
         return reply(
             'AgentDeck could not tell which chat is calling. Do the task yourself, or ask the user to run it from the chat.',
@@ -515,22 +533,6 @@ function startTask(
             'side chats cannot delegate: answer the question yourself, read-only.',
             true,
         );
-    if (isolated && !prepared) {
-        if (continueId)
-            return reply(
-                'isolation worktree cannot be used with continue: a reused chat keeps its folder. Start a new task instead.',
-                true,
-            );
-        void makeWorkerWorktree(caller, parsed.args.task)
-            .then((info) => startTask(call, reply, info))
-            .catch((error: unknown) =>
-                reply(
-                    `Could not create a worktree: ${String(error)}. Run the task with isolation shared, or fix the repository.`,
-                    true,
-                ),
-            );
-        return;
-    }
     if (taskDepth(caller.id) >= MAX_DELEGATION_DEPTH)
         return reply(
             `Delegation depth is limited to ${MAX_DELEGATION_DEPTH} levels. Finish this task yourself and report back.`,
@@ -556,6 +558,24 @@ function startTask(
                 `depends_on=${dependencyId} is unknown: use a task_id returned by delegate_task.`,
                 true,
             );
+    }
+    // The worktree is made only once the call is known to be valid, so a refused call leaves no folder or branch behind.
+    // The call then runs again with the worktree in hand (prepared), and discards it if it still fails.
+    if (isolated && !prepared) {
+        if (continueId)
+            return reply(
+                'isolation worktree cannot be used with continue: a reused chat keeps its folder. Start a new task instead.',
+                true,
+            );
+        void makeWorkerWorktree(caller, parsed.args.task).then(
+            (info) => startTask(call, reply, info),
+            (error: unknown) =>
+                reply(
+                    `Could not create a worktree: ${String(error)}. Run the task with isolation shared, or fix the repository.`,
+                    true,
+                ),
+        );
+        return;
     }
     // `continue`: reuse an idle worker chat (found by task id or chat id) instead of creating a new one.
     let reuse: { session: SessionItem; record?: TaskRecord } | undefined;
