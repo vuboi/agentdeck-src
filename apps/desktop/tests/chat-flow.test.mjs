@@ -2,6 +2,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { load } from './support/load-session.mjs';
+import * as taskHelpers from '../src/lib/tasks/delegate-task.ts';
+
+/** Lets the promise that answers a delegate call (and its fallback) run. */
+const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 const report = {
     taskId: 't1',
@@ -11,8 +15,11 @@ const report = {
     text: 'result',
 };
 
-/** A delegate-task module with the chat's collaborators stubbed; `sent` records every hand-back send. */
-async function delegateWith({ owed }) {
+/**
+ * A delegate-task module with the chat's collaborators stubbed. `sent` records every hand-back send. `delivered` is what
+ * replyDelegateCall answers: false when the caller's call is no longer waiting, so a report would fall back to the backlog.
+ */
+async function delegateWith({ owed = false, delivered = true } = {}) {
     const session = {
         id: 'chat',
         title: 'Chat',
@@ -23,6 +30,8 @@ async function delegateWith({ owed }) {
     };
     const sent = [];
     const api = await load('delegate-task', {
+        ...taskHelpers,
+        elapsed: (ms) => `${ms} ms`,
         workspace: { activeId: 'chat', sessions: [session], projects: [] },
         getPref: async () => null,
         setPref() {},
@@ -37,8 +46,37 @@ async function delegateWith({ owed }) {
         sendNextQueued() {},
         handbackPrompt: () => 'handback',
         NO_HANDOUT: {},
+        replyDelegateCall: async () => delivered,
+        releaseWorkerSlot: async () => {},
+        stopTurn() {},
+        updateWorkflowWorker() {},
+        settleWorkflowRun() {},
+        taskWaiters: new Map(),
     });
     return { api, sent };
+}
+
+/** A running wait=true task of the chat, as startTask leaves it. */
+function runningWaitTask(api) {
+    api.delegateTasks.t1 = {
+        id: 't1',
+        childId: 'child',
+        caller: 'chat',
+        wait: true,
+        label: 'worker',
+        task: 'Original request',
+        sourceMessageId: 'm1',
+        sourceTask: 'Original request',
+        state: 'running',
+        startedAt: 0,
+        reportState: 'running',
+    };
+    api.taskRuns.set('t1', {
+        callId: 'call-1',
+        timeoutS: 60,
+        remainingMs: 0,
+        deadline: 0,
+    });
 }
 
 // ---------- R3.1: a held hand-back must not take over the failed turn owed a retry ----------
@@ -57,4 +95,24 @@ test('R3.1: once nothing is owed, flushReports delivers the held report', async 
     api.flushReports('chat');
     assert.equal(sent.length, 1);
     assert.equal(sent[0][0], 'chat');
+});
+
+// ---------- R3.2: no report after the caller was stopped or the task was aborted ----------
+
+test('R3.2: stopping the caller ends its wait task without any report to it', async () => {
+    const { api } = await delegateWith({ delivered: false });
+    runningWaitTask(api);
+    api.endWaitingTasks('chat', true);
+    await settle();
+    assert.equal(api.taskRuns.has('t1'), false, 'the task ended');
+    assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
+});
+
+test('R3.2: a task aborted with its caller leaves no report in the backlog', async () => {
+    const { api } = await delegateWith({ delivered: false });
+    runningWaitTask(api);
+    api.endWaitingTasks('chat', false);
+    await settle();
+    assert.equal(api.taskRuns.has('t1'), false, 'the task ended');
+    assert.equal(api.backlog.get('chat')?.length ?? 0, 0);
 });

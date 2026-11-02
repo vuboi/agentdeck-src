@@ -565,7 +565,7 @@ function finalizeTurn(
     onDelegateDone(sessionId, reply, reason);
     finishWorkflowTurn(sessionId, true, reply);
     finishWorkflowIntegration(sessionId, reply, true);
-    endWaitingTasks(sessionId);
+    endWaitingTasks(sessionId, stopped);
     releaseBrowserChat(sessionId);
     if (session) {
         const project = workspace.projects.find(
