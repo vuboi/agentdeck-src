@@ -167,8 +167,23 @@ Với mỗi commit:
 
 ## Báo cáo (người làm điền)
 
-- Task A:
-- Task B:
-- Task C:
-- Task D:
-- Task E:
+Worktree: `E:\WORK\PROJECTS\agentdeck-anim` (nhánh `fix/command-line-smooth`, từ `main` e653b23). Merge `--no-ff` vào main: `2cf22bf`. Phiên điều phối đổi phạm vi: bỏ Task D, chỉ làm A, B, C, E.
+
+- Task A: `ee3444e` `fix(chat): keep the running command line in one SwapLine`. Nhóm lệnh có một `SwapLine` cho cả tiêu đề (`CommandGroup.svelte`). `SwapLine` giữ `{#key shown}` (không đưa `shimmer` vào key, để đổi shimmer không replay animation; có comment). Test: `apps/desktop/tests/swap-line.test.mjs` (kiểm tra nguồn, không render DOM). Chưa quan sát bằng mắt trên app (xem "Chưa làm").
+- Task B: `a98966c` `perf(chat): stop re-rendering the whole reply on every delta`. `askAsStep` chỉ chạy khi block response đã xong (đúng với `ChatBlock`, vốn chỉ parse câu hỏi khi `!block.streaming`), kết quả cache theo block. Thinking rỗng chỉ bỏ khi đã xong. Thinking gộp giữ object, text đọc lúc render. `reuseSegments` + `lastParts` trong `AssistantMessage`. Test: `src/lib/chat/content/blocks.test.ts` (6 test). Đo 2000 delta vào câu trả lời 20 000 ký tự (không có khối câu hỏi): `segments` trước 3.2 đến 6.1 ms, sau 0.8 đến 2.0 ms; số lần gọi `askAsStep` khi đang stream: trước mỗi delta, sau 0. Trường hợp chậm nhất (câu trả lời có khối câu hỏi) chưa đo.
+- Task C: `9853908` `feat(dev): add /dev/swap-line comparison page`. `src/routes/dev/swap-line/+page.ts` (404 ngoài DEV, `prerender = false`) và `+page.svelte` (hai kịch bản: dòng lệnh; reply thật qua `applyAgentEvent` + `AssistantMessage`). Đã kiểm tra: `vite build` không tạo `dev/swap-line` trong `build/`; `vite dev` trả 200 cho `/dev/swap-line`. Cách mở đã ghi trong `docs/development/running-locally.md`.
+- Task D: chuyển cho Opus (phiên điều phối tự review; không làm trong plan này, không có `docs/reviews/review-2026-11-03.md`).
+- Task E: merge `2cf22bf` (`--no-ff`, main đã có thêm `0b0b6d8` của phiên Opus, không xung đột). Không push, không tag, không release.
+    - svelte-check: 0 lỗi (3 cảnh báo a11y có sẵn ở `Markdown.svelte` và `Tree.svelte`, không đụng file nào của plan).
+    - eslint trên các file đã sửa: exit 0. check-derived-writes --strict: 0 cảnh báo.
+    - node tests (lệnh trong plan): 388 pass, 0 fail (lần chạy cuối, trạng thái `9853908`).
+    - clippy `--workspace --all-targets -- -D warnings`: exit 0.
+    - `cargo test --workspace --no-fail-fast`: mọi crate pass (adapters 193, desktop-lib 227, store 11, orchestrator 5, ...) trừ 1 test: `ag-protocol::tests::committed_protocol_ts_matches_rust_types` FAIL. Nguyên nhân: git `core.autocrlf=true` trên Windows, `packages/protocol-ts/src/index.ts` trong index là LF nhưng worktree là CRLF, test so sánh chuỗi thô. Lỗi có sẵn trên main, không do plan này. Chưa sửa (ngoài phạm vi). Cách sửa gợi ý: so sánh sau khi chuẩn hoá `\r\n` hoặc thêm `.gitattributes` `packages/protocol-ts/src/index.ts text eol=lf`.
+    - Lưu ý: hook pre-commit (prettier) đã format lại toàn bộ `blocks.ts` và `AssistantMessage.svelte` lúc commit Task B. Diff thô 832 dòng (`blocks.ts`); bỏ khoảng trắng (`git diff -w`) còn 488 dòng.
+
+Chưa làm / lý do:
+
+- Quan sát app bằng mắt (Task A, mục E "chạy app và quan sát": lệnh trượt lên, không nháy, width ease) chưa làm. Chỉ kiểm tra route trả 200 bằng HTTP, không mở cửa sổ app.
+- Task A test chưa render DOM; dùng kiểm tra nguồn theo fallback của plan.
+- Task D: chuyển cho Opus theo chỉ đạo.
+- Không có lỗi nào làm dừng task A, B, C, E.
