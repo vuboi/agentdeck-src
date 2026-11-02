@@ -1,0 +1,82 @@
+import { workspace, localMessages, type SessionItem } from './state.svelte';
+import { send } from './sending.svelte';
+import { askText } from './run.svelte';
+
+export { btwQuestionOf } from './btw-command';
+
+/** The side chat asked about this chat, if one is open. */
+export const sideOf = (parentId: string) =>
+    workspace.sessions.find((item) => item.side?.parentId === parentId);
+
+/** Closes the side chat of a chat: it is removed from the app and never saved. */
+export function dropSide(parentId: string) {
+    const side = sideOf(parentId);
+    if (!side) return;
+    workspace.sessions = workspace.sessions.filter(
+        (item) => item.id !== side.id,
+    );
+    delete localMessages[side.id];
+}
+
+const CONTEXT_CHARS = 12000;
+
+/** The parent chat so far as text, newest last, within the budget. Turns still streaming are left out. */
+export function snapshotOf(parentId: string): string {
+    const lines: string[] = [];
+    for (const message of localMessages[parentId] ?? []) {
+        if (
+            message.blocks.some(
+                (block) => 'streaming' in block && block.streaming,
+            )
+        )
+            continue;
+        const text = askText(message);
+        if (text)
+            lines.push(
+                `${message.role === 'user' ? 'User' : 'Assistant'}: ${text}`,
+            );
+    }
+    let out = '';
+    for (let index = lines.length - 1; index >= 0; index--) {
+        if (out.length + lines[index].length > CONTEXT_CHARS) break;
+        out = `${lines[index]}\n${out}`;
+    }
+    return out.trim();
+}
+
+/**
+ * Asks a side question about a chat. The side chat is its own session: the parent's run is not touched,
+ * nothing enters its queue, and the side chat is never listed or saved.
+ */
+export function askBtw(parentId: string, question: string) {
+    const parent = workspace.sessions.find((item) => item.id === parentId);
+    if (!parent) return;
+    dropSide(parentId);
+    const id = crypto.randomUUID();
+    const side: SessionItem = {
+        id,
+        projectId: parent.projectId,
+        title: `/btw ${question.split('\n')[0].slice(0, 40)}`,
+        agent: parent.agent,
+        model: parent.model,
+        gitBranch: parent.gitBranch,
+        status: 'idle',
+        draft: false,
+        made: true,
+        agentSession:
+            parent.agent === 'claude' ? crypto.randomUUID() : undefined,
+        side: { parentId, question },
+    };
+    workspace.sessions.push(side);
+    localMessages[id] = [];
+    const snapshot = snapshotOf(parentId);
+    const prompt = [
+        'This is a side question (/btw) about the conversation below. Answer it briefly from that context. Do not edit files, run commands that change anything, or delegate work.',
+        snapshot ? `<conversation>\n${snapshot}\n</conversation>` : '',
+        `Question: ${question}`,
+    ]
+        .filter(Boolean)
+        .join('\n\n');
+    send(id, prompt, [], []);
+    return side;
+}

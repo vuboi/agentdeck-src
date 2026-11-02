@@ -139,7 +139,7 @@ export function buildTree(
     };
     // A new chat joins the list only after its first message; an empty one stays out even while it is open.
     const shown = (item: SessionItem) =>
-        !isEmptyDraft(item) && matchesFilter(item);
+        !item.side && !isEmptyDraft(item) && matchesFilter(item);
     // The chosen order; a new chat (no time yet) stays first when sorting by time.
     const ordered = (list: SessionItem[]) => {
         const sorted = [...list].sort(

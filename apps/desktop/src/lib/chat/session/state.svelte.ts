@@ -74,6 +74,8 @@ export type SessionItem = {
     gitBranch?: string;
     /** Own git worktree for this chat (isolation: worktree). Its path is the working folder while it is set. */
     worktree?: WorktreeInfo;
+    /** A /btw side question: a chat of its own, read-only, next to parentId's chat. Never listed or saved. */
+    side?: { parentId: string; question: string };
     status: Status;
     /** Set on a fork: the session it was forked from. */
     parentId?: string;
@@ -441,6 +443,7 @@ export function localSessions(): SessionItem[] {
     return workspace.sessions.filter(
         (item) =>
             !item.path &&
+            !item.side &&
             (item.draft || localMessages[item.id]) &&
             !isEmptyDraft(item),
     );
