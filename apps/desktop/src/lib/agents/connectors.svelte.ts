@@ -109,10 +109,11 @@ export type ConnectorId =
     | 'copilot'
     | 'workbuddy'
     | 'muse-code'
+    | 'command-code'
     | ApiConnectorId;
 export type AccountConnectorId = Exclude<
     ConnectorId,
-    ApiConnectorId | 'muse-code'
+    ApiConnectorId | 'muse-code' | 'command-code'
 >;
 export type AccountProvider = 'claude' | 'codex' | 'copilot';
 
@@ -132,6 +133,7 @@ export type Detected = {
     copilot: Login;
     workbuddy: Login;
     muse_code: Login;
+    command_code: Login;
 };
 export type UsageWindow = {
     label: string;
@@ -305,6 +307,7 @@ export const connectors = $state({
         agy: false,
         opencode: false,
         workbuddy: false,
+        'command-code': false,
     } as Record<ConnectorId, boolean>,
     /** What is running right now, by key (`install:codex`, `login:claude`, `switch:codex`…), with a label for it. */
     busy: {} as Record<string, string>,
@@ -634,6 +637,8 @@ const detectedToolIds = (id: ConnectorId): string[] => {
             return ['codebuddy'];
         case 'muse-code':
             return [];
+        case 'command-code':
+            return ['command-code'];
         default:
             return [];
     }
@@ -674,6 +679,9 @@ function mergeDetected(id: ConnectorId, next: Detected) {
             break;
         case 'muse-code':
             merged.muse_code = next.muse_code;
+            break;
+        case 'command-code':
+            merged.command_code = next.command_code;
             break;
     }
     connectors.detected = merged;

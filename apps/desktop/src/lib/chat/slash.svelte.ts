@@ -12,6 +12,7 @@ export type SlashAgent =
     | 'opencode'
     | 'workbuddy'
     | 'copilot'
+    | 'command-code'
     | 'custom';
 export type SlashItem = {
     name: string;

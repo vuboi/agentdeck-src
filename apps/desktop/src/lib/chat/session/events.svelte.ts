@@ -184,6 +184,7 @@ const CLI_OF: Record<string, string> = {
     opencode: 'opencode',
     workbuddy: 'codebuddy',
     copilot: 'gh',
+    'command-code': 'command-code',
 };
 /** What a provider's CLI says when the conversation an id names does not exist (a run stopped before it wrote anything,
  *  or a session cleaned up): Codex rollout, Claude session, OpenCode session, Antigravity conversation, Copilot thread. */

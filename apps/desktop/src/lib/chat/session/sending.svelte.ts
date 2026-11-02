@@ -631,6 +631,7 @@ export function send(
             session.agent === 'opencode' ||
             session.agent === 'workbuddy' ||
             session.agent === 'copilot' ||
+            session.agent === 'command-code' ||
             session.agent === 'custom')
     ) {
         if (!extra.report || extra.report.workflowRunId)
@@ -678,6 +679,7 @@ export function send(
             session.agent === 'opencode' ||
             session.agent === 'workbuddy' ||
             session.agent === 'copilot' ||
+            session.agent === 'command-code' ||
             session.agent === 'custom')
     )
         startTurn(

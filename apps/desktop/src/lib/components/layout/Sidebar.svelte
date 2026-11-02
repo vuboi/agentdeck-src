@@ -689,6 +689,7 @@
                 opencode: 'OpenCode',
                 workbuddy: 'WorkBuddy',
                 copilot: 'Copilot',
+                'command-code': 'Command Code',
                 custom: 'Custom',
             }[view.filter],
             submenu: [
@@ -718,6 +719,7 @@
                         'opencode',
                         'workbuddy',
                         'copilot',
+                        'command-code',
                         'custom',
                     ] as const
                 ).map((agent) => ({

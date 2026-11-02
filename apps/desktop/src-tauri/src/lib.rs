@@ -53,6 +53,7 @@ mod tts;
 mod voice;
 
 use ag_adapters::agent::antigravity::Antigravity;
+use ag_adapters::agent::commandcode::CommandCode;
 use ag_adapters::agent::opencode::OpenCode;
 use ag_adapters::agent::runner::resolve_binary;
 use ag_adapters::history::{self, HistoryMessage, HistoryPage, HistorySession, Roots, Source};
@@ -641,6 +642,13 @@ async fn models_list(agent: String) -> Vec<ag_adapters::models::ModelInfo> {
         return connectors::workbuddy_model_infos()
             .await
             .unwrap_or_default();
+    }
+    if agent == "command-code" {
+        let listing = ag_adapters::agent::commandcode::models_listing(resolve_binary(
+            &CommandCode::default(),
+        ))
+        .await;
+        return ag_adapters::models::commandcode(&listing);
     }
     // `agy models` asks the server: off the main thread.
     tauri::async_runtime::spawn_blocking(move || models_of(&agent))

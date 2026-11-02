@@ -106,7 +106,11 @@ pub fn codex(codex_home: &Path) -> Vec<ModelInfo> {
     else {
         return Vec::new();
     };
-    let mut entries: Vec<&Value> = catalogue["models"].as_array().into_iter().flatten().collect();
+    let mut entries: Vec<&Value> = catalogue["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .collect();
     // Listed models first, each group by Codex's own priority.
     entries.sort_by_key(|model| {
         (
@@ -119,7 +123,10 @@ pub fn codex(codex_home: &Path) -> Vec<ModelInfo> {
         .filter_map(|model| {
             let value = model["slug"].as_str()?;
             let hidden = model["visibility"] != "list";
-            let name = model["display_name"].as_str().unwrap_or(value).replace('-', " ");
+            let name = model["display_name"]
+                .as_str()
+                .unwrap_or(value)
+                .replace('-', " ");
             Some(ModelInfo {
                 value: value.into(),
                 label: name,
@@ -164,12 +171,18 @@ pub fn opencode(listing: &str, catalogue: Option<&str>) -> Vec<ModelInfo> {
             free: None,
         });
     }
-    let Some(catalogue) = catalogue.and_then(|text| serde_json::from_str::<Value>(text).ok()) else {
+    let Some(catalogue) = catalogue.and_then(|text| serde_json::from_str::<Value>(text).ok())
+    else {
         return models;
     };
     let providers: Vec<String> = models
         .iter()
-        .filter_map(|model| model.value.split_once('/').map(|(provider, _)| provider.to_owned()))
+        .filter_map(|model| {
+            model
+                .value
+                .split_once('/')
+                .map(|(provider, _)| provider.to_owned())
+        })
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -183,11 +196,17 @@ pub fn opencode(listing: &str, catalogue: Option<&str>) -> Vec<ModelInfo> {
                 continue;
             }
             let id = format!("{provider}/{slug}");
-            if models.iter().chain(hidden.iter()).any(|model| model.value == id) {
+            if models
+                .iter()
+                .chain(hidden.iter())
+                .any(|model| model.value == id)
+            {
                 continue;
             }
             hidden.push(ModelInfo {
-                label: entry["name"].as_str().map_or_else(|| title(slug), str::to_owned),
+                label: entry["name"]
+                    .as_str()
+                    .map_or_else(|| title(slug), str::to_owned),
                 value: id,
                 description: provider.clone(),
                 efforts: Vec::new(),
@@ -231,6 +250,45 @@ fn title(id: &str) -> String {
 }
 
 const LEVELS: [&str; 3] = ["low", "medium", "high"];
+
+/// Command Code's models from `command-code --list-models`: `<id>  <description>` lines under section headings. The
+/// note after the list starts the headless-only decision models, which the picker does not offer.
+pub fn commandcode(listing: &str) -> Vec<ModelInfo> {
+    let mut models: Vec<ModelInfo> = Vec::new();
+    for line in listing.lines() {
+        if ["Pass the", "Decision models", "Docs:"]
+            .iter()
+            .any(|stop| line.starts_with(stop))
+        {
+            break;
+        }
+        // Headings and the title line have no two-space gap between a single id and its description.
+        let Some((id, description)) = line.split_once("  ") else {
+            continue;
+        };
+        let id = id.trim();
+        if id.is_empty()
+            || id.contains(char::is_whitespace)
+            || models.iter().any(|model| model.value == id)
+        {
+            continue;
+        }
+        let description = description.trim();
+        models.push(ModelInfo {
+            value: id.into(),
+            label: title(id.rsplit('/').next().unwrap_or(id)),
+            description: description.into(),
+            efforts: Vec::new(),
+            default_effort: None,
+            hidden: false,
+            free: description
+                .split_whitespace()
+                .any(|word| word == "FREE")
+                .then_some(true),
+        });
+    }
+    models
+}
 
 /// Antigravity's models from the output of `agy models`: one `<id>\t<label>` line each. The reasoning level is
 /// part of the id (`gemini-3.8-flash-high`), so ids that differ only by it become one model with levels, which
@@ -317,6 +375,29 @@ mod tests {
             std::env::temp_dir().join(format!("agentdeck-models-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn command_code_reads_the_picker_rows_and_stops_before_the_headless_models() {
+        let listing = "Available models  ·  3 models\n\nOpen Source\n\n\
+deepseek/deepseek-v4-flash             fast hybrid-attention reasoning (default)\n\
+reflection/beam:free                   FREE reasoning model for coding\n\nAnthropic\n\n\
+claude-sonnet-5-5                      best combo of speed & intelligence (recommended)\n\n\
+Pass the full id, or just the short name after the last \"/\":\ncmdc --model kimi-k2.5\n\n\
+Decision models (headless only)\ntypesafe/jev  typed questions in, probabilities out\n";
+        let models = commandcode(listing);
+        let values: Vec<&str> = models.iter().map(|model| model.value.as_str()).collect();
+        assert_eq!(
+            values,
+            [
+                "deepseek/deepseek-v4-flash",
+                "reflection/beam:free",
+                "claude-sonnet-5-5"
+            ]
+        );
+        assert_eq!(models[0].label, "Deepseek V4 Flash");
+        assert_eq!(models[1].free, Some(true));
+        assert_eq!(models[2].label, "Claude Sonnet 5.5");
     }
 
     #[test]
@@ -430,10 +511,16 @@ gpt-oss-120b-medium	GPT-OSS 120B (Medium)
                 "stable-beta":{"name":"Stable Beta","status":"beta"}}},
             "other":{"models":{"gone":{"name":"Gone","status":"deprecated"}}}
         }"#;
-        let models = opencode("opencode/big-pickle
-", Some(catalogue));
+        let models = opencode(
+            "opencode/big-pickle
+",
+            Some(catalogue),
+        );
         assert_eq!(
-            models.iter().map(|m| (m.value.as_str(), m.hidden)).collect::<Vec<_>>(),
+            models
+                .iter()
+                .map(|m| (m.value.as_str(), m.hidden))
+                .collect::<Vec<_>>(),
             [
                 ("opencode/big-pickle", false),
                 ("opencode/new-alpha", true),

@@ -80,6 +80,7 @@ pub struct Pins {
     pub codex_auth: String,
     pub claude_swap: String,
     pub copilot: String,
+    pub command_code: String,
 }
 
 #[derive(Deserialize)]

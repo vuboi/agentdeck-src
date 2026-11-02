@@ -2,6 +2,8 @@ import type { ZIconName } from '@shival99/z-ui-svelte';
 import {
     CLAUDE_LOGO,
     CLAUDE_SVG,
+    COMMAND_CODE_LOGO,
+    COMMAND_CODE_SVG,
     COPILOT_LOGO,
     GEMINI_LOGO,
     GEMINI_SVG,
@@ -15,7 +17,13 @@ import {
 import { connectors } from './connectors.svelte';
 
 export type BuiltInAgent =
-    'claude' | 'codex' | 'antigravity' | 'opencode' | 'workbuddy' | 'copilot';
+    | 'claude'
+    | 'codex'
+    | 'antigravity'
+    | 'opencode'
+    | 'workbuddy'
+    | 'copilot'
+    | 'command-code';
 /** `icon` is an icon-set name; `mark`, when set, is the provider's own SVG and wins over `icon` everywhere. */
 export type AgentProfile = {
     id: BuiltInAgent;
@@ -79,6 +87,15 @@ export const BUILT_IN_AGENTS: AgentProfile[] = [
         mark: GITHUB_SVG,
         image: COPILOT_LOGO,
         tone: 'text-violet-500',
+    },
+    {
+        id: 'command-code',
+        label: 'Command Code',
+        binary: 'command-code',
+        icon: 'lucideTerminal' as ZIconName,
+        mark: COMMAND_CODE_SVG,
+        image: COMMAND_CODE_LOGO,
+        tone: 'text-foreground',
     },
 ];
 

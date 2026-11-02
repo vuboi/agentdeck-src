@@ -17,6 +17,7 @@ export type ProviderId =
     | 'opencode'
     | 'workbuddy'
     | 'copilot'
+    | 'command-code'
     | 'custom';
 export type BuiltInProviderId = Exclude<ProviderId, 'custom'>;
 export type ModelOption = {
@@ -120,6 +121,8 @@ const catalog = $state<Record<ProviderId, ModelOption[]>>({
             label: 'Nemotron 3.5 Super VL (Free)',
         },
     ],
+    // Read from `command-code --list-models` at start-up; the list does not depend on the sign-in.
+    'command-code': [],
     // Fallback for the official CodeBuddy CLI when native model discovery is unavailable.
     workbuddy: [
         { value: 'gpt-6-astra', label: 'GPT 6 Astra' },
@@ -239,6 +242,13 @@ const builtIn: ModelSource[] = [
         icon: iconOf('copilot'),
         models: () => catalog.copilot,
     },
+    {
+        key: 'command-code',
+        provider: 'command-code',
+        label: 'Command Code',
+        icon: iconOf('command-code'),
+        models: () => catalog['command-code'],
+    },
 ];
 
 /** The rows of the model picker: the three CLIs, then one per enabled custom provider. Reactive. */
@@ -355,6 +365,7 @@ export const modelsReady = $state<Record<ProviderId, boolean>>({
     opencode: false,
     workbuddy: false,
     copilot: false,
+    'command-code': false,
     custom: true,
 });
 
@@ -366,6 +377,7 @@ export async function loadModels(
         'opencode',
         'workbuddy',
         'copilot',
+        'command-code',
     ],
 ) {
     if (!inTauri()) {

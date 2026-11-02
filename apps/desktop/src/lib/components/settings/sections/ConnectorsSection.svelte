@@ -17,6 +17,7 @@
         COPILOT_LOGO,
         GEMINI_LOGO,
         GITHUB_SVG,
+        COMMAND_CODE_SVG,
         MUSE_LOGO,
         OPENAI_SVG,
         OPENCODE_SVG,
@@ -163,6 +164,15 @@
             image: MUSE_LOGO,
             tone: 'bg-violet-500/12 text-violet-600 dark:text-violet-400',
             note: 'Muse Code subscription. Sign-in uses Meta’s device flow and mints a native inference key.',
+        },
+        {
+            id: 'command-code',
+            label: 'Command Code',
+            binary: 'command-code',
+            brand: 'lucideTerminal',
+            svg: COMMAND_CODE_SVG,
+            tone: 'bg-foreground/10 text-foreground',
+            note: 'Command Code coding agent through its own CLI. Sign-in runs in the CLI, so chats use your CLI account, not an API key.',
         },
     ];
 
@@ -785,7 +795,8 @@
                                         class="min-w-0 flex-1 text-[0.75rem] text-muted-foreground"
                                         >{card.id === 'opencode' ||
                                         card.id === 'workbuddy' ||
-                                        card.id === 'muse-code'
+                                        card.id === 'muse-code' ||
+                                        card.id === 'command-code'
                                             ? 'Automatic account switching is unavailable for this connector.'
                                             : 'Rotate to another saved account when quota or sign-in fails.'}</span
                                     >
@@ -800,13 +811,15 @@
                                         checked={card.id !== 'opencode' &&
                                             card.id !== 'workbuddy' &&
                                             card.id !== 'muse-code' &&
+                                            card.id !== 'command-code' &&
                                             Boolean(
                                                 connectors.autoSwitch[card.id],
                                             )}
                                         zSize="sm"
                                         zDisabled={card.id === 'opencode' ||
                                             card.id === 'workbuddy' ||
-                                            card.id === 'muse-code'}
+                                            card.id === 'muse-code' ||
+                                            card.id === 'command-code'}
                                         onChange={(value) =>
                                             setConnectorAutoSwitch(
                                                 card.id,

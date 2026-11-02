@@ -67,6 +67,16 @@ impl Mode {
     pub fn opencode_auto(self) -> bool {
         matches!(self, Mode::Auto | Mode::Yolo)
     }
+
+    /// Command Code's `--permission-mode`. It has no auto mode, so [`Mode::Auto`] asks for commands like edits do.
+    pub fn commandcode(self) -> Option<&'static str> {
+        match self {
+            Mode::Ask => Some("default"),
+            Mode::Edits | Mode::Auto => Some("accept-edits"),
+            Mode::Plan => Some("plan"),
+            Mode::Yolo => Some("yolo"),
+        }
+    }
 }
 
 /// What a tool call does, as an adapter that decides by itself (an SDK handler, a custom runner) classifies it.

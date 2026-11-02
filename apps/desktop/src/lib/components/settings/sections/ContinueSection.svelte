@@ -25,6 +25,7 @@
         'opencode',
         'workbuddy',
         'copilot',
+        'command-code',
         'custom',
     ];
 

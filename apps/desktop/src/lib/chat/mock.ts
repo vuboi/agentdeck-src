@@ -16,6 +16,7 @@ export type Agent =
     | 'opencode'
     | 'workbuddy'
     | 'copilot'
+    | 'command-code'
     | 'custom';
 export type Session = {
     id: string;

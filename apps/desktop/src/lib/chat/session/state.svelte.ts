@@ -34,6 +34,7 @@ export type Agent =
     | 'opencode'
     | 'workbuddy'
     | 'copilot'
+    | 'command-code'
     | 'custom';
 export type Status = 'working' | 'idle' | 'waiting';
 /** Reasoning effort and the approval modes shared by the agent CLIs. */
@@ -124,6 +125,9 @@ export const AGENT_TEXT: Record<Agent, string> = {
     copilot:
         BUILT_IN_AGENTS.find((item) => item.id === 'copilot')?.tone ??
         'text-foreground',
+    'command-code':
+        BUILT_IN_AGENTS.find((item) => item.id === 'command-code')?.tone ??
+        'text-foreground',
     custom: 'text-violet-500',
 };
 
@@ -141,6 +145,9 @@ export const AGENT_ICON: Record<Agent, ZIconName> = {
     copilot:
         BUILT_IN_AGENTS.find((item) => item.id === 'copilot')?.icon ??
         ('lucideBot' as ZIconName),
+    'command-code':
+        BUILT_IN_AGENTS.find((item) => item.id === 'command-code')?.icon ??
+        ('lucideTerminal' as ZIconName),
     custom: 'lucideServer' as ZIconName,
 };
 

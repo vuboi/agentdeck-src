@@ -262,6 +262,7 @@ function agentRows(): AgentRow[] {
         ['opencode', 'opencode'],
         ['workbuddy', 'codebuddy'],
         ['copilot', 'gh'],
+        ['command-code', 'command-code'],
     ] as const) {
         const models = (MODELS[id] ?? []).map((item) => ({
             value: item.value,
@@ -499,7 +500,8 @@ function startTask(
         row.id === 'antigravity' ||
         row.id === 'opencode' ||
         row.id === 'workbuddy' ||
-        row.id === 'copilot'
+        row.id === 'copilot' ||
+        row.id === 'command-code'
             ? row.id
             : 'custom';
     const model =

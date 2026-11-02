@@ -28,6 +28,8 @@ pub(crate) mod antigravity;
 pub(crate) mod claude;
 #[path = "connectors/codex.rs"]
 pub(crate) mod codex;
+#[path = "connectors/commandcode.rs"]
+pub(crate) mod commandcode;
 #[path = "connectors/copilot.rs"]
 pub(crate) mod copilot;
 #[path = "connectors/github.rs"]
@@ -383,6 +385,7 @@ async fn login_status(provider: &str) -> Login {
         "codex" => codex_login(),
         "copilot" => github::login().await,
         "opencode" => opencode::login_status().await,
+        "command-code" => commandcode::login_status().await,
         "workbuddy" => workbuddy::login_status(),
         "muse-code" => muse_code::login_status(),
         _ => Login::default(),
@@ -426,6 +429,7 @@ pub struct Detected {
     copilot: Login,
     workbuddy: Login,
     muse_code: Login,
+    command_code: Login,
 }
 
 #[tauri::command]
@@ -464,7 +468,7 @@ pub fn connector_logout(id: String) -> Result<(), String> {
     }
 }
 
-const TOOLS: [&str; 11] = [
+const TOOLS: [&str; 12] = [
     "claude",
     "codex",
     "agy",
@@ -476,6 +480,7 @@ const TOOLS: [&str; 11] = [
     "npm",
     "gh",
     "codebuddy",
+    "command-code",
 ];
 
 pub(crate) fn codex_home() -> PathBuf {
@@ -645,6 +650,7 @@ fn detect_tools(only: Option<&str>) -> Vec<&'static str> {
         Some("codex") => vec!["codex", "codex-auth"],
         Some("agy") => vec!["agy"],
         Some("opencode") => vec!["opencode"],
+        Some("command-code") => vec!["command-code"],
         Some("copilot") => vec!["copilot", "gh"],
         Some("workbuddy") => vec!["codebuddy"],
         Some("muse-code") => Vec::new(),
@@ -730,6 +736,11 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
     } else {
         Login::default()
     };
+    let command_code = if detect_selected(only, "command-code") {
+        commandcode::login_status().await
+    } else {
+        Login::default()
+    };
     let muse_code = if detect_selected(only, "muse-code") {
         muse_code::login_status()
     } else {
@@ -744,6 +755,7 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
         copilot,
         workbuddy,
         muse_code,
+        command_code,
     }
 }
 
@@ -880,6 +892,7 @@ pub async fn connector_install(app: AppHandle, id: String) -> Result<(), String>
         // Pinned to the CLI version the SDK was built against (its `cli-version.txt`): the SDK speaks its protocol.
         "copilot" => node_tool(&format!("@github/copilot@{}", ENDPOINTS.pins.copilot))?,
         "workbuddy" => pnpm_tool("@tencent-ai/codebuddy-code")?,
+        "command-code" => node_tool(&format!("command-code@{}", ENDPOINTS.pins.command_code))?,
         other => return Err(format!("do not know how to install `{other}`")),
     };
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1031,6 +1044,8 @@ async fn connector_login_inner(app: AppHandle, id: String) -> Result<(), String>
             )
             .await
         }
+        // Its sign-in is an interactive terminal flow: it runs in its own console (see `commandcode.rs`).
+        "command-code" => commandcode::sign_in().await,
         "agy" => antigravity_sign_in_another_account(&app).await,
         other => Err(format!("no sign-in for `{other}`")),
     }
