@@ -67,6 +67,7 @@ import {
     failSessionWork,
     hiddenPrompt,
     forgetUnstartedConversation,
+    firstAgentOf,
     isRunning,
     openServedPage,
     queued,
@@ -1506,12 +1507,7 @@ function handleEventNow(
         // Reset only the provider conversation that failed. A mixed chat's other provider ids remain valid.
         rememberMixed(session);
         const failedAgent = reply?.agent ?? session.agent;
-        const first =
-            session.firstAgent ??
-            session.source ??
-            session.agents?.[0] ??
-            session.agent;
-        if (failedAgent === first) {
+        if (failedAgent === firstAgentOf(session)) {
             session.agentStarted = false;
             session.agentSession = undefined;
         } else {
@@ -1656,11 +1652,7 @@ function handleEventNow(
     // A provider can announce an id before it has persisted anything resumable (Codex's thread.started is one
     // example). Keep that id for history mapping immediately, but mark it resumable only after a real conversation
     // event. Ctrl/Cmd+Enter can otherwise interrupt inside that gap and resume a rollout/session that does not exist.
-    const first =
-        session.firstAgent ??
-        session.source ??
-        session.agents?.[0] ??
-        session.agent;
+    const first = firstAgentOf(session);
     const agent = reply.agent ?? session.agent;
     const confirmsConversation =
         event.kind !== 'session' && event.kind !== 'error';

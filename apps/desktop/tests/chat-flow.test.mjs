@@ -323,7 +323,7 @@ const { creditModel: realCreditModel } =
     await import('../src/lib/agents/credit-model.ts');
 
 /** The turns module with the catalogue given: `chatModel`, `modelFor`, `effortFor` are the real ones. */
-async function loadTurns({ catalogue = {}, ready = {} } = {}) {
+async function loadTurns({ catalogue = {}, ready = {}, sessions = [] } = {}) {
     return load('turns', {
         getPref: async () => null,
         setPref() {},
@@ -334,7 +334,7 @@ async function loadTurns({ catalogue = {}, ready = {} } = {}) {
         findModel: (agent, value) =>
             (catalogue[agent] ?? []).find((item) => item.value === value),
         customProviderName: () => undefined,
-        workspace: { activeId: null, sessions: [], projects: [] },
+        workspace: { activeId: null, sessions, projects: [] },
     });
 }
 
@@ -366,6 +366,7 @@ async function runWith(
         chatModel: turns.chatModel,
         modelFor: turns.modelFor,
         effortFor: turns.effortFor,
+        firstAgentOf: turns.firstAgentOf,
         messagesById: new Map(),
         localMessages,
         chat: { messages: [] },
@@ -476,4 +477,63 @@ test('R3.3: a pick made during a retry applies when the retry is stopped', async
     assert.equal(session.agent, 'codex');
     assert.equal(session.model, 'gpt-next');
     assert.equal(pending.chat, undefined, 'the pending pick is used up');
+});
+
+// R3.8 (plan_next.md): one rule for the chat's first agent, and for the conversation a turn forgets.
+
+test('R3.8: firstAgentOf names the agent of the first conversation, whichever field keeps it', async () => {
+    const turns = await loadTurns();
+    assert.equal(
+        turns.firstAgentOf({ agent: 'codex', firstAgent: 'claude' }),
+        'claude',
+    );
+    assert.equal(
+        turns.firstAgentOf({ agent: 'codex', source: 'claude' }),
+        'claude',
+    );
+    assert.equal(
+        turns.firstAgentOf({ agent: 'codex', agents: ['claude', 'codex'] }),
+        'claude',
+    );
+    assert.equal(turns.firstAgentOf({ agent: 'codex' }), 'codex');
+});
+
+test('R3.8: forgetUnstartedConversation keeps a started conversation and drops an unstarted one', async () => {
+    const session = {
+        id: 'chat',
+        agent: 'claude',
+        firstAgent: 'claude',
+        agentSession: 's1',
+        agentStarted: false,
+        agentIds: {
+            codex: { id: 'c1', started: false },
+            antigravity: { id: 'a1', started: true },
+        },
+    };
+    const turns = await loadTurns({ sessions: [session] });
+    turns.forgetUnstartedConversation('chat');
+    assert.equal(
+        session.agentSession,
+        undefined,
+        'the unstarted first conversation is forgotten',
+    );
+    assert.equal(session.agentStarted, false);
+
+    session.agentSession = 's2';
+    session.agentStarted = true;
+    turns.forgetUnstartedConversation('chat');
+    assert.equal(session.agentSession, 's2', 'a started conversation is kept');
+
+    turns.forgetUnstartedConversation('chat', 'codex');
+    assert.equal(
+        session.agentIds.codex,
+        undefined,
+        'an unstarted other conversation is dropped',
+    );
+    turns.forgetUnstartedConversation('chat', 'antigravity');
+    assert.equal(
+        session.agentIds.antigravity?.id,
+        'a1',
+        'a started other conversation is kept',
+    );
 });

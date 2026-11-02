@@ -393,6 +393,16 @@ export function hasTurnWork(sessionId: string): boolean {
     return Boolean(replies[sessionId] || needsUserInput(sessionId));
 }
 
+/** The agent of a chat's first conversation (the one its own id field, `agentSession`, belongs to). Pure. */
+export function firstAgentOf(session: SessionItem): Agent {
+    return (
+        session.firstAgent ??
+        session.source ??
+        session.agents?.[0] ??
+        session.agent
+    );
+}
+
 /**
  * Drops a provider conversation id only when the turn that used it never received a confirmed session/rollout. The one
  * copy for every caller (Stop, Send now, retry, fallback). `failedAgent` is the agent whose turn it was (reply.agent);
@@ -404,11 +414,7 @@ export function forgetUnstartedConversation(
 ) {
     const session = workspace.sessions.find((item) => item.id === sessionId);
     if (!session) return;
-    const first =
-        session.firstAgent ??
-        session.source ??
-        session.agents?.[0] ??
-        session.agent;
+    const first = firstAgentOf(session);
     const agent = failedAgent ?? session.agent;
     if (agent === first) {
         if (session.agentStarted === true) return;

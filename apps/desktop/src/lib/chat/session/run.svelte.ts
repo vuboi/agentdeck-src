@@ -118,6 +118,7 @@ import {
     turns,
     effortFor,
     chatModel,
+    firstAgentOf,
 } from './turns.svelte';
 import {
     handleAgentEvent,
@@ -380,11 +381,7 @@ export function prewarmChat(sessionId: string) {
     const throttle = `${session.id}|${session.agent}|${selectedModel}|${epoch}`;
     if (now - (prewarmedAt.get(throttle) ?? 0) < 60_000) return;
     prewarmedAt.set(throttle, now);
-    const first =
-        session.firstAgent ??
-        session.source ??
-        session.agents?.[0] ??
-        session.agent;
+    const first = firstAgentOf(session);
     let cliId: string | null;
     let resume: boolean;
     if (session.agent === first) {
@@ -604,8 +601,7 @@ export function startTurn(
     if (images.length || !allow.length) lastPrompt[session.id] = text;
     // The CLI's own id for the conversation. Claude takes one we choose; Codex names its thread on the first turn
     // and reports it, so a new Codex chat starts without one.
-    const first = (session.firstAgent ??=
-        session.source ?? session.agents?.[0] ?? session.agent);
+    const first = (session.firstAgent ??= firstAgentOf(session));
     const selectedModel = offered.model;
     rememberLastChat(
         session.agent,
