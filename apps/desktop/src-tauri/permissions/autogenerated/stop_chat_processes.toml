@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stop-chat-processes"
+description = "Enables the stop_chat_processes command without any pre-configured scope."
+commands.allow = ["stop_chat_processes"]
+
+[[permission]]
+identifier = "deny-stop-chat-processes"
+description = "Denies the stop_chat_processes command without any pre-configured scope."
+commands.deny = ["stop_chat_processes"]

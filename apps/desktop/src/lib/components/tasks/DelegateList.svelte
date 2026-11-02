@@ -21,7 +21,12 @@
     import { shortCount, totalTokens, usd } from '../../chat/runs/usage';
     import { projectOf } from '../../chat/session/state.svelte';
     import type { Block } from '../../chat/mock';
-    import { mergeGate, mergeRootOf } from '../../tasks/worktree';
+    import { stopTurn } from '../../chat/session/turns.svelte';
+    import {
+        mergeGate,
+        mergeRootOf,
+        removeWorkerWorktree,
+    } from '../../tasks/worktree';
 
     // Delegated agents attached to a message, with their live state and links to their chats.
     let { blocks }: { blocks: Extract<Block, { kind: 'delegate' }>[] } =
@@ -106,12 +111,21 @@
                     branch: wt.branch,
                     base: wt.base,
                 });
-            await invoke('worktree_remove', {
-                root,
-                path: wt.path,
-                branch: wt.branch,
-                force: !merge,
-            });
+            // The worker is stopped and its processes ended before its folder goes (removeWorkerWorktree).
+            await removeWorkerWorktree(
+                {
+                    childId,
+                    root,
+                    worktree: wt,
+                    force: !merge,
+                },
+                {
+                    stopTurn: (id) => stopTurn(id),
+                    stopProcesses: (id) =>
+                        invoke('stop_chat_processes', { chatId: id }),
+                    removeWorktree: (args) => invoke('worktree_remove', args),
+                },
+            );
             session.worktree = undefined;
         } catch (error) {
             alert(String(error));
