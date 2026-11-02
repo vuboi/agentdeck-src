@@ -1190,9 +1190,16 @@ pub async fn accounts_list(
                     // switchable if the first status check failed.
                     let out = capture(auth, &["list"], Duration::from_secs(40)).await?;
                     if !out.ok {
-                        return Err(
-                            "codex-auth list failed while checking account status".to_string()
-                        );
+                        // Say why: the first line of its own message, so a broken shim or a path problem is visible.
+                        let why = [out.stderr.as_str(), out.stdout.as_str()]
+                            .iter()
+                            .flat_map(|text| text.lines())
+                            .map(str::trim)
+                            .find(|line| !line.is_empty())
+                            .unwrap_or("no output");
+                        return Err(format!(
+                            "codex-auth list failed while checking account status: {why}"
+                        ));
                     }
                     if !has_account_rows_in_list(&out.stdout) {
                         return Err(
