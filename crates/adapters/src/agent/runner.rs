@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
-pub use super::resolve::{augmented_path, augmented_path_env, resolve_binary};
+pub use super::resolve::{augmented_path, augmented_path_env, resolve_binary, without_verbatim};
 use super::stall::Watchdog;
 use super::{AgentEvent, Provider, TurnRequest};
 

@@ -2521,11 +2521,10 @@ pub fn run() {
         .setup(|app| {
             // First: every folder and MCP name below depends on which build this is.
             channel::init(&app.config().identifier);
-            let resource_sdk = app
-                .path()
-                .resource_dir()
-                .ok()
-                .map(|directory| directory.join("claude-agent"));
+            // resource_dir is a `\\?\` path on Windows; node cannot start a main module from one (lstat 'E:').
+            let resource_sdk = app.path().resource_dir().ok().map(|directory| {
+                ag_adapters::agent::runner::without_verbatim(&directory).join("claude-agent")
+            });
             let packaged_node = if cfg!(windows) { "node.exe" } else { "node" };
             if let Some(directory) = resource_sdk.filter(|directory| {
                 directory.join("runner.mjs").is_file() && directory.join(packaged_node).is_file()
@@ -2605,7 +2604,8 @@ pub fn run() {
             }
             bridge::start(app.handle().clone());
             if let Ok(dir) = app.path().resource_dir() {
-                image_gen::set_resource_dir(dir);
+                // Plain path: image_gen starts node scripts from here (see without_verbatim).
+                image_gen::set_resource_dir(ag_adapters::agent::runner::without_verbatim(&dir));
             }
             // Processes a previous run of the app left behind (it was killed or crashed) are ended before anything starts.
             if let Ok(data) = app.path().app_data_dir() {

@@ -90,12 +90,14 @@ pub fn claude_code_binary() -> Option<PathBuf> {
 }
 
 fn sdk_runner() -> PathBuf {
-    std::env::var_os("AGENTDECK_CLAUDE_SDK_RUNNER")
+    let runner = std::env::var_os("AGENTDECK_CLAUDE_SDK_RUNNER")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../apps/desktop/src/agent/claude-sdk-runner.mjs")
-        })
+        });
+    // Node's main module must not be a `\\?\` path (see without_verbatim): it fails before the runner starts.
+    super::resolve::without_verbatim(&runner)
 }
 
 fn sdk_args(req: &TurnRequest, mode: &str) -> Vec<String> {
@@ -162,7 +164,7 @@ impl Provider for Claude {
 
     fn candidates(&self) -> Vec<PathBuf> {
         std::env::var_os("AGENTDECK_CLAUDE_SDK_NODE")
-            .map(PathBuf::from)
+            .map(|path| super::resolve::without_verbatim(&PathBuf::from(path)))
             .into_iter()
             .collect()
     }

@@ -78,6 +78,9 @@ fn common_dirs(
             push(std::env::var_os("ASDF_DATA_DIR").map(|path| PathBuf::from(path).join("shims")));
             push(under(local, &["Volta", "bin"]));
             push(under(local, &["Microsoft", "WinGet", "Links"]));
+            // mise's own executable: its shims (`mise\shims\node.exe`) start it, and fail with "mise-shim: failed to
+            // execute mise" when only the shims folder is on PATH.
+            push(under(local, &["Programs", "mise", "bin"]));
             push(std::env::var_os("ProgramFiles").map(|path| PathBuf::from(path).join("nodejs")));
             push(
                 std::env::var_os("ProgramFiles(x86)")
@@ -155,6 +158,20 @@ fn common_dirs(
         }
     }
     dirs
+}
+
+/// The same path without the `\\?\` (verbatim) prefix Windows puts on resolved paths (`canonicalize`, Tauri's
+/// `resource_dir`). Node cannot load a main module from such a path: `node \\?\E:\x\runner.mjs` dies with
+/// "EISDIR: illegal operation on a directory, lstat 'E:'". Any other path comes back unchanged.
+pub fn without_verbatim(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path.to_path_buf(),
+    }
 }
 
 /// Adds the same well-known CLI folders used for resolution to the child process PATH. This matters
@@ -375,6 +392,58 @@ pub fn resolve_binary(provider: &dyn Provider) -> OsString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verbatim_prefixes_are_dropped_and_other_paths_kept() {
+        assert_eq!(
+            without_verbatim(Path::new(r"\\?\E:\WORK\app\claude-agent\runner.mjs")),
+            PathBuf::from(r"E:\WORK\app\claude-agent\runner.mjs")
+        );
+        assert_eq!(
+            without_verbatim(Path::new(r"\\?\UNC\server\share\runner.mjs")),
+            PathBuf::from(r"\\server\share\runner.mjs")
+        );
+        for plain in [
+            r"E:\WORK\runner.mjs",
+            r"\\server\share\x",
+            "/usr/lib/app/runner.mjs",
+            "runner.mjs",
+        ] {
+            assert_eq!(without_verbatim(Path::new(plain)), PathBuf::from(plain));
+        }
+    }
+
+    /// The bug itself: node refuses a `\\?\` main module ("EISDIR ... lstat 'E:'") and accepts the plain spelling.
+    #[cfg(windows)]
+    #[test]
+    fn node_starts_a_main_module_given_without_its_verbatim_prefix() {
+        let Some(node) = find_in(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+            "node",
+            "windows",
+        ) else {
+            return; // no node on this machine: nothing to check
+        };
+        let dir = std::env::temp_dir().join(format!("agentdeck-verbatim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("main.mjs");
+        std::fs::write(&script, "console.log('ok')").unwrap();
+        let verbatim = PathBuf::from(format!(r"\\?\{}", script.display()));
+        let run = |path: &Path| {
+            std::process::Command::new(&node)
+                .arg(path)
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .unwrap_or_default()
+        };
+        assert_ne!(
+            run(&verbatim),
+            "ok",
+            "node is expected to reject the verbatim spelling"
+        );
+        assert_eq!(run(&without_verbatim(&verbatim)), "ok");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn path_lookup_adds_extensions_only_on_windows() {
