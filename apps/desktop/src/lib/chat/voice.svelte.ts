@@ -1,4 +1,3 @@
-import { SvelteMap } from 'svelte/reactivity';
 import { inTauri } from '../app/platform/history';
 import { nextVoicePhase, type VoicePhase } from './voice-state';
 
@@ -284,14 +283,16 @@ class VoiceCapture {
     }
 }
 
-const voices = new SvelteMap<string, VoiceCapture>();
+// Plain object on purpose: voiceOf runs inside a $derived, and writing reactive state there throws state_unsafe_mutation.
+// Each VoiceCapture is itself reactive, so the UI still follows its fields.
+const voices: Record<string, VoiceCapture | undefined> = Object.create(null);
 
 /** Returns the independent voice capture state owned by one chat session. */
 export function voiceOf(sessionId: string): VoiceCapture {
-    let voice = voices.get(sessionId);
+    let voice = voices[sessionId];
     if (!voice) {
         voice = new VoiceCapture();
-        voices.set(sessionId, voice);
+        voices[sessionId] = voice;
     }
     return voice;
 }
