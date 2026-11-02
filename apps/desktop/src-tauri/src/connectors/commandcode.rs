@@ -3,6 +3,7 @@
 //! The `command-code` CLI owns its sign-in (`command-code login` stores the account there).
 //! AgentDeck only asks the CLI whether it is signed in and runs its chat through the CLI; it never reads the token.
 
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -26,14 +27,28 @@ pub(crate) async fn login_status() -> Login {
 /// so it cannot run on the piped stdio the other connectors use.
 pub(crate) async fn sign_in() -> Result<(), String> {
     let program = which("command-code").ok_or("Command Code is not installed")?;
-    let mut login = command(&program);
-    login
-        .arg("login")
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    // `start /WAIT` opens the CLI in its own console window. Handing the CLI our GUI process's stdio
+    // (`Stdio::inherit`, which is empty here) made it exit before it could prompt.
     #[cfg(windows)]
-    login.creation_flags(0x0000_0010); // CREATE_NEW_CONSOLE: the CLI gets a terminal for its prompts
+    let mut login = {
+        use std::os::windows::process::CommandExt;
+        let mut login = command(Path::new("cmd"));
+        login.as_std_mut().raw_arg(format!(
+            "/D /S /C \"start \"\" /WAIT \"{}\" login\"",
+            program.display()
+        ));
+        login
+    };
+    #[cfg(not(windows))]
+    let mut login = {
+        let mut login = command(&program);
+        login.arg("login");
+        login
+    };
+    login
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     let mut child = login
         .spawn()
         .map_err(|error| format!("could not start Command Code login: {error}"))?;

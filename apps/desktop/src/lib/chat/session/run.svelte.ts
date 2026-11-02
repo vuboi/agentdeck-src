@@ -1385,11 +1385,17 @@ export function messagesOf(sessionId: string): Message[] {
     return list;
 }
 
+/** Read-only view of a chat's messages, safe inside `$derived` and templates: it never creates or stores a list
+ *  (`messagesOf` does, and writing state while a derived is computed is an error). */
+export function messagesView(sessionId: string): Message[] {
+    return messagesById.get(sessionId) ?? localMessages[sessionId] ?? [];
+}
+
 /** What the latest user turn still waits for: a permission request, or questions the agent asked. */
 export function pendingInput(
     sessionId: string,
 ): 'permission' | 'question' | null {
-    const list = messagesOf(sessionId);
+    const list = messagesView(sessionId);
     const messages =
         liveReplies[sessionId] && !list.includes(liveReplies[sessionId])
             ? [...list, liveReplies[sessionId]]
@@ -1431,7 +1437,7 @@ export const SKIPPED_REQUIRED =
 
 /** The questions the latest user turn left open (the ones of the newest reply that has any). */
 export function openQuestions(sessionId: string): Question[] {
-    const list = messagesOf(sessionId);
+    const list = messagesView(sessionId);
     for (let index = list.length - 1; index >= 0; index--) {
         const message = list[index];
         if (message.role === 'user') return [];

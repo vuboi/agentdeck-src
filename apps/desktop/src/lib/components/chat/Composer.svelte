@@ -32,7 +32,7 @@
         drafts,
         replies,
         isRunning,
-        messagesOf,
+        messagesView,
         needsUserInput,
         lastChat,
         rememberMixed,
@@ -149,7 +149,7 @@
     const waiting = $derived(queued[sessionId] ?? []);
     const waitingForUser = $derived(needsUserInput(sessionId));
     const contextReply = $derived(
-        [...messagesOf(sessionId)]
+        [...messagesView(sessionId)]
             .reverse()
             .find(
                 (message) =>

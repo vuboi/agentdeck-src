@@ -21,6 +21,10 @@
     } from '@shival99/z-ui-svelte';
     import Logo from '../ui/Logo.svelte';
     import { toast } from '../../app/platform/toast';
+    import {
+        continueInCli,
+        type CliTarget,
+    } from '../../chat/session/cli-export';
     import AgentStack from './AgentStack.svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
     import {
@@ -69,6 +73,7 @@
         hideProject,
         NO_PROJECT,
         prefetchTranscript,
+        conversationForExport,
         renameSession,
         workspace,
         DEFAULT_VIEW,
@@ -627,6 +632,14 @@
         },
     ]);
 
+    const continueInCliItem: ZDropdownMenuItem = {
+        label: 'Continue in CLI',
+        icon: 'lucideTerminal' as ZIconName,
+        iconSize: '12',
+        class: 'text-sm! py-1',
+        onClick: () => menu && void exportToCli(menu.id),
+    };
+
     const sessionItems = $derived<ZDropdownMenuItem[]>([
         {
             label: menu && isPinnedSession(menu.id) ? 'Unpin' : 'Pin',
@@ -654,6 +667,7 @@
             class: 'text-sm! py-1',
             onClick: () => menu && fork(menu.id),
         },
+        ...(menu && canContinueInCli(menu.id) ? [continueInCliItem] : []),
         {
             label: 'Notify when done',
             icon: 'lucideBell' as ZIconName,
@@ -891,6 +905,60 @@
         field.focus();
         field.select();
     };
+
+    /**
+     * Writes the chat as a new session of Claude Code (or Codex, for a Codex chat), then shows the command that resumes it.
+     * Only runs on this click; the chat itself is not changed.
+     */
+    /** Only Claude and Codex chats have a CLI to continue in; Copilot and Antigravity chats live in AgentDeck. */
+    function canContinueInCli(sessionId: string) {
+        const session = workspace.sessions.find(
+            (item) => item.id === sessionId,
+        );
+        return session?.agent === 'claude' || session?.agent === 'codex';
+    }
+
+    async function exportToCli(sessionId: string) {
+        const session = workspace.sessions.find(
+            (item) => item.id === sessionId,
+        );
+        if (!session) return;
+        const target: CliTarget =
+            session.source === 'codex' ? 'codex' : 'claude';
+        const tool = target === 'codex' ? 'Codex' : 'Claude Code';
+        try {
+            const { title, messages } = await conversationForExport(sessionId);
+            const cwd =
+                session.workingDirectory ||
+                workspace.projects.find(
+                    (project) => project.id === session.projectId,
+                )?.path ||
+                '';
+            const result = await continueInCli({
+                chatId: sessionId,
+                target,
+                title,
+                cwd,
+                messages,
+            });
+            await navigator.clipboard.writeText(result.resumeCommand);
+            zModalService.show({
+                zTitle: `Continue in ${tool}`,
+                zContent: `Saved as a new ${tool} session. This chat is unchanged.\n\nResume it in a terminal:\n${result.resumeCommand}\n\nThe command is copied to the clipboard.`,
+                zConfirmStyle: 'dialog',
+                zCancelText: null,
+                zOkText: 'OK',
+            });
+        } catch (error) {
+            zModalService.warning({
+                zTitle: 'Could not continue in CLI',
+                zContent: String(error),
+                zConfirmStyle: 'dialog',
+                zCancelText: null,
+                zOkText: 'OK',
+            });
+        }
+    }
 
     /** Confirmation dialog (z-modal "dialog" style); the OK button stays loading until the files are moved. */
     function askDelete() {
