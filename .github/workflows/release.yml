@@ -100,9 +100,9 @@ jobs:
             \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
             -print0 | while IFS= read -r -d '' file; do
               name=$(basename "$file")
-              [ "$name" = "AgentDeck.app.tar.gz" ] && name="AgentDeck_${{ matrix.arch }}.app.tar.gz"
+              if [ "$name" = "AgentDeck.app.tar.gz" ]; then name="AgentDeck_${{ matrix.arch }}.app.tar.gz"; fi
               cp "$file" "dist/$name"
-              [ -f "$file.sig" ] && cp "$file.sig" "dist/$name.sig"
+              if [ -f "$file.sig" ]; then cp "$file.sig" "dist/$name.sig"; fi
             done
           ls -la dist
 
