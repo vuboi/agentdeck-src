@@ -302,15 +302,15 @@ impl Provider for OpenCode {
     }
     fn args(&self, req: &TurnRequest) -> Vec<String> {
         // `--thinking` puts the reasoning parts in the stream; a model without any simply sends none.
-        // `--standalone` keeps the turn on its own server: the shared background service ignores the config handed
-        // over in the environment (verified: a denied shell still ran) and is the user's own OpenCode session.
-        let mut args = vec![
-            "run".into(),
-            "--standalone".into(),
-            "--format".into(),
-            "json".into(),
-            "--thinking".into(),
-        ];
+        // The turn runs on the chat's own server (`opencode_server.rs`), or with `--standalone` on one of its own: the
+        // shared background service ignores the config handed over in the environment (verified: a denied shell still
+        // ran) and is the user's own OpenCode session.
+        let mut args: Vec<String> = vec!["run".into()];
+        match super::opencode_server::attached() {
+            Some(server) => args.extend(["--server".into(), server.url]),
+            None => args.push("--standalone".into()),
+        }
+        args.extend(["--format".into(), "json".into(), "--thinking".into()]);
         if let Some(model) = &req.model {
             args.extend(["--model".into(), model.clone()]);
         }
@@ -355,7 +355,12 @@ impl Provider for OpenCode {
             let url = super::mcp_url(&bridge, req.owner.as_deref(), req.cwd.as_deref());
             config["mcp"] = serde_json::json!({ "agentdeck": { "type": "remote", "url": url, "enabled": true } });
         }
-        vec![("OPENCODE_CONFIG_CONTENT".into(), config.to_string())]
+        let mut env = vec![("OPENCODE_CONFIG_CONTENT".into(), config.to_string())];
+        // A client on the chat's server signs in with the password the server was started with.
+        if let Some(server) = super::opencode_server::attached() {
+            env.push(("OPENCODE_PASSWORD".into(), server.password));
+        }
+        env
     }
     fn parse_line(&self, line: &str) -> Vec<AgentEvent> {
         let Ok(value) = serde_json::from_str::<Value>(line) else {

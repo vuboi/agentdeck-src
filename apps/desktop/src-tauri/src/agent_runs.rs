@@ -196,7 +196,8 @@ async fn run_turn(
         emit(&tail_app, chat, turn, None, event)
     }));
     let binary = resolve_binary(provider.as_ref());
-    // Claude, Codex and Antigravity keep their CLI open between the chat's turns (see `warm.rs`); OpenCode starts one per turn.
+    // Claude and Codex keep their CLI open between the chat's turns (see `warm.rs`), OpenCode its server
+    // (`opencode_server.rs`); Antigravity starts one per turn.
     // A turn that runs for another one (a side answer, a delegated worker, a step of a flow) is run once, not kept: it
     // would sit idle for twenty minutes and push the processes of the chats people are in out of the pool.
     let warm = keep_open
@@ -236,7 +237,7 @@ pub(crate) fn agent_warm_reset_session(session: String) {
     ag_adapters::agent::warm::reset_chat(&session);
 }
 
-/// Starts a chat's agent CLI while its message is still being typed (Claude, Codex, Antigravity keep it open between
+/// Starts a chat's agent CLI while its message is still being typed (Claude, Codex and OpenCode keep it open between
 /// turns), so the first turn does not wait for the CLI to load. The arguments are the ones `agent_send` will get.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // one parameter per field the frontend sends

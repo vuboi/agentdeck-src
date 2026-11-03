@@ -1,4 +1,4 @@
-//! Drives the REAL Antigravity CLI (`agy`) through the adapter, the way the app does (`drive_warm_turn_with`), and prints
+//! Drives the REAL Antigravity CLI (`agy`) through the adapter, the way the app does (`agent_runs.rs`), and prints
 //! what the app would receive. Needs `agy` installed and signed in; spends a few cheap model calls and takes minutes
 //! (one scenario waits 60 s to see that a kept process survives idling). Never runs by default:
 //!
@@ -13,6 +13,7 @@ use std::time::Duration;
 use ag_adapters::agent::antigravity::Antigravity;
 use ag_adapters::agent::interrupt::{StopHandle, StopToken};
 use ag_adapters::agent::resolve::resolve_binary;
+use ag_adapters::agent::runner::drive_turn;
 use ag_adapters::agent::warm::{drive_warm_turn_with, reset};
 use ag_adapters::agent::{AgentEvent, Provider, TaskStatus, TurnRequest};
 
@@ -52,18 +53,30 @@ async fn turn(req: TurnRequest, stop_after: Option<Duration>) -> Vec<AgentEvent>
     let provider = Antigravity::default();
     let binary = resolve_binary(&provider);
     let (handle, token) = StopHandle::new();
-    let token: StopToken = if stop_after.is_some() {
+    let mut token: StopToken = if stop_after.is_some() {
         token
     } else {
         StopToken::never()
     };
     let events = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&events);
+    // As the app does: a kept process when the provider has one, else a process for this turn that a stop drops.
     let run = async {
-        drive_warm_turn_with(binary, &provider as &dyn Provider, &req, token, |event| {
-            seen.lock().unwrap().push(event)
-        })
-        .await
+        let warm = drive_warm_turn_with(
+            binary.clone(),
+            &provider as &dyn Provider,
+            &req,
+            token.clone(),
+            |event| seen.lock().unwrap().push(event),
+        )
+        .await;
+        if !warm {
+            tokio::select! {
+                () = drive_turn(binary, &provider as &dyn Provider, &req, |event| seen.lock().unwrap().push(event)) => {}
+                () = token.stopped() => {}
+            }
+        }
+        true
     };
     let stopper = async {
         match stop_after {

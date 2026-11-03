@@ -11,6 +11,7 @@ pub mod commandcode;
 pub mod guard;
 pub mod interrupt;
 pub mod opencode;
+mod opencode_server;
 pub mod output;
 pub mod permission;
 pub mod resolve;

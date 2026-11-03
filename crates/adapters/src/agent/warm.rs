@@ -216,6 +216,9 @@ pub fn reset(agent: Option<&str>) {
     drop(gone);
     // A process a tail is reading keeps its sign-in too.
     super::tail::discard(agent);
+    if agent.is_none_or(|agent| agent == "opencode") {
+        super::opencode_server::reset();
+    }
 }
 
 /// Ends the kept process and tail of one chat without disturbing other chats using the same agent.
@@ -234,6 +237,7 @@ pub fn reset_chat(chat: &str) {
     };
     drop(gone);
     super::tail::discard_chat(chat);
+    super::opencode_server::reset_chat(chat);
 }
 
 /// Whether a kept process can take a turn: same settings, still running, and the turn's conversation (a turn that
@@ -332,8 +336,9 @@ pub(super) fn start(
         .envs(env.iter().cloned())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
+    // No `kill_on_drop`: dropping a `Warm` ends the tree (`kill_tree`), which must find the CLI still there to walk
+    // from; ended at once as well, its MCP servers and shells were left running.
     if let Some((key, path)) = augmented_path_env() {
         command.env(key, path);
     }
@@ -354,6 +359,10 @@ pub(super) fn start(
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {
+        if let Some(pid) = child.id() {
+            super::runner::release_pid(pid);
+            kill_tree(pid);
+        }
         return Err(format!("could not talk to {}", provider.binary()));
     };
     let kept = Arc::new(Mutex::new(Vec::new()));
@@ -528,6 +537,9 @@ pub async fn prewarm(binary: OsString, provider: &dyn Provider, req: &TurnReques
     if provider.id() == "codex" {
         return super::codex_server::prewarm(binary, provider, req).await;
     }
+    if provider.id() == "opencode" {
+        return super::opencode_server::prewarm(binary, provider, req).await;
+    }
     let (Some(args), Some(chat)) = (provider.warm_args(req), req.owner.clone()) else {
         return;
     };
@@ -573,6 +585,9 @@ pub async fn drive_warm_turn_with(
 ) -> bool {
     if provider.id() == "codex" {
         return super::codex_server::drive(binary, provider, req, stop, emit).await;
+    }
+    if provider.id() == "opencode" {
+        return super::opencode_server::drive(binary, provider, req, stop, emit).await;
     }
     let (Some(args), Some(chat)) = (provider.warm_args(req), req.owner.clone()) else {
         return false;

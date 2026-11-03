@@ -123,32 +123,42 @@
                 sessionId={activeSession()?.id}
             />
         {:else}
-            <ChatBlock
-                block={segment.block}
-                running={Boolean(message.live) && isRunning(workspace.activeId)}
-                flush={chat.messages.at(-1)?.id !== message.id}
-                agent={message.agent ??
-                    activeSession()?.source ??
-                    activeSession()?.agent}
-                onanswer={(answer) =>
-                    answerPermission(
-                        message.id,
-                        message.blocks.indexOf(segment.block),
-                        answer,
-                    )}
-                onquestions={(text) =>
-                    answerQuestions(workspace.activeId, text)}
-                onrendered={segment.block.kind === 'response'
-                    ? () =>
-                          replyBlockRendered(
-                              workspace.activeId,
-                              message.id,
-                              message.blocks.indexOf(segment.block),
-                          )
-                    : undefined}
-                answered={!message.live && questionMessageId !== message.id}
-                showQuestions={false}
-            />
+            <!-- The first text of a reply rises in as it appears; later streamed text only grows in place. -->
+            <div
+                in:fly={{
+                    y: 6,
+                    duration: segment.block.kind === 'response' ? 260 : 0,
+                    easing: cubicOut,
+                }}
+            >
+                <ChatBlock
+                    block={segment.block}
+                    running={Boolean(message.live) &&
+                        isRunning(workspace.activeId)}
+                    flush={chat.messages.at(-1)?.id !== message.id}
+                    agent={message.agent ??
+                        activeSession()?.source ??
+                        activeSession()?.agent}
+                    onanswer={(answer) =>
+                        answerPermission(
+                            message.id,
+                            message.blocks.indexOf(segment.block),
+                            answer,
+                        )}
+                    onquestions={(text) =>
+                        answerQuestions(workspace.activeId, text)}
+                    onrendered={segment.block.kind === 'response'
+                        ? () =>
+                              replyBlockRendered(
+                                  workspace.activeId,
+                                  message.id,
+                                  message.blocks.indexOf(segment.block),
+                              )
+                        : undefined}
+                    answered={!message.live && questionMessageId !== message.id}
+                    showQuestions={false}
+                />
+            </div>
         {/if}
     {/each}
     <TurnChanges

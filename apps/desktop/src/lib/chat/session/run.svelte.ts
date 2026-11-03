@@ -364,9 +364,14 @@ export function prewarmChat(sessionId: string) {
     if (
         !session ||
         !inTauri() ||
-        !['claude', 'codex', 'antigravity', 'workbuddy', 'copilot'].includes(
-            session.agent,
-        ) ||
+        ![
+            'claude',
+            'codex',
+            'antigravity',
+            'opencode',
+            'workbuddy',
+            'copilot',
+        ].includes(session.agent) ||
         isRunning(session.id)
     )
         return;

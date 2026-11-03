@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { fade, fly } from 'svelte/transition';
+    import { fly, scale } from 'svelte/transition';
+    import { cubicOut } from 'svelte/easing';
     import { ZButton } from '@shival99/z-ui-svelte';
     import { toast } from '../../app/platform/toast';
     import { copyMessage } from '../../chat/content/attachments';
@@ -188,7 +189,7 @@
 {:else}
     {#if words.length > 0}
         <div
-            in:fade={{ duration: 220 }}
+            in:scale={{ start: 0.97, duration: 220, easing: cubicOut }}
             class="flex max-w-[85%] flex-col gap-2 rounded-2xl bg-muted p-3 text-sm {theme.chatLayout ===
             'split'
                 ? 'rounded-br-md'

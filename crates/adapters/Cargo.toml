@@ -14,7 +14,7 @@ rusqlite.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["process", "io-util", "rt", "macros", "time", "sync"] }
+tokio = { workspace = true, features = ["process", "io-util", "rt", "macros", "time", "sync", "net"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

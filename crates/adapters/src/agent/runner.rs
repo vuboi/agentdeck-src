@@ -136,7 +136,7 @@ impl Drop for PidClaim {
     }
 }
 /// Stops the whole process tree of a turn that is dropped before it ends (the user stopped it, or sent an edited
-/// message). `kill_on_drop` ends only the process the app started: on Windows that is the `cmd /C` around a `.cmd`
+/// message). Killing only the process the app started is not enough: on Windows that is the `cmd /C` around a `.cmd`
 /// CLI, and everywhere a CLI started by a wrapper (an npm shim, `node`) keeps its own children. They kept running,
 /// still holding the session, and the next turn resuming that session hung.
 struct TreeGuard(Option<u32>);
@@ -211,8 +211,9 @@ pub async fn drive_turn(
             Stdio::null()
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .stderr(Stdio::piped());
+    // No `kill_on_drop`: a dropped turn is ended by `TreeGuard`, and ending the CLI at once as well left what it started
+    // running (the tree is walked from the CLI's pid after the CLI is already gone).
     if let Some((key, path)) = augmented_path_env() {
         command.env(key, path);
     }

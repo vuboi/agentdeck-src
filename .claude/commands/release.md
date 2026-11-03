@@ -26,10 +26,10 @@ Environment (Windows, Git Bash): run `export PATH="$HOME/.cargo/bin:/c/Program F
 
 6. **Commit the release files only.** Stage them by name: `git add Cargo.toml Cargo.lock apps/desktop/src-tauri/tauri.conf.json docs/release-notes/vX.Y.Z.md`. Never use `git add -A` or `git add .`: the pre-commit hook (Husky) reformats every staged file, so unrelated files would change. Commit with message `chore: release vX.Y.Z`. End the message with the attribution line the session specifies. Do not amend or rewrite existing commits.
 
-7. **Tag and push:**
+7. **Tag and push.** `origin` must be the private source repo `vuboi/agentdeck-src`. Check with `git remote -v` and stop if it points to `vuboi/agentdeck`: that repo is public and release-only, and a push there publishes the source.
     - `git tag -a vX.Y.Z -m "AgentDeck vX.Y.Z"`
     - `git push origin main`
     - `git push origin vX.Y.Z`
-      Pushing the tag starts the `release` workflow, which builds every platform and updates `latest.json`, so installed apps are offered the update when it finishes. Do not push a tag for a version that failed step 5.
+      Pushing the tag starts the `release` workflow in `vuboi/agentdeck-src`. It builds every platform, signs the installers, and publishes them with `latest.json` to the public repo `vuboi/agentdeck` (through the `PUBLIC_RELEASE_TOKEN` secret), so installed apps are offered the update when it finishes. Do not push a tag for a version that failed step 5.
 
-8. **Report.** Run `gh run list --workflow release.yml --limit 1` and give the run ID and status. Report the version, the release notes path, the commit hash, and the tag. Say plainly that the workflow runs on GitHub and has not finished yet.
+8. **Report.** Run `gh run list -R vuboi/agentdeck-src --workflow release.yml --limit 1` and give the run ID and status. Report the version, the release notes path, the commit hash, and the tag. Say plainly that the workflow runs on GitHub and has not finished yet. When it finishes, check `gh release view vX.Y.Z -R vuboi/agentdeck` and report whether `latest.json` is attached.

@@ -25,6 +25,11 @@ const ALLOW_PREFIX: &str = "agy:command(";
 /// The environment variable that carries a turn's rules, so a change of approvals changes the settings key of the process.
 const RULES_ENV: &str = "AGENTDECK_AGY_RULES";
 
+/// Opens every message: Gemini otherwise narrates each step and drifts past the request. `agy` has no system prompt
+/// (`--settings` refuses `system_prompt`, `systemPrompt`, `systemInstruction`, `customInstructions`), so it rides in the
+/// prompt, on every turn, since a resumed conversation does not keep it in force.
+const BREVITY: &str = "Answer briefly and go straight to the result. Do not restate the request or narrate each step you take; report what changed and what is left. Do only what was asked.";
+
 /// The conversation id for the final event, and which tool steps were already announced.
 #[derive(Default)]
 struct Turn {
@@ -230,36 +235,23 @@ impl Provider for Antigravity {
         args
     }
 
-    /// Antigravity has no system prompt flag here, so the app and ask instructions open each new conversation.
+    /// Antigravity has no system prompt flag here, so the app and ask instructions open each new conversation, and the
+    /// brevity rule opens every message.
     fn opening_context(&self, req: &TurnRequest) -> Option<String> {
         let continues = req.resume && req.session_id.is_some();
-        (!continues).then(|| {
+        Some(if continues {
+            BREVITY.to_string()
+        } else {
             format!(
-                "{}{}",
+                "{}{} {BREVITY}",
                 super::codex::APP_CONTEXT,
                 super::claude::ASK_CONTEXT
             )
         })
     }
 
-    /// The same settings with each message read as a JSON line (`--input-format stream-json`, agy 1.1.15+). The prompt
-    /// flag stays, empty and attached (`-p=`), so print mode is on without taking the next flag as its prompt.
-    fn warm_args(&self, req: &TurnRequest) -> Option<Vec<String>> {
-        let mut args = self.args(req);
-        args.splice(
-            0..2,
-            [
-                "--input-format".to_string(),
-                "stream-json".to_string(),
-                "-p=".to_string(),
-            ],
-        );
-        Some(args)
-    }
-
-    fn warm_message(&self, prompt: &str) -> String {
-        serde_json::json!({ "event": "user", "message": { "role": "user", "content": [{ "type": "text", "text": prompt }] } }).to_string()
-    }
+    // No `warm_args`: a kept `agy` (1.4.12, `--input-format stream-json`) sends its `result` 11–15 s after the answer,
+    // so a turn took 9–30 s against 6–7 s for a new process per turn, resumed or not (measured 2026-11-03).
 
     /// The approvals of the turn, as the rules agy's own settings carry. They ride in the environment too: a kept process
     /// is reused only for the same settings key (`warm.rs`), so a new approval must change the key, as Claude's
@@ -931,7 +923,10 @@ mod tests {
         let resumed = Antigravity::default().args(&req(true));
         assert_eq!(after(&resumed, "--conversation"), Some("c1"));
         assert_eq!(after(&resumed, "--output-format"), Some("stream-json"));
-        assert_eq!(after(&resumed, "-p"), Some("hi"));
+        assert_eq!(
+            after(&resumed, "-p"),
+            Some(format!("{BREVITY}\n\nhi").as_str())
+        );
     }
 
     #[test]
@@ -939,9 +934,16 @@ mod tests {
         let fresh = Antigravity::default().args(&req(false));
         let opening = after(&fresh, "-p").unwrap_or_default();
         assert!(opening.contains("```agentdeck-ask"));
-        assert!(opening.ends_with("\n\nhi"));
+        assert!(opening.ends_with(&format!("{BREVITY}\n\nhi")));
         let resumed = Antigravity::default().args(&req(true));
-        assert_eq!(after(&resumed, "-p"), Some("hi"));
+        let next = after(&resumed, "-p").unwrap_or_default();
+        assert!(!next.contains("```agentdeck-ask"));
+        assert_eq!(next, format!("{BREVITY}\n\nhi"));
+    }
+
+    #[test]
+    fn agy_runs_one_process_per_turn() {
+        assert!(Antigravity::default().warm_args(&req(true)).is_none());
     }
 
     #[test]
