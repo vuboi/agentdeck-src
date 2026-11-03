@@ -79,6 +79,7 @@ import {
 } from './events.svelte';
 import { backlog } from './delegate-task.svelte';
 import { mergeTranscripts } from './transcript-merge';
+import { chatMetaOf, ledger, ledgerOn } from '../index/ledger';
 
 // ---------- real history (Claude Code and Codex, read-only) ----------
 export const chat = $state({
@@ -643,6 +644,23 @@ export function rememberMixed(session: SessionItem) {
     };
     mixed[session.id] = saved;
     if (!mixedHydrated) pendingMixed.set(session.id, saved);
+    // Each native session of a chat that has run is bound in the ledger (once per session; a draft has none yet).
+    if (ledgerOn() && !session.draft) {
+        const cwd =
+            workspace.projects.find(
+                (project) => project.id === session.projectId,
+            )?.path ?? null;
+        for (const alias of providerAliasesOf(saved)) {
+            const at = alias.indexOf(':');
+            if (at > 0)
+                ledger.bindNative(
+                    chatMetaOf(session, cwd),
+                    alias.slice(0, at),
+                    alias.slice(at + 1),
+                    session.agentEpoch,
+                );
+        }
+    }
     void mixedReady.then(() => setPref('chat.mixed', mixed));
 }
 
@@ -1130,7 +1148,24 @@ export function openTranscript(
 ): Promise<void> {
     let finish = () => {};
     transcriptDone = new Promise<void>((resolve) => (finish = resolve));
-    return readTranscript(session).finally(finish);
+    return readTranscript(session)
+        .finally(finish)
+        .then(() => shadowReadOf(session));
+}
+
+/**
+ * Shadow read (dual write): once the open chat is shown whole, its turns are counted in the ledger and compared with
+ * the app's. Only a mismatch is logged; nothing is shown from the ledger.
+ */
+function shadowReadOf(session: SessionItem | undefined) {
+    if (!session || !ledgerOn()) return;
+    // `older` counts turns not loaded yet: the count is only whole when none are left.
+    if (session.id !== workspace.activeId || chat.older !== 0 || chat.loading)
+        return;
+    const list = messagesOf(session.id);
+    // A reply still being written is not in the ledger yet.
+    if (list.some((message) => message.live)) return;
+    ledger.shadowRead(session.id, list.length);
 }
 
 async function readTranscript(session: SessionItem | undefined) {
@@ -1287,6 +1322,8 @@ async function forgetSessions(removed: SessionItem[]) {
     workspace.sessions = workspace.sessions.filter(
         (item) => !gone.has(item.id),
     );
+    // The ledger drops the chat too. Its native files are moved by the caller, not by the ledger.
+    for (const id of gone) ledger.remove(id);
     for (const id of gone) {
         delete drafts[id];
         delete draftMentions[id];

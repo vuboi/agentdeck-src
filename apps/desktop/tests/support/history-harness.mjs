@@ -50,6 +50,9 @@ export async function historyWith({
     otherTurns,
     activeId = 'chat',
     prefs = {},
+    ledger,
+    ledgerOn = Boolean(ledger),
+    messages = [],
 } = {}) {
     if (mixed) prefs['chat.mixed'] = mixed;
     if (otherTurns) prefs['chat.otherTurns'] = otherTurns;
@@ -126,10 +129,19 @@ export async function historyWith({
         placementOf: () => undefined,
         rememberParents() {},
         forgetSessionPlacement() {},
+        // The chat ledger (dual write): off unless a test passes a recorder for it.
+        ledgerOn: () => ledgerOn,
+        ledger: ledger ?? {
+            recordTurn() {},
+            bindNative() {},
+            remove() {},
+            shadowRead() {},
+        },
+        chatMetaOf: (session, cwd) => ({ id: session.id, cwd }),
         workspace,
         liveAsks: {},
         liveReplies: {},
-        messagesOf: () => [],
+        messagesOf: () => messages,
         replies: {},
         sessionLanes: {},
         withLive: (_id, list) => list,

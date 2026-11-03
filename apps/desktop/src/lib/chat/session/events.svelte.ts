@@ -29,6 +29,7 @@ import { parseResetAt } from '../recovery/limit-reset';
 import { classifyLimitGate, type LimitGateKind } from '../recovery/limit-gate';
 import { type AgentEvent, listenAgentEvents } from '../agent';
 import { logError } from '../../app/platform/error-log.svelte';
+import { chatMetaOf, ledger } from '../index/ledger';
 import { hangTraceOn, logFlow, markStep } from '../../tasks/flow-log';
 import { activity, trackActivity } from '../runs/activity.svelte';
 import { recordProjectActivity } from '../runs/project-activity.svelte';
@@ -1605,6 +1606,18 @@ function handleEventNow(
                 Boolean(message),
             ),
         );
+        ledger.recordTurn(
+            chatMetaOf(
+                session,
+                workspace.projects.find(
+                    (project) => project.id === session.projectId,
+                )?.path ?? null,
+            ),
+            [ownedRun.ask, reply].filter((message): message is Message =>
+                Boolean(message),
+            ),
+            event.kind === 'done' ? 'done' : 'error',
+        );
         void finishCommandImages(sessionId, reply);
         if (session.path) {
             if (ownedRun.ask) keepOtherTurn(session, ownedRun.ask);
@@ -1890,6 +1903,19 @@ function handleEventNow(
                 [liveAsks[sessionId], reply].filter(
                     (message): message is Message => Boolean(message),
                 ),
+            );
+            // The same turn for the chat ledger: only a turn that ended without error and is not being recovered.
+            ledger.recordTurn(
+                chatMetaOf(
+                    session,
+                    workspace.projects.find(
+                        (project) => project.id === session.projectId,
+                    )?.path ?? null,
+                ),
+                [liveAsks[sessionId], reply].filter(
+                    (message): message is Message => Boolean(message),
+                ),
+                event.kind === 'done' && !recovering ? 'done' : 'error',
             );
         } finally {
             if (update.finished && !recovering) {
