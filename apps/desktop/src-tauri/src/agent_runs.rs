@@ -544,6 +544,19 @@ pub(crate) fn agent_inject(session: String, text: String) -> bool {
     can_inject && ag_adapters::agent::warm::inject(&session, &text)
 }
 
+/// Sends a message to a chat that only waits for background work of its own: its kept process reads it between two
+/// answers (see `tail::deliver`). True only when the CLI took it; the caller then shows the message as a reply of its own.
+/// False: nothing was sent, and the caller queues the message as it does for any other turn. A chat with a running turn
+/// never takes it here.
+#[tauri::command]
+pub(crate) async fn agent_send_while_waiting(session: String, text: String) -> bool {
+    let turn_running = {
+        let running = running();
+        running.keys().any(|(chat, _)| chat == &session)
+    };
+    !turn_running && ag_adapters::agent::tail::deliver(&session, &text).await
+}
+
 /// Stops the run of a chat: its CLI is interrupted and keeps running, warm (see `stop_run`). With `turn`, only that turn is stopped: a stop
 /// that reaches this side after the chat's next message was sent must not kill the new run (it would never answer).
 #[tauri::command]

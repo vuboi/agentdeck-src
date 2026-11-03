@@ -2812,6 +2812,7 @@ pub fn run() {
             agent_runs::agent_stop,
             agent_runs::agent_stop_all,
             agent_runs::agent_inject,
+            agent_runs::agent_send_while_waiting,
             caller::worker_descendant_activity,
             delegate::delegate_reply,
             delegate::delegate_ready,
