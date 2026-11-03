@@ -273,9 +273,10 @@ fn build_augmented_path() -> Option<OsString> {
     std::env::join_paths(full).ok()
 }
 
-/// The PATH list in the order it is searched: the folders that hold a `node` executable, the shared CLI folders,
-/// the system folders (so a Windows `curl.exe` or `find.exe` beats a copy installed by scoop or WinGet), and last
-/// the PATH of the parent process. Repeated folders are dropped; on Windows the comparison ignores case and a
+/// The PATH list in the order it is searched: the system folders first (a global npm package may install a bin named
+/// `cmd`, and `agy` runs its hooks as `cmd /c <hook>` found on PATH; a Windows `curl.exe` or `find.exe` also beats a
+/// copy installed by scoop or WinGet), then the folders that hold a `node` executable, the shared CLI folders, and
+/// last the PATH of the parent process. Repeated folders are dropped; on Windows the comparison ignores case and a
 /// trailing separator. Nothing is cut here: the length limit for child processes is applied by [`child_path`].
 fn assemble_path(
     system: &[PathBuf],
@@ -299,10 +300,10 @@ fn assemble_path(
         }
     };
     let mut seen = std::collections::HashSet::new();
-    node_dirs
+    system
         .iter()
+        .chain(node_dirs)
         .chain(common)
-        .chain(system)
         .chain(current)
         .filter(|dir| !dir.as_os_str().is_empty() && seen.insert(key(dir)))
         .cloned()
@@ -550,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn node_folders_come_first_then_system_then_the_parent_path() {
+    fn system_folders_come_first_then_node_then_the_parent_path() {
         let p = |s: &str| PathBuf::from(s);
         let out = assemble_path(
             &[p(r"C:\Win\System32")],
@@ -562,9 +563,9 @@ mod tests {
         assert_eq!(
             out,
             vec![
+                p(r"C:\Win\System32"),
                 p(r"C:\nodejs"),
                 p(r"C:\scoop\shims"),
-                p(r"C:\Win\System32"),
                 p(r"C:\parent"),
             ]
         );

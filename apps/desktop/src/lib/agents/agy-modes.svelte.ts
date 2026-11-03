@@ -6,31 +6,47 @@ import type { Permission } from '../chat/sessions.svelte';
 // Rust (`agy_modes`) finds out once per agy version; the picker greys out what is not there.
 
 /** The picker's setting and the `--mode` it becomes. The others (ask, YOLO) are not modes of agy. */
-const AGY_MODE: Partial<Record<Permission, string>> = { auto: 'auto', edits: 'accept-edits', plan: 'plan' };
+const AGY_MODE: Partial<Record<Permission, string>> = {
+    auto: 'auto',
+    edits: 'accept-edits',
+    plan: 'plan',
+};
 
-export const agyModes = $state({ loaded: false, loading: false, unavailable: [] as string[] });
+export const agyModes = $state({
+    loaded: false,
+    loading: false,
+    unavailable: [] as string[],
+});
 
 /** Whether Antigravity cannot run `permission` on this account. False until it is known. */
 export const agyBlocks = (permission: Permission) => {
-  const mode = AGY_MODE[permission];
-  return Boolean(mode && agyModes.unavailable.includes(mode));
+    const mode = AGY_MODE[permission];
+    return Boolean(mode && agyModes.unavailable.includes(mode));
 };
 
-export async function loadAgyModes(force = false) {
-  if (!inTauri() || (agyModes.loaded && !force) || agyModes.loading) return;
-  if (force) {
-    agyModes.loaded = false;
-    agyModes.unavailable = [];
-  }
-  agyModes.loading = true;
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const found = await invoke<{ unavailable: string[] }>('agy_modes', { force });
-    agyModes.unavailable = found.unavailable;
-    agyModes.loaded = true;
-  } catch {
-    // Unknown: nothing is greyed out.
-  } finally {
-    agyModes.loading = false;
-  }
+/** The account switch (`accountEpoch.agy`) the modes were last asked again for. */
+let askedEpoch = 0;
+
+/** Asks agy again only once per account switch: each ask starts three agy turns (with their hooks). */
+export async function loadAgyModes(accountEpoch = 0) {
+    const force = accountEpoch > askedEpoch;
+    if (!inTauri() || (agyModes.loaded && !force) || agyModes.loading) return;
+    askedEpoch = Math.max(askedEpoch, accountEpoch);
+    if (force) {
+        agyModes.loaded = false;
+        agyModes.unavailable = [];
+    }
+    agyModes.loading = true;
+    try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const found = await invoke<{ unavailable: string[] }>('agy_modes', {
+            force,
+        });
+        agyModes.unavailable = found.unavailable;
+        agyModes.loaded = true;
+    } catch {
+        // Unknown: nothing is greyed out.
+    } finally {
+        agyModes.loading = false;
+    }
 }

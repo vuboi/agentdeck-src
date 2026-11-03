@@ -387,10 +387,7 @@
     // Antigravity's modes depend on the account. Find out which ones this account has, and never leave the chat on one
     // it lacks (agy would ignore it and ask for every command): fall back to asking, the one setting that always exists.
     $effect(() => {
-        if (agent === 'antigravity') {
-            const switched = (accountEpoch.agy ?? 0) > 0;
-            void loadAgyModes(switched);
-        }
+        if (agent === 'antigravity') void loadAgyModes(accountEpoch.agy ?? 0);
     });
     $effect(() => {
         if (agent === 'antigravity' && agyModes.loaded && agyBlocks(permission))
