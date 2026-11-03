@@ -4,6 +4,10 @@
     import type { ChatWork } from '../../chat/runs/chat-work';
     import { chatWork } from '../../chat/session/work.svelte';
     import { modelLabel, modelSources } from '../../agents/models.svelte';
+    import {
+        providerOfSubagent,
+        subagentTypeOf,
+    } from '../../chat/content/subagent-provider';
     import BackgroundTasks from './BackgroundTasks.svelte';
 
     // The provider's own sub agents and background commands, listed exactly like the Work tray: one design for both.
@@ -37,6 +41,20 @@
             isAgentCall && !label.includes(':')
                 ? [label, argOf(item.command)].filter(Boolean).join(': ')
                 : label;
+        // A plugin's sub agent (`codex:codex-rescue`) runs on that provider, whichever agent the chat is: its logo is the
+        // provider's and the row says it runs via the chat's agent. Its type stays on the second line.
+        const type = isAgentCall
+            ? subagentTypeOf(argOf(item.command))
+            : undefined;
+        const subagent = providerOfSubagent(type);
+        if (type && subagent && subagent !== agent)
+            return {
+                agent: subagent,
+                model: undefined,
+                via: agent,
+                name: type,
+                task: label.includes(type) ? label : type,
+            };
         // A sub-agent call names the model it was given in its input (see tool_model).
         if (item.model)
             return {
@@ -86,8 +104,9 @@
                 title: info.task || task.summary || item.command,
                 state,
                 // A model-labelled task names its provider; a plain command shows as "Command".
-                agent: info.model ? info.agent : undefined,
+                agent: info.model || info.via ? info.agent : undefined,
                 model: info.model ?? null,
+                via: info.via,
                 kind: toolOf(item.command) === 'Bash' ? 'command' : 'agent',
                 activityKey: live?.activityKey,
                 canStop:
