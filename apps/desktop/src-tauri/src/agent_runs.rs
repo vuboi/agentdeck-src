@@ -48,6 +48,8 @@ struct AgentEnvelope {
 
 /// The run in progress of one chat: which turn it is, so a stop meant for an older turn never ends a newer one.
 struct Run {
+    /// The agent (connector id) the run talks to, so an update of its CLI can wait for it.
+    agent: String,
     handle: tauri::async_runtime::JoinHandle<()>,
     response: ChatResponseCapabilities,
     /// How to ask the run to stop gracefully (an interrupt, so its warm CLI survives). `None` for a run that cannot
@@ -100,6 +102,7 @@ fn running() -> std::sync::MutexGuard<'static, HashMap<(String, String), Run>> {
 fn track(
     session: String,
     turn: String,
+    agent: &str,
     handle: tauri::async_runtime::JoinHandle<()>,
     stop: Option<StopHandle>,
     response: ChatResponseCapabilities,
@@ -117,6 +120,7 @@ fn track(
     if let Some(previous) = running.insert(
         key,
         Run {
+            agent: agent.to_owned(),
             handle,
             stop,
             response,
@@ -124,6 +128,11 @@ fn track(
     ) {
         stop_run(previous);
     }
+}
+
+/// Whether a chat turn is running on this agent's CLI right now.
+pub(crate) fn agent_busy(agent: &str) -> bool {
+    running().values().any(|run| run.agent == agent)
 }
 
 /// A run that ended on its own leaves the table, unless a newer turn of the chat already took its place.
@@ -345,7 +354,7 @@ pub(crate) async fn agent_send(
             noted.finish("finished");
             forget(&chat, &this_turn);
         });
-        track(session, turn, handle, Some(stop), response);
+        track(session, turn, &agent, handle, Some(stop), response);
         return Ok(());
     }
     if agent == "opencode" {
@@ -383,7 +392,7 @@ pub(crate) async fn agent_send(
             noted.finish("finished");
             forget(&chat, &this_turn);
         });
-        track(session, turn, handle, Some(stop), response);
+        track(session, turn, &agent, handle, Some(stop), response);
         return Ok(());
     }
     let provider = provider_for(&agent)?;
@@ -419,7 +428,7 @@ pub(crate) async fn agent_send(
         keep_open.unwrap_or(true),
         token,
     ));
-    track(session, turn, handle, Some(stop), response);
+    track(session, turn, &agent, handle, Some(stop), response);
     Ok(())
 }
 
@@ -477,7 +486,7 @@ pub(crate) async fn custom_send(
         noted.finish("finished");
         forget(&chat, &this_turn);
     });
-    track(session, turn, handle, None, response);
+    track(session, turn, "custom", handle, None, response);
     Ok(())
 }
 

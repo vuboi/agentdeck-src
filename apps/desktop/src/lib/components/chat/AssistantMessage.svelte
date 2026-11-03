@@ -34,6 +34,10 @@
     import MessageFooter from './MessageFooter.svelte';
     import ReplyHeader from './ReplyHeader.svelte';
     import { afterSteps, spokenRun } from './chat-helpers';
+    import { isWriting, liveLine } from '../../chat/runs/live-line.svelte';
+    import { untrack } from 'svelte';
+    import { ticker } from '../../app/platform/clock.svelte';
+    import { LOADER } from '../../app/platform/loaders';
     import type { Message } from '../../chat/mock';
 
     /** `index` is the message's place in chat.messages; `questionMessageId` the reply the open question card belongs to. */
@@ -73,6 +77,52 @@
     const typing = $derived(
         !showLive && replyRendering(workspace.activeId, message.id),
     );
+    // Some providers (Codex) keep the text block open while they wait for the next step, so "streaming" alone does not say
+    // text is coming in. Text that got no new characters for TEXT_IDLE_S seconds counts as done.
+    const TEXT_IDLE_S = 2;
+    const textLength = $derived(
+        message.blocks.reduce(
+            (sum, block) =>
+                block.kind === 'response' ? sum + block.text.length : sum,
+            0,
+        ),
+    );
+    let textAt = $state(0);
+    $effect(() => {
+        void textLength;
+        textAt = untrack(() => ticker.sec);
+    });
+    const textIdle = $derived(ticker.sec - textAt >= TEXT_IDLE_S);
+    // The reply's one live line. None while text is being written: the text is its own progress, as in Claude. Once the
+    // text stops, the line says the agent is thinking about what comes next.
+    const line = $derived.by(() => {
+        if (!showLive) return null;
+        const now = liveLine(message);
+        if (!isWriting(now)) return now;
+        return textIdle
+            ? { label: 'Thinking', spinner: LOADER.thinking }
+            : null;
+    });
+    // The newest group carries the line when nothing but text being written comes after it, so the line stays above
+    // that text; its running step and the line take turns in the group's header.
+    const liveGroup = $derived.by(() => {
+        if (!line) return -1;
+        const last = parts.findLastIndex((part) => part.kind === 'commands');
+        if (last === -1) return -1;
+        const tail = parts.slice(last + 1);
+        return tail.every(
+            (part) =>
+                part.kind === 'block' &&
+                (part.block.kind === 'loading' ||
+                    (part.block.kind === 'response' &&
+                        part.block.streaming &&
+                        !textIdle)),
+        )
+            ? last
+            : -1;
+    });
+    // Otherwise the line has its own row in the slot under the reply.
+    const slotLine = $derived(liveGroup === -1 ? line : null);
 </script>
 
 {#if !quiet && !grouped}
@@ -103,6 +153,7 @@
                                     part.kind === 'block' &&
                                     part.block.kind !== 'loading',
                             )}
+                    status={position === liveGroup ? line : null}
                     startedAt={message.startedAt}
                     stateKey="{workspace.activeId}:{message.id}:{position}"
                 />
@@ -187,14 +238,18 @@
 {#if showLive || ((message.blocks.length > 0 || message.stoppedAfter !== undefined) && !quiet)}
     <div class="relative h-[30px] w-full shrink-0">
         {#if showLive}
-            <!-- Before any content, match the first response line's gap and line height below the agent header. -->
-            <div
-                class="absolute inset-x-0 flex items-center {parts.length
-                    ? 'bottom-0 h-5'
-                    : 'top-0 [&_[role=status]]:leading-relaxed'}"
-            >
-                <LiveStatus {message} />
-            </div>
+            <!-- The live line sits where the next group will appear: right under the header before any content, one
+               gap (gap-2) under the last text after it. It has the group header's height, so the group replaces it
+               in place. While a group carries the line, or text is being written, the slot stays empty. -->
+            {#if slotLine}
+                <div
+                    class="absolute inset-x-0 {parts.length
+                        ? 'top-2'
+                        : 'top-0'}"
+                >
+                    <LiveStatus {message} line={slotLine} />
+                </div>
+            {/if}
         {:else if typing}
             <!-- Nothing yet: the slot keeps its height. -->
         {:else}

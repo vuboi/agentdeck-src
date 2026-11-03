@@ -821,6 +821,16 @@ pub async fn connectors_latest_versions() -> Vec<LatestVersion> {
     rows
 }
 
+/// Updates a CLI in the background. Skipped (`Ok(false)`) while a chat turn runs on it, so an update never ends a turn.
+#[tauri::command]
+pub async fn connector_update_idle(app: AppHandle, id: String) -> Result<bool, String> {
+    if crate::agent_runs::agent_busy(&id) {
+        return Ok(false);
+    }
+    connector_install(app, id).await?;
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Install and sign in
 

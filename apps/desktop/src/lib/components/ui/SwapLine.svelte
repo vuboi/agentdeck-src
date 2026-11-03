@@ -31,6 +31,21 @@
     let shownAt = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let width = $state(0);
+    // offsetWidth rounds down: a line 65.45px wide measured as 65 cut its last letter. The exact width is rounded up.
+    const measure = (node: HTMLElement) => {
+        const observer = new ResizeObserver(() => {
+            width = Math.ceil(node.getBoundingClientRect().width);
+        });
+        observer.observe(node);
+        return () => observer.disconnect();
+    };
+    // A longer line takes its full width at once, so its text is never cut while the width eases; only a shorter one eases.
+    let rising = $state(false);
+    let lastWidth = 0;
+    $effect.pre(() => {
+        rising = width > lastWidth;
+        lastWidth = width;
+    });
 
     const show = (line: string) => {
         shown = line;
@@ -57,12 +72,13 @@
     class="swap-line relative inline-grid min-w-0 max-w-full overflow-hidden align-middle"
     style:width={width ? `${width}px` : undefined}
     style:transition-duration="{ms(260)}ms"
+    style:transition-property={rising ? 'none' : 'width'}
 >
     <!-- Measures the line that is shown, for the width the row eases to. -->
     <span
-        class="pointer-events-none invisible absolute left-0 top-0 whitespace-nowrap {className}"
+        class="pointer-events-none invisible absolute left-0 top-0 w-max whitespace-nowrap {className}"
         aria-hidden="true"
-        bind:offsetWidth={width}>{shown}</span
+        {@attach measure}>{shown}</span
     >
     <!-- Keyed on the shown line only. A shimmer change alone (the title goes from the summary to a running step, or
          back) swaps the inner text inside the same slot without replaying the slide-in of the line. -->

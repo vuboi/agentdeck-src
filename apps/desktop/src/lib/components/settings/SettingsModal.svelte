@@ -8,6 +8,7 @@
     import { getPref } from '../../app/platform/prefs';
     import {
         consumeCodexResetCredit,
+        pendingUpdates,
         refreshConnector,
         scanLocal,
         settings,
@@ -223,6 +224,12 @@
                             <span
                                 class="absolute top-2 right-2 size-2 rounded-full bg-destructive"
                                 aria-label="{active.length} warnings"
+                            ></span>
+                        {/if}
+                        {#if item.id === 'connectors' && pendingUpdates().length > 0}
+                            <span
+                                class="absolute top-2 right-2 size-2 rounded-full bg-primary"
+                                aria-label="{pendingUpdates().length} updates"
                             ></span>
                         {/if}
                     </button>

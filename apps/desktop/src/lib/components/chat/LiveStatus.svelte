@@ -1,102 +1,40 @@
 <script lang="ts">
-    import { ZShimmerText } from '@shival99/z-ui-svelte';
     import ActivityIndicator from '../ui/ActivityIndicator.svelte';
-    import StatusRoller from '../ui/StatusRoller.svelte';
-    import { LOADER, LOADER_SIZE } from '../../app/platform/loaders';
+    import SwapLine from '../ui/SwapLine.svelte';
+    import { LOADER_SIZE } from '../../app/platform/loaders';
     import { ticker } from '../../app/platform/clock.svelte';
-    import {
-        backgroundTaskName,
-        elapsed,
-        liveState,
-        waitingLabel,
-    } from '../../chat/content/blocks';
-    import { activity } from '../../chat/runs/activity.svelte';
-    import { workspace } from '../../chat/sessions.svelte';
-    import { agentDisplayName } from '../../agents/provider-registry';
-    import { modelLabel } from '../../agents/models.svelte';
+    import { elapsed } from '../../chat/content/blocks';
+    import type { LiveLine } from '../../chat/runs/live-line.svelte';
     import type { Message } from '../../chat/mock';
 
-    // "Thinking 24s": what the agent is doing, and how long it has taken.
-    let { message }: { message: Message } = $props();
+    // "Thinking... 24s": what the agent is doing, and how long it has taken. Shown only while the reply has no step group
+    // to carry it (before the first event, or after text that is done); a group's header carries it otherwise.
+    let { message, line }: { message: Message; line: LiveLine } = $props();
 
-    // The agent and its model, as the cards and pickers name them: "Codex · GPT 5.6".
-    const who = $derived(
-        message.agent
-            ? [
-                  agentDisplayName(message.agent, message.model),
-                  modelLabel(message.model) || message.model,
-              ]
-                  .filter(Boolean)
-                  .join(' · ')
-            : 'agent',
-    );
-
-    // Before the first event a task another agent handed over, or pictures read ahead, say who they went to. A message the
-    // user sent to the main agent shows its normal state ("Thinking") like any other turn.
-    const placeholder = $derived(
-        message.dispatching &&
-            (message.handedOff || Boolean(message.dispatchingImages)),
-    );
-    // The provider's background tasks still running in this chat (a sub agent, a shell): while the reply only waits for
-    // them, the line says so instead of "Thinking". Read from the activity log only.
-    const open = $derived(
-        activity
-            .filter(
-                (item) =>
-                    item.sessionId === workspace.activeId &&
-                    item.background &&
-                    (item.status === 'running' || item.status === 'background'),
-            )
-            .map((item) => ({ name: backgroundTaskName(item) })),
-    );
-    const waiting = $derived(waitingLabel(message.blocks, open));
-    const live = $derived(
-        placeholder
-            ? {
-                  label: message.dispatchingImages
-                      ? `Waiting to extract info from ${message.dispatchingImages.count === 1 ? 'image' : 'images'} by ${message.dispatchingImages.reader}`
-                      : `Sending task to ${who}`,
-                  spinner: LOADER.thinking,
-              }
-            : waiting !== null
-              ? { label: waiting, spinner: LOADER.background }
-              : liveState(message.blocks),
-    );
     const seconds = $derived(
         elapsed(ticker.sec - (message.startedAt ?? ticker.sec)),
     );
-
-    // The label changes in quick bursts (a command runs, then the reasoning starts again): a new label is only shown once
-    // it has stayed for a moment, so the text does not flip back and forth.
-    let shown = $state('');
-    $effect(() => {
-        const next = live.label;
-        if (!shown) {
-            shown = next;
-            return;
-        }
-        const timer = setTimeout(() => (shown = next), 400);
-        return () => clearTimeout(timer);
-    });
 </script>
 
+<!-- Same height and gaps as a step group's header (h-6, gap-2), so the line and the group that replaces it line up. -->
 <div
-    class="flex items-center gap-2 text-sm text-muted-foreground"
+    class="flex h-6 items-center gap-2 text-sm text-muted-foreground"
     role="status"
     aria-live="off"
 >
-    {#key live.spinner}
-        <ActivityIndicator
-            spinner={live.spinner}
-            size={LOADER_SIZE}
-            color="primary"
-        />
-    {/key}
-    {#if placeholder}
-        <ZShimmerText class="font-medium" zText={live.label} />
-    {:else}
-        <StatusRoller current={shown} />
-    {/if}
+    <span class="grid size-3.5 shrink-0 place-items-center">
+        {#key line.spinner}
+            <ActivityIndicator
+                spinner={line.spinner}
+                size={LOADER_SIZE}
+                color="primary"
+            />
+        {/key}
+    </span>
+    <SwapLine text={line.label} shimmer hold={900} /><span
+        class="loading-dots -ml-1.5 inline-flex"
+        aria-hidden="true"><span>.</span><span>.</span><span>.</span></span
+    >
     <!-- A fixed box for the seconds: their width changes with each tick, the box does not, so the text does not shift. -->
     <span class="inline-block min-w-[6ch] text-left tabular-nums"
         >{seconds}</span

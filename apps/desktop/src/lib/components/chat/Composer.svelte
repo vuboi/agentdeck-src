@@ -1299,13 +1299,13 @@
                 zSize="sm"
                 class="relative size-7! shrink-0 rounded-full p-0! {contextOpen
                     ? 'bg-primary/15! text-primary!'
-                    : `${contextTone} hover:bg-accent/50`}"
+                    : `${contextTone} bg-accent/30 hover:bg-accent/50`}"
                 aria-label="Show context usage"
                 aria-expanded={contextOpen}
                 onclick={() => (contextOpen = !contextOpen)}
             >
                 <svg
-                    class="size-3.5 shrink-0 -rotate-90"
+                    class="size-4 shrink-0 -rotate-90"
                     viewBox="0 0 20 20"
                     fill="none"
                     aria-hidden="true"
@@ -1316,14 +1316,14 @@
                         r="7.5"
                         stroke="currentColor"
                         stroke-opacity="0.18"
-                        stroke-width="2"
+                        stroke-width="2.5"
                     />
                     <circle
                         cx="10"
                         cy="10"
                         r="7.5"
                         stroke="currentColor"
-                        stroke-width="2"
+                        stroke-width="2.5"
                         stroke-linecap="round"
                         stroke-dasharray="50.27"
                         stroke-dashoffset={50.27 -
@@ -1435,7 +1435,7 @@
                     ? 'w-fit! bg-muted/80 px-2.5! text-foreground hover:bg-muted ring-1 ring-border/50'
                     : voice.phase === 'transcribing'
                       ? 'size-7! p-0! cursor-wait text-muted-foreground bg-muted/80 ring-1 ring-border/50'
-                      : 'size-7! p-0! text-muted-foreground hover:bg-accent/50'}"
+                      : 'size-7! p-0! text-muted-foreground bg-accent/30 hover:bg-accent/50'}"
                 aria-label={voice.phase === 'recording'
                     ? 'Stop dictation'
                     : voice.phase === 'transcribing'

@@ -35,6 +35,7 @@
         login,
         logoutNativeConnector,
         newerVersion,
+        pendingUpdates,
         refreshAccounts,
         refreshAccount,
         refreshAgyAccount,
@@ -235,7 +236,9 @@
             value: card.id,
             label: TAB_NAME[card.id] ?? card.label,
             iconTemplate: tabIcon,
-            badge: accountCount(card) || undefined,
+            badge: pendingUpdates().includes(card.id)
+                ? 'Update'
+                : accountCount(card) || undefined,
         })),
     );
 

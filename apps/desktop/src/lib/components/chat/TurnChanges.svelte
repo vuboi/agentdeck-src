@@ -139,7 +139,7 @@
                                     openProjectFile(
                                         file.change.path,
                                         projectRoot,
-                                        'file',
+                                        'changes',
                                     )}>{label}</button
                             >
                             <button

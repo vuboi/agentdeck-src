@@ -2640,6 +2640,7 @@ pub fn run() {
             connectors::connectors_detect,
             connectors::connectors_latest_versions,
             connectors::connector_install,
+            connectors::connector_update_idle,
             connectors::connector_login,
             connectors::connector_login_cancel,
             connectors::accounts_list,

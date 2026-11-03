@@ -8,13 +8,13 @@ import { fileRootOf, resolveInProject } from './paths';
 export type ViewerTab = Extract<ContentTab, { kind: 'file' }>;
 
 export const viewer = $state({
-  active: '' as string,
-  tabs: [] as ViewerTab[],
-  /** The pane beside the open file: the project tree, or the files git sees changed. */
-  // Closed by default: the file has the whole pane. The Files / Changes panel opens from its button.
-  side: { open: false, mode: 'files' as 'files' | 'changes', width: 240 },
-  /** Counts the opens, the same file again included: a narrow Files tool shows the file each time. */
-  opened: 0,
+    active: '' as string,
+    tabs: [] as ViewerTab[],
+    /** The pane beside the open file: the project tree, or the files git sees changed. */
+    // Closed by default: the file has the whole pane. The Files / Changes panel opens from its button.
+    side: { open: false, mode: 'files' as 'files' | 'changes', width: 240 },
+    /** Counts the opens, the same file again included: a narrow Files tool shows the file each time. */
+    opened: 0,
 });
 
 /** Ids differ from the content tabs' (the path): the same file open in both keeps two separate unsaved drafts. */
@@ -22,66 +22,94 @@ const viewerId = (path: string) => `viewer:${path}`;
 
 // Open tabs survive a reload. Restored once, then saved on every change (unsaved edits are never saved).
 let hydrated = false;
-getPref<{ active: string; tabs: ViewerTab[]; side?: typeof viewer.side }>('viewer.tabs').then((saved) => {
-  if (saved) {
-    viewer.tabs = (saved.tabs ?? []).map((tab) => ({ ...tab, dirty: undefined }));
-    viewer.active = saved.active ?? '';
-    // The panel starts closed each time, whatever it was when the app closed; its width and mode are kept.
-    if (saved.side) viewer.side = { ...viewer.side, ...saved.side, open: false };
-  }
-  hydrated = true;
+getPref<{ active: string; tabs: ViewerTab[]; side?: typeof viewer.side }>(
+    'viewer.tabs',
+).then((saved) => {
+    if (saved) {
+        viewer.tabs = (saved.tabs ?? []).map((tab) => ({
+            ...tab,
+            dirty: undefined,
+        }));
+        viewer.active = saved.active ?? '';
+        // The panel starts closed each time, whatever it was when the app closed; its width and mode are kept.
+        if (saved.side)
+            viewer.side = { ...viewer.side, ...saved.side, open: false };
+    }
+    hydrated = true;
 });
 $effect.root(() => {
-  $effect(() => {
-    const snapshot = { active: viewer.active, tabs: viewer.tabs.map((tab) => ({ ...tab, dirty: undefined })), side: { ...viewer.side } };
-    if (hydrated) setPref('viewer.tabs', snapshot);
-  });
+    $effect(() => {
+        const snapshot = {
+            active: viewer.active,
+            tabs: viewer.tabs.map((tab) => ({ ...tab, dirty: undefined })),
+            side: { ...viewer.side },
+        };
+        if (hydrated) setPref('viewer.tabs', snapshot);
+    });
 });
 
 /** Opens (or focuses) a file in the Files tool. `root` is the folder the file must stay inside. */
-export function openInViewer(path: string, root: string, view?: 'file' | 'changes', options?: { revealPanel?: boolean }) {
-  const id = viewerId(path);
-  const open = viewer.tabs.find((tab) => tab.id === id);
-  if (!open) viewer.tabs.push({ id, kind: 'file', name: path.split(/[\\/]/).pop() ?? path, path, root, view });
-  else if (view) open.view = view;
-  viewer.active = id;
-  viewer.opened++;
-  // A file opened as its changes (the diff) shows the side panel from the start, so the list it came from is there.
-  // A plain file leaves the panel closed until the user opens it.
-  if (view === 'changes') viewer.side.open = true;
-  // Opening a file from chat should give the editor the whole workspace. Keep Explore selected so a later manual
-  // panel reveal shows this file; reveal the panel only for an explicit side-panel action.
-  layout.activeTool = 'Explore';
-  if (options?.revealPanel) setToolsOpen(true);
+export function openInViewer(
+    path: string,
+    root: string,
+    view?: 'file' | 'changes',
+    options?: { revealPanel?: boolean },
+) {
+    const id = viewerId(path);
+    const open = viewer.tabs.find((tab) => tab.id === id);
+    if (!open)
+        viewer.tabs.push({
+            id,
+            kind: 'file',
+            name: path.split(/[\\/]/).pop() ?? path,
+            path,
+            root,
+            view,
+        });
+    else if (view) open.view = view;
+    viewer.active = id;
+    viewer.opened++;
+    // Opening a file from chat should give the editor the whole workspace. Keep Explore selected so a later manual
+    // panel reveal shows this file; reveal the panel only for an explicit side-panel action.
+    layout.activeTool = 'Explore';
+    if (options?.revealPanel) setToolsOpen(true);
 }
 
 /**
  * Opens a file named by a path of any kind (full, or relative to the chat's project folder) in the Files tool. The folder
  * it is read from is the project when the file is inside it, else the file's own folder. Use this, not a hand-built path.
  */
-export function openProjectFile(path: string, projectRoot: string, view?: 'file' | 'changes', options?: { revealPanel?: boolean }) {
-  const full = resolveInProject(path, projectRoot);
-  openInViewer(full, fileRootOf(full, projectRoot), view, options);
+export function openProjectFile(
+    path: string,
+    projectRoot: string,
+    view?: 'file' | 'changes',
+    options?: { revealPanel?: boolean },
+) {
+    const full = resolveInProject(path, projectRoot);
+    openInViewer(full, fileRootOf(full, projectRoot), view, options);
 }
 
-export const isViewerTab = (id: string) => viewer.tabs.some((tab) => tab.id === id);
+export const isViewerTab = (id: string) =>
+    viewer.tabs.some((tab) => tab.id === id);
 
 export function closeViewerTab(id: string) {
-  const index = viewer.tabs.findIndex((tab) => tab.id === id);
-  if (index === -1 || !confirmDiscard([viewer.tabs[index]])) return;
-  viewer.tabs.splice(index, 1);
-  if (viewer.active === id) viewer.active = viewer.tabs[Math.max(0, index - 1)]?.id ?? '';
+    const index = viewer.tabs.findIndex((tab) => tab.id === id);
+    if (index === -1 || !confirmDiscard([viewer.tabs[index]])) return;
+    viewer.tabs.splice(index, 1);
+    if (viewer.active === id)
+        viewer.active = viewer.tabs[Math.max(0, index - 1)]?.id ?? '';
 }
 
 export function closeOtherViewerTabs(id: string) {
-  const keep = viewer.tabs.find((tab) => tab.id === id);
-  if (!keep || !confirmDiscard(viewer.tabs.filter((tab) => tab.id !== id))) return;
-  viewer.tabs.splice(0, viewer.tabs.length, keep);
-  viewer.active = id;
+    const keep = viewer.tabs.find((tab) => tab.id === id);
+    if (!keep || !confirmDiscard(viewer.tabs.filter((tab) => tab.id !== id)))
+        return;
+    viewer.tabs.splice(0, viewer.tabs.length, keep);
+    viewer.active = id;
 }
 
 export function closeAllViewerTabs() {
-  if (!confirmDiscard(viewer.tabs)) return;
-  viewer.tabs.splice(0, viewer.tabs.length);
-  viewer.active = '';
+    if (!confirmDiscard(viewer.tabs)) return;
+    viewer.tabs.splice(0, viewer.tabs.length);
+    viewer.active = '';
 }

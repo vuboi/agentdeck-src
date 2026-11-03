@@ -713,7 +713,38 @@ const LATEST_TTL_MS = 60 * 60_000;
 let latestCheckedAt = 0;
 let latestInFlight: Promise<void> | undefined;
 
-/** Silently asks npm for the newest CLI and SDK versions. No busy label and no error: a failed check is simply tried again later. */
+/** The CLIs AgentDeck keeps up to date: connector id, the tool id they are detected as, and a name for the busy label. */
+const AUTO_UPDATE = [
+    { id: 'claude', tool: 'claude', label: 'Claude Code' },
+    { id: 'codex', tool: 'codex', label: 'Codex' },
+    { id: 'opencode', tool: 'opencode', label: 'OpenCode' },
+    { id: 'workbuddy', tool: 'codebuddy', label: 'WorkBuddy' },
+] as const;
+
+/** The connectors whose CLI is older than its newest npm release: the badge shows them until they are updated. */
+export function pendingUpdates(): string[] {
+    return AUTO_UPDATE.filter(({ id, tool: toolId }) =>
+        newerVersion(connectors.latest[id], tool(toolId)?.version),
+    ).map(({ id }) => id);
+}
+
+/** Updates the outdated CLIs one by one, silently. A CLI with a chat turn running stays pending until a later check. */
+async function updateOutdated() {
+    for (const { id, tool: toolId, label } of AUTO_UPDATE) {
+        if (!newerVersion(connectors.latest[id], tool(toolId)?.version))
+            continue;
+        if (connectors.busy[`install:${id}`] || connectors.busy[`login:${id}`])
+            continue;
+        await task(`install:${id}`, `Updating ${label}`, async () => {
+            const updated = await call<boolean>('connector_update_idle', {
+                id,
+            });
+            if (updated) await refreshDetect();
+        });
+    }
+}
+
+/** Silently asks npm for the newest CLI and SDK versions, then updates the CLIs that are behind. No busy label and no error on the check: a failed check is simply tried again later. */
 export function checkLatestVersions(force = false): Promise<void> {
     if (!inTauri()) return Promise.resolve();
     if (!force && Date.now() - latestCheckedAt < LATEST_TTL_MS)
@@ -731,6 +762,7 @@ export function checkLatestVersions(force = false): Promise<void> {
             latestCheckedAt = Date.now();
             latestInFlight = undefined;
         }
+        void updateOutdated();
     })();
     return latestInFlight;
 }
@@ -1898,6 +1930,8 @@ export function startWatching() {
     };
     setTimeout(() => void check(), 20_000);
     setInterval(() => void check(), 5 * 60_000);
+    // Newer CLI releases are looked for hourly while the app runs, not only when a connector screen is opened.
+    setInterval(() => void checkLatestVersions(true), LATEST_TTL_MS);
 }
 
 // --- Custom and local providers ----------------------------------------------------------------------------

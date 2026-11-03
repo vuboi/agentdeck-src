@@ -3,10 +3,10 @@
     import { slide } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import {
-        ZButton,
         ZIcon,
         ZShowMore,
         ZShimmerText,
+        ZTabs,
         zModalService,
     } from '@shival99/z-ui-svelte';
     import { jsonInText } from '../../app/text/json-text';
@@ -18,7 +18,12 @@
     import ActivityIndicator from '../ui/ActivityIndicator.svelte';
     import SwapLine from '../ui/SwapLine.svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
-    import { ASK, WEB_SEARCH } from '../../chat/content/tool-kind';
+    import {
+        ASK,
+        ICON,
+        WEB_SEARCH,
+        toolIcon,
+    } from '../../chat/content/tool-kind';
     import {
         argOf,
         describeStep,
@@ -33,6 +38,7 @@
         type Counts,
         type ThinkingBlock,
     } from '../../chat/content/blocks';
+    import type { LiveLine } from '../../chat/runs/live-line.svelte';
     import { openImages } from '../../browser/preview.svelte';
     import { IMAGE_NOT_FOUND_SRC } from '../../chat/agent';
     import {
@@ -81,11 +87,14 @@
     // is still working that line carries the only loader, with the current step and a running clock; open it
     // for the list of steps, open a step for its command, output or diff.
     // `working`: the reply is still being made and this is its newest group, so the summary shimmers like a running step.
+    // `status`: this group's header is the reply's one live line ("Thinking", "Waiting for approval"); a running step's own
+    // line takes its place while it runs, so the two take turns in the same spot.
     let {
         items,
         thoughts = [],
         live = false,
         working = false,
+        status = null,
         startedAt,
         stateKey,
     }: {
@@ -93,6 +102,7 @@
         thoughts?: ThinkingBlock[];
         live?: boolean;
         working?: boolean;
+        status?: LiveLine | null;
         startedAt?: number;
         stateKey: string;
     } = $props();
@@ -362,9 +372,19 @@
         if (!isAbs && !hasSep && !hasExt) return null;
         return path;
     }
-    function openChangedFile(path: string) {
+    // An edit, create or delete step opens as its change (the diff); a read opens as the file.
+    function viewOfStep(item: CommandBlock): 'file' | 'changes' {
+        const icon = toolIcon(toolOf(item.command));
+        const changed =
+            item.change?.path ||
+            icon === ICON.edit ||
+            icon === ICON.create ||
+            icon === ICON.delete;
+        return changed ? 'changes' : 'file';
+    }
+    function openChangedFile(path: string, view: 'file' | 'changes' = 'file') {
         const root = projectRoot();
-        if (root) openProjectFile(path, root, 'file');
+        if (root) openProjectFile(path, root, view);
     }
     function askRevert(path: string) {
         const root = projectRoot();
@@ -469,22 +489,49 @@
         {:else}
             <!-- Always an icon, by the kind of work: the step running now, else what the group did most (terminal, file edit,
            search, skill, a plug for an MCP tool). The bulb only for a group that holds nothing but reasoning. -->
-            <span class="grid size-3.5 shrink-0 place-items-center"
-                ><ZIcon
-                    zType={(items.length > 0
-                        ? groupIcon(items)
-                        : 'lucideLightbulb') as ZIconName}
-                    class="size-3"
-                /></span
-            >
-            <!-- One SwapLine for the whole title. While a step runs the line is that step ("Running pnpm test"); once
-             every step is done it goes back to the summary. Switching between two branches used to destroy the
-             SwapLine for a few ms, so the next line appeared at once and the width jumped. -->
+            <!-- The icon slot keeps its size: the loader while the line is live, the group's icon after. -->
+            <span class="grid size-3.5 shrink-0 place-items-center">
+                {#if status}
+                    {#key runningStep ? current.spinner : status.spinner}
+                        <ActivityIndicator
+                            spinner={runningStep
+                                ? current.spinner
+                                : status.spinner}
+                            size={LOADER_SIZE}
+                            color="primary"
+                        />
+                    {/key}
+                {:else}
+                    <ZIcon
+                        zType={(items.length > 0
+                            ? groupIcon(items)
+                            : 'lucideLightbulb') as ZIconName}
+                        class="size-3"
+                    />
+                {/if}
+            </span>
+            <!-- One SwapLine for the whole title. While a step runs the line is that step ("Running pnpm test"); between
+             steps of a live reply it is what the agent does ("Thinking"); once done it goes back to the summary.
+             Switching between two branches used to destroy the SwapLine for a few ms, so the next line appeared at
+             once and the width jumped. -->
             <SwapLine
-                text={runningStep ? runningLine : summarize(items)}
-                shimmer={Boolean(runningStep) || working}
+                text={runningStep
+                    ? runningLine
+                    : status
+                      ? status.label
+                      : summarize(items)}
+                shimmer={Boolean(runningStep) || working || Boolean(status)}
+                hold={status ? 900 : 420}
                 class="font-medium"
             />
+            {#if status}<span
+                    class="loading-dots stream-label -ml-1.5 inline-flex"
+                    aria-hidden="true"
+                    ><span>.</span><span>.</span><span>.</span></span
+                ><span
+                    class="stream-label inline-block min-w-[3ch] tabular-nums"
+                    >{seconds}</span
+                >{/if}
             {#if total}{@render chips(total)}{/if}
         {/if}
         <!-- Always kept, so the label does not change width when the group gains or loses details. -->
@@ -540,7 +587,8 @@
                                         hold={900}
                                         class="font-medium"
                                     />
-                                    <span class="stream-label tabular-nums"
+                                    <span
+                                        class="stream-label inline-block min-w-[3ch] tabular-nums"
                                         >{seconds}</span
                                     >
                                 {/if}
@@ -635,13 +683,19 @@
                                             )}"
                                             onclick={(event) => {
                                                 event.stopPropagation();
-                                                openChangedFile(filePath);
+                                                openChangedFile(
+                                                    filePath,
+                                                    viewOfStep(item),
+                                                );
                                             }}
                                             onkeydown={(event) => {
                                                 if (event.key === 'Enter') {
                                                     event.stopPropagation();
                                                     event.preventDefault();
-                                                    openChangedFile(filePath);
+                                                    openChangedFile(
+                                                        filePath,
+                                                        viewOfStep(item),
+                                                    );
                                                 }
                                             }}>{step.subject}</span
                                         >
@@ -1045,41 +1099,36 @@
                                                                 >
                                                             {/if}
                                                             {#if markdown}
-                                                                {#each ['preview', 'raw'] as mode (mode)}
-                                                                    <ZButton
-                                                                        zWave={false}
-                                                                        zType={readModes[
-                                                                            key
-                                                                        ] ===
-                                                                            mode ||
+                                                                <ZTabs
+                                                                    zTabs={[
+                                                                        {
+                                                                            value: 'preview',
+                                                                            label: 'Preview',
+                                                                        },
+                                                                        {
+                                                                            value: 'raw',
+                                                                            label: 'Raw',
+                                                                        },
+                                                                    ]}
+                                                                    zType="segmented"
+                                                                    zSize="xs"
+                                                                    zTabsOnly
+                                                                    zCache={false}
+                                                                    class="shrink-0"
+                                                                    activeTab={readModes[
+                                                                        key
+                                                                    ] ??
+                                                                        'preview'}
+                                                                    onTabChange={(
+                                                                        value,
+                                                                    ) =>
                                                                         (readModes[
                                                                             key
-                                                                        ] ===
-                                                                            undefined &&
-                                                                            mode ===
-                                                                                'preview')
-                                                                            ? 'default'
-                                                                            : 'ghost'}
-                                                                        zSize="sm"
-                                                                        class="h-5! px-1.5! text-[10px]!"
-                                                                        aria-pressed={(readModes[
-                                                                            key
-                                                                        ] ??
-                                                                            'preview') ===
-                                                                            mode}
-                                                                        onclick={() =>
-                                                                            (readModes[
-                                                                                key
-                                                                            ] =
-                                                                                mode as
-                                                                                    | 'preview'
-                                                                                    | 'raw')}
-                                                                        >{mode ===
-                                                                        'preview'
-                                                                            ? 'Preview'
-                                                                            : 'Raw'}</ZButton
-                                                                    >
-                                                                {/each}
+                                                                        ] =
+                                                                            value as
+                                                                                | 'preview'
+                                                                                | 'raw')}
+                                                                />
                                                             {/if}
                                                         </div>
                                                         {#if markdown && (readModes[key] ?? 'preview') === 'preview'}

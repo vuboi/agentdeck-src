@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::runtime::command;
+use super::runtime::{command, KillTree};
 use super::{capture, which, Login};
 
 /// Reads `command-code status --json`; the CLI answers `{"authenticated": bool, "version": "..."}`.
@@ -23,18 +23,20 @@ pub(crate) async fn login_status() -> Login {
     }
 }
 
-/// Runs `command-code login` in its own console and waits for it to end: its sign-in is an interactive terminal flow,
-/// so it cannot run on the piped stdio the other connectors use.
+/// Runs `command-code login` in its own console and waits until it signs in or ends: its sign-in is an interactive
+/// terminal flow, so it cannot run on the piped stdio the other connectors use.
 pub(crate) async fn sign_in() -> Result<(), String> {
     let program = which("command-code").ok_or("Command Code is not installed")?;
     // `start /WAIT` opens the CLI in its own console window. Handing the CLI our GUI process's stdio
     // (`Stdio::inherit`, which is empty here) made it exit before it could prompt.
+    // `start` runs a `.cmd` shim as `cmd /K`, which keeps the console open after the CLI ends and so never returns;
+    // the `cmd /C` wrapper closes it when the CLI exits.
     #[cfg(windows)]
     let mut login = {
         use std::os::windows::process::CommandExt;
         let mut login = command(Path::new("cmd"));
         login.as_std_mut().raw_arg(format!(
-            "/D /S /C \"start \"\" /WAIT \"{}\" login\"",
+            "/D /S /C \"start \"\" /WAIT cmd /D /S /C \"\"{}\" login\"\"",
             program.display()
         ));
         login
@@ -52,10 +54,20 @@ pub(crate) async fn sign_in() -> Result<(), String> {
     let mut child = login
         .spawn()
         .map_err(|error| format!("could not start Command Code login: {error}"))?;
-    tokio::time::timeout(Duration::from_secs(300), child.wait())
-        .await
-        .map_err(|_| "Command Code sign-in timed out".to_string())?
-        .map_err(|error| error.to_string())?;
+    // Ends the console tree when this returns early (signed in, cancelled or timed out).
+    let _console = KillTree::of(&child);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+    // The CLI can sign in and still stay open, so the saved sign-in is checked while it runs.
+    while tokio::time::Instant::now() < deadline {
+        tokio::select! {
+            _ = child.wait() => break,
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                if login_status().await.logged_in == Some(true) {
+                    return Ok(());
+                }
+            }
+        }
+    }
     if login_status().await.logged_in == Some(true) {
         Ok(())
     } else {
