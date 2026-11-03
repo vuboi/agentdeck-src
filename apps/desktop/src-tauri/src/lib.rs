@@ -616,8 +616,11 @@ fn attachment_reveal(path: String) -> Result<(), String> {
         return Err(format!("{path} is not a file"));
     }
     let mut command = if cfg!(windows) {
+        // explorer wants `/select,"C:\folder\file name.png"` with backslashes. Rust would quote the whole argument
+        // when it has a space (`"/select,C:\...`), which explorer does not parse, so the argument is passed raw.
+        use std::os::windows::process::CommandExt;
         let mut command = std::process::Command::new("explorer");
-        command.arg(format!("/select,{path}"));
+        command.raw_arg(format!("/select,\"{}\"", path.replace('/', "\\")));
         command
     } else if cfg!(target_os = "macos") {
         let mut command = std::process::Command::new("open");

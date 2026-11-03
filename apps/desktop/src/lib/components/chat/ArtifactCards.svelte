@@ -449,7 +449,6 @@
                                 class="absolute top-1.5 right-1.5 opacity-0 transition-opacity group-hover/pic:opacity-100 focus-within:opacity-100"
                                 ><MenuButton
                                     items={menuOf(item)}
-                                    onprepare={() => loadApps(item.path)}
                                     onopen={() => loadApps(item.path)}
                                     label="Actions for {item.name}"
                                     class="size-7! rounded-md! bg-background/80! backdrop-blur"
@@ -546,7 +545,6 @@
                             class="absolute top-1.5 right-1.5 opacity-0 transition-opacity group-hover/pic:opacity-100 focus-within:opacity-100"
                             ><MenuButton
                                 items={menuOf(item)}
-                                onprepare={() => loadApps(item.path)}
                                 onopen={() => loadApps(item.path)}
                                 label="Actions for {item.name}"
                                 class="size-7! rounded-md! bg-background/80! backdrop-blur"
