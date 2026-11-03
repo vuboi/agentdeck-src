@@ -80,7 +80,7 @@ fn package(command: &str, args: &[String]) -> Option<(usize, String, String)> {
     Some((index, name.into(), current.into()))
 }
 
-async fn latest(name: &str) -> Result<String, String> {
+pub(crate) async fn latest(name: &str) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()

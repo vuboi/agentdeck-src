@@ -517,6 +517,48 @@ fn load_page_windows_the_transcript_from_the_end_backwards() {
 }
 
 #[test]
+fn load_page_reads_a_file_again_once_it_has_grown() {
+    let home = Home::new("page-grown");
+    let mut lines = Vec::new();
+    let mut parent: Option<String> = None;
+    for index in 0..2 {
+        let uuid = format!("u{index}");
+        lines.push(user(
+            &uuid,
+            parent.as_deref(),
+            json!(format!("q{index}")),
+            "2026-01-01T00:00:00Z",
+        ));
+        parent = Some(uuid);
+    }
+    let path = home.write(".claude/projects/demo/grown.jsonl", &lines);
+    let roots = home.roots();
+    assert_eq!(
+        load_page(&roots, Source::Claude, &path, None, 20)
+            .unwrap()
+            .total,
+        2
+    );
+    // The same window read again comes from the kept copy and is the same.
+    assert_eq!(
+        load_page(&roots, Source::Claude, &path, None, 20)
+            .unwrap()
+            .total,
+        2
+    );
+
+    lines.push(user(
+        "u2",
+        parent.as_deref(),
+        json!("q2"),
+        "2026-01-01T00:00:00Z",
+    ));
+    home.write(".claude/projects/demo/grown.jsonl", &lines);
+    let grown = load_page(&roots, Source::Claude, &path, None, 20).unwrap();
+    assert_eq!((grown.total, grown.start), (3, 0));
+}
+
+#[test]
 fn history_classifies_projects_without_promoting_ordinary_chat_folders() {
     let home = Home::new("project-classification");
     for (name, marker, expected) in [

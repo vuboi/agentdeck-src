@@ -80,6 +80,7 @@ import {
 import { backlog } from './delegate-task.svelte';
 import { mergeTranscripts } from './transcript-merge';
 import { chatMetaOf, ledger, ledgerOn } from '../index/ledger';
+import { responseText, tailStart } from './held';
 
 // ---------- real history (Claude Code and Codex, read-only) ----------
 export const chat = $state({
@@ -96,12 +97,45 @@ export const chat = $state({
  */
 export const messagesById = new SvelteMap<string, Message[]>();
 
+/**
+ * The file index of the first message held for a chat: how many older messages the file has before it. Set only while
+ * the held list is the chat's file (its older pages included); a list without it is read from the file when opened.
+ */
+const olderById = new SvelteMap<string, number>();
+/** Chats by how recently their list was set, oldest first. Past `HELD_CHATS`, the oldest lists are released. */
+const heldOrder = new SvelteMap<string, true>();
+const HELD_CHATS = 8;
+
 /** Sets a chat's list. The open chat shows the new list at once; any other chat keeps it for when it is opened. */
 export function setMessages(id: string, list: Message[]) {
     if (workspace.activeId === id) {
         chat.messages = list;
         messagesById.set(id, chat.messages);
     } else messagesById.set(id, list);
+    heldOrder.delete(id);
+    heldOrder.set(id, true);
+    releaseHeld();
+}
+
+/**
+ * Drops the lists of the chats shown longest ago, past `HELD_CHATS`. A dropped chat is read from its file when it is
+ * opened next. Kept: the open chat, a chat running a turn, and a chat without a file (its list is the only copy).
+ */
+function releaseHeld() {
+    for (const id of heldOrder.keys()) {
+        if (heldOrder.size <= HELD_CHATS) return;
+        const session = workspace.sessions.find((item) => item.id === id);
+        if (
+            id === workspace.activeId ||
+            !session?.path ||
+            sessionLanes[id]?.length ||
+            liveReplies[id]
+        )
+            continue;
+        heldOrder.delete(id);
+        messagesById.delete(id);
+        olderById.delete(id);
+    }
 }
 
 /** Reads a chat that is not open, so a turn in it is told the conversation it has. Nothing shown changes. */
@@ -852,16 +886,6 @@ async function toMessages(
     );
 }
 
-const responseText = (message: Message) =>
-    message.blocks
-        .filter(
-            (block): block is Extract<Block, { kind: 'response' }> =>
-                block.kind === 'response',
-        )
-        .map((block) => block.text)
-        .join('\n\n')
-        .trim();
-
 const isWorkMessage = (message: Message) =>
     message.autoTurn ||
     message.blocks.some(
@@ -993,6 +1017,7 @@ async function readWhole(
 
 async function fetchTranscript(
     session: SessionItem,
+    limit = PAGE_LIMIT,
 ): Promise<{ messages: Message[]; start: number }> {
     const files = wholeFilesOf(session);
     if (files)
@@ -1007,7 +1032,7 @@ async function fetchTranscript(
         session.source!,
         session.path!,
         null,
-        PAGE_LIMIT,
+        limit,
     );
     const own = await restoreArchivedWork(
         session,
@@ -1018,7 +1043,7 @@ async function fetchTranscript(
         own,
         page.start > 0 ? own[0]?.at : undefined,
     );
-    const messages = assembled.slice(-PAGE_LIMIT);
+    const messages = assembled.slice(-limit);
     const removedBefore =
         messages.length < assembled.length
             ? page.messages.filter(
@@ -1031,9 +1056,13 @@ async function fetchTranscript(
     };
 }
 
-/** Reads the page of messages before the first one on screen and puts it in front. Returns how many it added. */
+/**
+ * Reads the page of messages before the first one on screen and puts it in front. Returns how many it added.
+ * `reach` adds that many messages to the page: a place read several pages up is reached in one read, not page by page.
+ */
 export async function loadOlder(
     session: SessionItem | undefined,
+    reach = 0,
 ): Promise<number> {
     if (
         !session?.path ||
@@ -1048,7 +1077,7 @@ export async function loadOlder(
             session.source,
             session.path,
             chat.older,
-            PAGE_LIMIT,
+            PAGE_LIMIT + reach,
         );
         if (workspace.activeId !== session.id) return 0;
         const own = await toMessages(session, page.messages);
@@ -1065,6 +1094,7 @@ export async function loadOlder(
         if (workspace.activeId !== session.id) return 0;
         setMessages(session.id, [...added, ...chat.messages]);
         chat.older = page.start;
+        olderById.set(session.id, page.start);
         const cached = transcripts.get(session.id);
         if (cached)
             transcripts.set(session.id, {
@@ -1142,6 +1172,36 @@ export function transcriptSettled(): Promise<void> {
     return transcriptDone;
 }
 
+/** Newest messages read when a held list is checked against its file: enough for a turn of many tool steps. */
+const CATCH_UP_LIMIT = 200;
+
+/**
+ * Brings the newest messages of a held list up to its file. The rows above the first changed one keep their place,
+ * so a reader scrolled up is not moved. A file that no longer overlaps the list is read again from the start.
+ */
+async function catchUp(session: SessionItem) {
+    let fresh: Message[];
+    try {
+        fresh = (await fetchTranscript(session, CATCH_UP_LIMIT)).messages;
+    } catch {
+        // The held list stays: the next open checks again.
+        return;
+    }
+    const held = messagesById.get(session.id);
+    // The list was replaced or released while the file was read: the newer read decides.
+    if (!held || !olderById.has(session.id)) return;
+    const at = tailStart(held, fresh);
+    if (at < 0) {
+        olderById.delete(session.id);
+        if (workspace.activeId === session.id)
+            void readFromFile(session, ++transcriptToken);
+        return;
+    }
+    // Live replies and asks are not in the file yet: withLive puts back the ones still running.
+    const tail = withLive(session.id, mergeWorkMessages(fresh, held.slice(at)));
+    setMessages(session.id, [...held.slice(0, at), ...tail]);
+}
+
 /** Fills the chat with the transcript of a session: from cache when it is current, from disk otherwise. */
 export function openTranscript(
     session: SessionItem | undefined,
@@ -1193,6 +1253,23 @@ async function readTranscript(session: SessionItem | undefined) {
         }
         return;
     }
+    // A chat whose list is held (shown since its file was last read) opens at once, from memory: no skeleton, no wait
+    // for the file. Its newest messages are checked against the file while it shows (see catchUp).
+    const held = messagesById.get(session.id);
+    const older = olderById.get(session.id);
+    if (held && older !== undefined) {
+        setMessages(session.id, held);
+        chat.older = older;
+        chat.loading = false;
+        void catchUp(session);
+        return;
+    }
+    return readFromFile(session, token);
+}
+
+/** Fills a chat from its file: the saved copy first when there is one, then the file's newest page. */
+async function readFromFile(session: SessionItem, token: number) {
+    olderById.delete(session.id);
     // Show the empty chat with its skeleton first and let it paint: reading the saved copy and mounting a long chat
     // takes a moment on the main thread, and the window must not look frozen meanwhile.
     chat.messages = [];
@@ -1234,7 +1311,10 @@ async function readTranscript(session: SessionItem | undefined) {
         chat.older =
             cached.stamp === stampOf(session) ? (cached.start ?? 0) : 0;
         chat.loading = false;
-        if (cached.stamp === stampOf(session)) return;
+        if (cached.stamp === stampOf(session)) {
+            olderById.set(session.id, cached.start ?? 0);
+            return;
+        }
     } else {
         chat.loading = true;
     }
@@ -1248,6 +1328,7 @@ async function readTranscript(session: SessionItem | undefined) {
         );
         setMessages(session.id, withLive(session.id, merged));
         chat.older = fresh.start;
+        olderById.set(session.id, fresh.start);
         remember(session, merged, fresh.start);
     } catch (error) {
         if (token !== transcriptToken) return;
@@ -1348,6 +1429,8 @@ async function forgetSessions(removed: SessionItem[]) {
         pendingMixed.delete(id);
         delete hidden[id];
         transcripts.delete(id);
+        olderById.delete(id);
+        heldOrder.delete(id);
         backlog.delete(id);
         lastEventAt.delete(id);
         lastEventKind.delete(id);

@@ -28,6 +28,31 @@ When changing Store skill installation/sync/update, read `docs/development/store
 - Keep changes minimal and within the assigned module.
 - At the end, run all DoD commands for the module and report the actual results.
 
+## Before editing code
+
+- Vague request (unclear file, expected behavior, or scope): ask up to 3 questions first; do not edit yet.
+- Change touches 3+ files or affects logic/state: state a short plan (which files, what, why) and wait for "ok".
+- Change only what was asked. No refactors, renames, new abstractions, extra options, or drive-by cleanup unless asked.
+- Do not guess bug causes: read the code and find evidence before fixing.
+- When done: list changed files with a one-line reason each.
+
+### Prompt keywords
+
+- `?` at the start: analyze and propose only; do not edit files.
+- `plan:` state a plan and wait for approval.
+- `go:` do it now without asking.
+- `min:` smallest possible change, one spot.
+
+## UI style (no AI slop)
+
+- Use existing tokens only (z-ui-svelte / Tailwind theme colors, spacing, radius, font sizes). No new hex colors, odd px values, or new shadows.
+- Banned: gradients, glassmorphism, glow, heavy shadows, colored borders, emoji as icons, needless badges/pills, decorative animation, all-caps text, gradient text.
+- Default flat: plain backgrounds, 1px `border`, one accent color (`primary`). Build hierarchy with font size and weight, not color.
+- Spacing on the 4/8 scale (`gap-1 gap-2 gap-3 gap-4`); same element type, same spacing.
+- Before building a new component, find a similar one in the repo and copy its style. Do not invent when a pattern exists.
+- Keep UI edits inside the requested scope; do not "polish" surrounding parts.
+- After a UI change, screenshot it and compare with neighboring screens for consistency.
+
 ## Popovers and pick lists (UI)
 
 - Every popover/select menu uses `ZPopover` (or an existing `PickerPopover` / `ProjectSelect`); do not position a separate menu with `position: absolute`.

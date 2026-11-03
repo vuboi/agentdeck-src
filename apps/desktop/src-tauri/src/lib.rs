@@ -615,26 +615,9 @@ fn attachment_reveal(path: String) -> Result<(), String> {
     if !Path::new(&path).is_file() {
         return Err(format!("{path} is not a file"));
     }
-    let mut command = if cfg!(windows) {
-        // explorer wants `/select,"C:\folder\file name.png"` with backslashes. Rust would quote the whole argument
-        // when it has a space (`"/select,C:\...`), which explorer does not parse, so the argument is passed raw.
-        use std::os::windows::process::CommandExt;
-        let mut command = std::process::Command::new("explorer");
-        command.raw_arg(format!("/select,\"{}\"", path.replace('/', "\\")));
-        command
-    } else if cfg!(target_os = "macos") {
-        let mut command = std::process::Command::new("open");
-        command.arg("-R").arg(&path);
-        command
-    } else {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(Path::new(&path).parent().unwrap_or_else(|| Path::new("/")));
-        command
-    };
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    // Same launch as path links: Explorer needs backslashes and a raw, quoted `/select,"…"` argument, or it opens
+    // the default folder instead of selecting the file.
+    path_links::path_reveal(path)
 }
 
 /// The models an agent CLI offers, from its own cache on this machine.
@@ -2655,6 +2638,7 @@ pub fn run() {
             changes::git_branches,
             changes::git_switch,
             connectors::connectors_detect,
+            connectors::connectors_latest_versions,
             connectors::connector_install,
             connectors::connector_login,
             connectors::connector_login_cancel,

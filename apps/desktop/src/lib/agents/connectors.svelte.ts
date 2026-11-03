@@ -316,6 +316,8 @@ export const connectors = $state({
     logs: {} as Record<string, string[]>,
     /** The last error of an action, by key. */
     errors: {} as Record<string, string>,
+    /** The newest npm release of each CLI (by connector id) and of the SDK (`claude-sdk`), read silently in the background. */
+    latest: {} as Record<string, string>,
     alerts: {
         enabled: true,
         threshold: 90,
@@ -704,6 +706,51 @@ export async function refreshDetect(only?: ConnectorId) {
     if (!ok && only)
         connectors.errors.detect =
             connectors.errors[key] ?? 'Could not check the selected connector';
+    if (ok && !only) void checkLatestVersions();
+}
+
+const LATEST_TTL_MS = 60 * 60_000;
+let latestCheckedAt = 0;
+let latestInFlight: Promise<void> | undefined;
+
+/** Silently asks npm for the newest CLI and SDK versions. No busy label and no error: a failed check is simply tried again later. */
+export function checkLatestVersions(force = false): Promise<void> {
+    if (!inTauri()) return Promise.resolve();
+    if (!force && Date.now() - latestCheckedAt < LATEST_TTL_MS)
+        return Promise.resolve();
+    latestInFlight ??= (async () => {
+        try {
+            const rows = await call<{ id: string; latest: string | null }[]>(
+                'connectors_latest_versions',
+            );
+            for (const row of rows)
+                if (row.latest) connectors.latest[row.id] = row.latest;
+        } catch {
+            // Offline or npm unreachable: the buttons simply stay hidden.
+        } finally {
+            latestCheckedAt = Date.now();
+            latestInFlight = undefined;
+        }
+    })();
+    return latestInFlight;
+}
+
+/** The newer of `latest` and `current` when `latest` is newer (x.y.z in either text), else null. */
+export function newerVersion(
+    latest: string | null | undefined,
+    current: string | null | undefined,
+): string | null {
+    const parse = (text: string | null | undefined) =>
+        text
+            ?.match(/(\d+)\.(\d+)\.(\d+)/)
+            ?.slice(1, 4)
+            .map(Number) ?? null;
+    const a = parse(latest);
+    const b = parse(current);
+    if (!a || !b) return null;
+    for (let i = 0; i < 3; i++)
+        if (a[i] !== b[i]) return a[i] > b[i] ? latest! : null;
+    return null;
 }
 
 let adopted = false;
@@ -1067,7 +1114,8 @@ export async function refreshOpenCodeQuota(force = false) {
     return openCodeQuotaRefresh;
 }
 
-export async function install(id: string, label: string) {
+/** Installs a CLI, or updates it: the vendor's installer and `npm -g` both fetch the newest release. */
+export async function install(id: string, label: string, done = 'installed') {
     connectors.logs[id] = [];
     // The busy state stays until the new CLI is detected, so the card does not flash back to "Install" in between.
     const ok = await task(`install:${id}`, `Installing ${label}`, async () => {
@@ -1075,7 +1123,7 @@ export async function install(id: string, label: string) {
         await refreshDetect();
     });
     if (ok) {
-        toast.success(`${label} installed`);
+        toast.success(`${label} ${done}`);
         await refreshAll();
     }
 }

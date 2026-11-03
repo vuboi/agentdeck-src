@@ -108,6 +108,7 @@
         flatten,
     } from './composer-pickers';
     import { voiceOf } from '../../chat/voice.svelte';
+    import VoiceWave from './VoiceWave.svelte';
     import { shortCount } from '../../chat/runs/usage';
     import {
         CONTEXT_LIMITS,
@@ -1445,12 +1446,7 @@
                 onclick={() => void toggleVoice()}
             >
                 {#if voice.phase === 'recording'}
-                    <span class="voice-wave" aria-hidden="true">
-                        {#each voice.levels as lvl, index (index)}
-                            <span style:height="{Math.max(3, 3 + lvl * 11)}px"
-                            ></span>
-                        {/each}
-                    </span>
+                    <VoiceWave {voice} />
                     <span
                         class="size-2.5 rounded-[1.5px] bg-foreground shrink-0"
                         aria-hidden="true"
@@ -1566,18 +1562,6 @@
 {/if}
 
 <style>
-    .voice-wave {
-        display: inline-flex;
-        height: 0.875rem;
-        align-items: center;
-        gap: 2px;
-    }
-    .voice-wave span {
-        width: 2px;
-        border-radius: 9999px;
-        background: currentColor;
-        transition: height 60ms ease-out;
-    }
     .composer-editor {
         white-space: pre-wrap;
         overflow-wrap: anywhere;

@@ -787,6 +787,40 @@ async fn npm_global_binary(name: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+#[derive(Serialize)]
+pub struct LatestVersion {
+    id: &'static str,
+    latest: Option<String>,
+}
+
+/// The newest npm release of each CLI and of the Claude Agent SDK. Read only: nothing is installed here.
+#[tauri::command]
+pub async fn connectors_latest_versions() -> Vec<LatestVersion> {
+    const PACKAGES: [(&str, &str); 5] = [
+        ("claude", "@anthropic-ai/claude-code"),
+        ("codex", "@openai/codex"),
+        ("opencode", "@opencode/cli"),
+        ("workbuddy", "@tencent-ai/codebuddy-code"),
+        ("claude-sdk", "@anthropic-ai/claude-agent-sdk"),
+    ];
+    let handles: Vec<_> = PACKAGES
+        .into_iter()
+        .map(|(id, package)| {
+            tauri::async_runtime::spawn(async move {
+                let latest = crate::store::maintenance::latest(package).await.ok();
+                LatestVersion { id, latest }
+            })
+        })
+        .collect();
+    let mut rows = Vec::new();
+    for handle in handles {
+        if let Ok(row) = handle.await {
+            rows.push(row);
+        }
+    }
+    rows
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Install and sign in
 

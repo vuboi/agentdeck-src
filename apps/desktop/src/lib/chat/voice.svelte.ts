@@ -7,6 +7,13 @@ type RecordedPcm = {
     channels: number;
 };
 
+/** Milliseconds per waveform bar; the strip scrolls one bar per step. */
+const WAVE_STEP_MS = 60;
+/** Bars kept in the strip, enough to fill the composer pill. */
+const WAVE_BARS = 24;
+/** RMS below this is room noise and draws as a flat line. */
+const WAVE_NOISE_FLOOR = 0.006;
+
 const recorderMimeType = () =>
     ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find(
         (type) => MediaRecorder.isTypeSupported(type),
@@ -53,13 +60,15 @@ async function recordedPcm(blob: Blob): Promise<RecordedPcm> {
 }
 
 /** Owns one microphone recording and local Whisper transcription at a time. */
-class VoiceCapture {
+export class VoiceCapture {
     phase = $state<VoicePhase>('idle');
     elapsedMs = $state(0);
     modelProgress = $state(0);
-    level = $state(0);
-    levels = $state<number[]>([0, 0, 0, 0, 0]);
     error = $state('');
+    /** Amplitude bars, oldest first. Read per animation frame by VoiceWave, so it is not reactive. */
+    wave: number[] = [];
+    /** performance.now() when the newest bar was pushed, used to scroll between steps. */
+    waveAt = 0;
 
     private recorder: MediaRecorder | null = null;
     private stream: MediaStream | null = null;
@@ -71,8 +80,9 @@ class VoiceCapture {
     private startedAt = 0;
     private token = 0;
     private starting = false;
-    /** True while speech pushes energy past the mic noise floor; bars stay flat otherwise. */
-    private speechGate = false;
+    /** Loudest RMS seen since the last waveform step. */
+    private wavePeak = 0;
+    private waveStepAt = 0;
 
     /** Requests the microphone and begins a toggle-style recording. */
     async start(): Promise<void> {
@@ -215,48 +225,37 @@ class VoiceCapture {
         const context = new AudioContext();
         const source = context.createMediaStreamSource(stream);
         const analyser = context.createAnalyser();
-        analyser.fftSize = 128;
-        analyser.smoothingTimeConstant = 0.3;
+        analyser.fftSize = 512;
         source.connect(analyser);
         if (context.state === 'suspended') void context.resume();
-        const freqData = new Uint8Array(analyser.frequencyBinCount);
+        const samples = new Float32Array(analyser.fftSize);
         this.meterContext = context;
         this.meterSource = source;
-        this.level = 0;
-        this.levels = [0, 0, 0, 0, 0];
-        this.speechGate = false;
-        const sample = () => {
-            analyser.getByteFrequencyData(freqData);
+        this.wave = [];
+        this.wavePeak = 0;
+        this.waveAt = performance.now();
+        this.waveStepAt = this.waveAt;
+        const sample = (now: number) => {
+            analyser.getFloatTimeDomainData(samples);
             let sum = 0;
-            for (let i = 0; i < 20; i++) sum += freqData[i];
-            const avg = sum / (20 * 255);
-            this.level = this.level * 0.7 + avg * 0.3;
+            for (const value of samples) sum += value * value;
+            this.wavePeak = Math.max(
+                this.wavePeak,
+                Math.sqrt(sum / samples.length),
+            );
 
-            // Heartbeat-style gating: only lift while speech clears the noise
-            // floor, with hysteresis so background hum cannot flicker it.
-            if (avg > 0.16) this.speechGate = true;
-            else if (avg < 0.08) this.speechGate = false;
-
-            const bands = [
-                freqData[1],
-                (freqData[2] + freqData[3]) * 0.5,
-                (freqData[4] + freqData[5] + freqData[6]) / 3,
-                (freqData[7] + freqData[8] + freqData[9]) / 3,
-                (freqData[10] + freqData[11] + freqData[12] + freqData[13]) *
-                    0.25,
-            ];
-
-            const current = [...this.levels];
-            for (let i = 0; i < 5; i++) {
-                const raw = Math.min(1, Math.max(0, (bands[i] - 12) / 100));
-                const target = this.speechGate ? raw : 0;
-                if (target > current[i]) {
-                    current[i] = current[i] * 0.2 + target * 0.8;
-                } else {
-                    current[i] = current[i] * 0.76 + target * 0.24;
-                }
+            // Every step pushes one bar, so silence keeps the strip moving as a flat line.
+            if (now - this.waveStepAt >= WAVE_STEP_MS) {
+                const amplitude =
+                    Math.sqrt(Math.max(0, this.wavePeak - WAVE_NOISE_FLOOR)) *
+                    2.4;
+                this.wave = [...this.wave, Math.min(1, amplitude)].slice(
+                    -WAVE_BARS,
+                );
+                this.waveAt = now;
+                this.waveStepAt = now;
+                this.wavePeak = 0;
             }
-            this.levels = current;
             this.meterFrame = requestAnimationFrame(sample);
         };
         this.meterFrame = requestAnimationFrame(sample);
@@ -269,8 +268,7 @@ class VoiceCapture {
         this.meterSource = null;
         if (this.meterContext) void this.meterContext.close();
         this.meterContext = null;
-        this.level = 0;
-        this.levels = [0, 0, 0, 0, 0];
+        this.wave = [];
     }
 
     private releaseMedia(): void {

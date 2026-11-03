@@ -11,9 +11,13 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
 const MAX_AUDIO_SECONDS: usize = 5 * 60;
-const MIN_MODEL_BYTES: u64 = 100 * 1024 * 1024;
+/// The multilingual `base` model guesses other languages for Vietnamese speech; `small` is the smallest usable one.
+const MIN_MODEL_BYTES: u64 = 400 * 1024 * 1024;
+const MODEL_FILE: &str = "ggml-small.bin";
 const MODEL_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin?download=true";
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin?download=true";
+/// Steers the decoder toward Vietnamese text with tone marks.
+const INITIAL_PROMPT: &str = "Tiếng Việt có dấu.";
 
 type VoiceResult<T> = Result<T, VoiceError>;
 
@@ -45,7 +49,7 @@ fn model_path(app: &AppHandle) -> VoiceResult<PathBuf> {
         .app_data_dir()
         .map_err(|error| VoiceError::Task(error.to_string()))?
         .join("voice")
-        .join("ggml-base.bin"))
+        .join(MODEL_FILE))
 }
 
 fn usable_model(path: &Path) -> bool {
@@ -189,8 +193,12 @@ fn transcribe(model: &Path, audio: &[f32]) -> VoiceResult<String> {
         .as_ref()
         .ok_or_else(|| VoiceError::Task("speech model did not load".into()))?;
     let mut state = whisper.create_state()?;
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    let mut params = FullParams::new(SamplingStrategy::BeamSearch {
+        beam_size: 5,
+        patience: -1.0,
+    });
     params.set_language(Some("vi"));
+    params.set_initial_prompt(INITIAL_PROMPT);
     params.set_translate(false);
     params.set_no_context(true);
     params.set_no_timestamps(true);
@@ -209,7 +217,7 @@ fn transcribe(model: &Path, audio: &[f32]) -> VoiceResult<String> {
         .to_string())
 }
 
-/// Transcribes a browser recording locally with the multilingual Whisper base model.
+/// Transcribes a browser recording locally with the multilingual Whisper small model.
 #[tauri::command]
 pub async fn voice_transcribe(
     app: AppHandle,

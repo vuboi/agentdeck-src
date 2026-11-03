@@ -16,6 +16,8 @@ pub use export::{
 pub use manage::{delete, rename};
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -236,8 +238,21 @@ pub struct HistoryPage {
     pub messages: Vec<HistoryMessage>,
 }
 
+/// Parsed transcripts kept between reads. A chat reads its older pages one at a time, and each page used to parse the
+/// whole file again. The most recently read few stay; a file whose length or time changed is parsed again.
+const KEPT_FILES: usize = 4;
+
+struct Parsed {
+    path: PathBuf,
+    len: u64,
+    modified: Option<SystemTime>,
+    messages: Arc<Vec<HistoryMessage>>,
+}
+
+static PARSED: Mutex<Vec<Parsed>> = Mutex::new(Vec::new());
+
 /// At most `limit` messages ending just before `before` (the end of the transcript when `None`). The file is
-/// still parsed whole here, natively, but only the window crosses to the UI, which is where the time went.
+/// parsed once while it does not change; only the window crosses to the UI.
 pub fn load_page(
     roots: &Roots,
     source: Source,
@@ -245,15 +260,14 @@ pub fn load_page(
     before: Option<usize>,
     limit: usize,
 ) -> Result<HistoryPage, HistoryError> {
-    let mut messages = load(roots, source, path)?;
+    let messages = parsed(roots, source, path)?;
     let total = messages.len();
     let end = before.map_or(total, |before| before.min(total));
     let start = end.saturating_sub(limit.max(1));
-    messages.truncate(end);
     Ok(HistoryPage {
         total,
         start,
-        messages: messages.split_off(start),
+        messages: messages[start..end].to_vec(),
     })
 }
 
@@ -263,6 +277,15 @@ pub fn load(
     source: Source,
     path: &Path,
 ) -> Result<Vec<HistoryMessage>, HistoryError> {
+    Ok(parsed(roots, source, path)?.to_vec())
+}
+
+/// The parsed transcript of one session, from the kept copy when the file has not changed since it was parsed.
+fn parsed(
+    roots: &Roots,
+    source: Source,
+    path: &Path,
+) -> Result<Arc<Vec<HistoryMessage>>, HistoryError> {
     let root = match source {
         Source::Claude => &roots.claude,
         Source::Codex => &roots.codex,
@@ -273,12 +296,44 @@ pub fn load(
     if !path.starts_with(root.canonicalize()?) {
         return Err(HistoryError::OutsideRoots);
     }
-    Ok(match source {
+    // The stamp is read before the file: a write during the parse then makes the next read parse again.
+    let meta = std::fs::metadata(&path)?;
+    let (len, modified) = (meta.len(), meta.modified().ok());
+    if let Some(messages) = kept(&path, len, modified) {
+        return Ok(messages);
+    }
+    let messages = Arc::new(match source {
         Source::Claude => claude::load(&path)?,
         Source::Codex => codex::load(&path)?,
         Source::Copilot => copilot::load(&path)?,
         Source::Antigravity => antigravity::load(&path)?,
-    })
+    });
+    keep(path, len, modified, Arc::clone(&messages));
+    Ok(messages)
+}
+
+fn kept(path: &Path, len: u64, modified: Option<SystemTime>) -> Option<Arc<Vec<HistoryMessage>>> {
+    let mut list = PARSED.lock().unwrap_or_else(PoisonError::into_inner);
+    let at = list
+        .iter()
+        .position(|item| item.path == path && item.len == len && item.modified == modified)?;
+    let item = list.remove(at);
+    let messages = Arc::clone(&item.messages);
+    list.push(item);
+    Some(messages)
+}
+
+fn keep(path: PathBuf, len: u64, modified: Option<SystemTime>, messages: Arc<Vec<HistoryMessage>>) {
+    let mut list = PARSED.lock().unwrap_or_else(PoisonError::into_inner);
+    list.retain(|item| item.path != path);
+    list.push(Parsed {
+        path,
+        len,
+        modified,
+        messages,
+    });
+    let excess = list.len().saturating_sub(KEPT_FILES);
+    list.drain(..excess);
 }
 
 #[cfg(test)]

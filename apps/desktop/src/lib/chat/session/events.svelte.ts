@@ -111,12 +111,7 @@ import {
     taskWaiters,
 } from './orchestration.svelte';
 import { finishWorkflowIntegration } from './delegation.svelte';
-import {
-    importHistory,
-    keepOtherTurn,
-    rememberMixed,
-    transcripts,
-} from './history.svelte';
+import { importHistory, keepOtherTurn, rememberMixed } from './history.svelte';
 import type { CredentialAttempt } from '../../agents/credential-switch';
 import { credentialScope } from '../../agents/credential-scope';
 import { isBackgroundWait, isLongRunningWork } from '../runs/run-lanes';
@@ -1954,9 +1949,8 @@ function handleEventNow(
                 (sessionLanes[sessionId]?.length ?? 0) > 0 ? 'working' : 'idle';
             persistLocal();
             // The CLI wrote the conversation to disk: pick it up so the row gets its path, in place (same id).
-            // The cached transcript of this chat is now behind the file: a new time makes the next open read it again.
+            // The held list stays: the next open checks its newest messages against the file (see history.svelte).
             session.updatedAt = new Date().toISOString();
-            transcripts.delete(sessionId);
             if (!session.path) void importHistory({ refresh: true });
             // Track the final Markdown animation independently of provider execution and queue delivery.
             const responseBlocks = reply.blocks.flatMap((block, index) =>

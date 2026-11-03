@@ -177,7 +177,7 @@
     zGroups={groups}
     zSearch="fuzzy"
     zSize="sm"
-    class="search-palette"
+    class="search-palette max-w-[600px]"
     zHotkey="mod+p"
     zPlaceholder="Search chats or open a tool…"
     onSelect={select}

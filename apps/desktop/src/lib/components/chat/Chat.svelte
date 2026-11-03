@@ -328,8 +328,13 @@
             workspace.activeId === sessionId;
             page++
         ) {
+            // The place was left at a known file index: the page that holds it is read in one go, not a page at a time.
+            const reach =
+                target.fileIndex === undefined
+                    ? 0
+                    : Math.max(0, chat.older - target.fileIndex);
             // 0 added: another read is in flight (wait a frame for it) or the file gave nothing more.
-            if ((await loadOlder(activeSession())) === 0)
+            if ((await loadOlder(activeSession(), reach)) === 0)
                 await new Promise((resolve) => requestAnimationFrame(resolve));
         }
         if (workspace.activeId !== sessionId) return;
@@ -425,12 +430,16 @@
     // lines show; the Back button of a child chat always returns to the place.
     const readingAt = new SvelteMap<
         string,
-        { id: string; offset: number; atEnd: boolean }
+        { id: string; offset: number; atEnd: boolean; fileIndex?: number }
     >();
     let shownSession = '';
     let restoreFor = '';
-    let restoreTarget: { id: string; offset: number; atEnd: boolean } | null =
-        null;
+    let restoreTarget: {
+        id: string;
+        offset: number;
+        atEnd: boolean;
+        fileIndex?: number;
+    } | null = null;
     function rememberReading(sessionId: string) {
         if (!sessionId || !viewportEl || chat.messages.length === 0) return;
         const top = viewportEl.getBoundingClientRect().top;
@@ -447,6 +456,7 @@
                 id: message.id,
                 offset: Math.round(first.getBoundingClientRect().top - top),
                 atEnd: following,
+                fileIndex: chat.older + Number(first.dataset.index),
             });
     }
     function backToParent(parentId: string) {

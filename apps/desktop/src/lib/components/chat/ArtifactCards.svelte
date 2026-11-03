@@ -451,7 +451,7 @@
                                     items={menuOf(item)}
                                     onopen={() => loadApps(item.path)}
                                     label="Actions for {item.name}"
-                                    class="size-7! rounded-md! bg-background/80! backdrop-blur"
+                                    class="size-7! rounded-md! bg-background/90!"
                                 /></span
                             >
                         </div>
@@ -547,7 +547,7 @@
                                 items={menuOf(item)}
                                 onopen={() => loadApps(item.path)}
                                 label="Actions for {item.name}"
-                                class="size-7! rounded-md! bg-background/80! backdrop-blur"
+                                class="size-7! rounded-md! bg-background/90!"
                             /></span
                         >
                     </div>

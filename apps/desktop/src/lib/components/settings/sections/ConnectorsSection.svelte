@@ -24,6 +24,7 @@
         WORKBUDDY_LOGO,
     } from '../../../agents/brand-icons';
     import { openExternal } from '../../../browser/browser.svelte';
+    import { runUpdateCheck } from '../../../app/platform/updater.svelte';
     import {
         addAccount,
         cancelAccountAdd,
@@ -33,6 +34,7 @@
         installed,
         login,
         logoutNativeConnector,
+        newerVersion,
         refreshAccounts,
         refreshAccount,
         refreshAgyAccount,
@@ -527,6 +529,19 @@
                                     : native
                                       ? 'OAuth'
                                       : tool(card.binary)?.version}
+                            {@const cliUpdate = cliInstalled
+                                ? newerVersion(
+                                      connectors.latest[card.id],
+                                      tool(card.binary)?.version,
+                                  )
+                                : null}
+                            {@const sdkUpdate =
+                                card.id === 'claude'
+                                    ? newerVersion(
+                                          connectors.latest['claude-sdk'],
+                                          CLAUDE_SDK_VERSION,
+                                      )
+                                    : null}
                             {@const list = card.accounts
                                 ? connectors.accounts[card.accounts]
                                 : null}
@@ -628,6 +643,78 @@
                                         class="flex shrink-0 items-center gap-1.5"
                                     >
                                         <!-- The buttons cross-fade when the state changes (install → installing → signed in) instead of cutting over. -->
+                                        <!-- Shown only when npm has a newer release than the installed one; the check is silent. -->
+                                        {#if cliUpdate}
+                                            <span
+                                                class="inline-flex"
+                                                title="Version {cliUpdate} is available"
+                                                in:fade={{
+                                                    duration: 180,
+                                                    delay: 60,
+                                                }}
+                                                out:fade={{ duration: 120 }}
+                                            >
+                                                <ZButton
+                                                    zWave={false}
+                                                    zType="outline"
+                                                    zSize="sm"
+                                                    class="h-8 gap-1.5 px-3 text-sm"
+                                                    disabled={Boolean(working)}
+                                                    onclick={() =>
+                                                        void install(
+                                                            card.id,
+                                                            card.label,
+                                                            'updated',
+                                                        )}
+                                                >
+                                                    <ZIcon
+                                                        zType={icon(
+                                                            working
+                                                                ? 'lucideLoaderCircle'
+                                                                : 'lucideDownload',
+                                                        )}
+                                                        class="size-3.5 {working
+                                                            ? 'animate-spin'
+                                                            : ''}"
+                                                    />
+                                                    <ZTextMorph
+                                                        zText={working
+                                                            ? 'Updating…'
+                                                            : 'Update'}
+                                                    />
+                                                </ZButton>
+                                            </span>
+                                        {/if}
+                                        {#if sdkUpdate}
+                                            <span
+                                                class="inline-flex"
+                                                title="SDK {sdkUpdate} is available. The SDK ships inside AgentDeck, so this checks for an AgentDeck update."
+                                                in:fade={{
+                                                    duration: 180,
+                                                    delay: 60,
+                                                }}
+                                                out:fade={{ duration: 120 }}
+                                            >
+                                                <ZButton
+                                                    zWave={false}
+                                                    zType="outline"
+                                                    zSize="sm"
+                                                    class="h-8 gap-1.5 px-3 text-sm"
+                                                    onclick={() =>
+                                                        void runUpdateCheck()}
+                                                >
+                                                    <ZIcon
+                                                        zType={icon(
+                                                            'lucideDownload',
+                                                        )}
+                                                        class="size-3.5"
+                                                    />
+                                                    <ZTextMorph
+                                                        zText="Update SDK"
+                                                    />
+                                                </ZButton>
+                                            </span>
+                                        {/if}
                                         {#if connectors.detected && !cliInstalled && !native}
                                             <span
                                                 class="inline-flex"

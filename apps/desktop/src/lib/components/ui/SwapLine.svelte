@@ -8,13 +8,20 @@
     // same spot, so the row never holds two lines at once, and the width eases to the new length instead of jumping, so
     // the chips and chevron after it glide. Lines that change faster than HOLD_MS are merged: the latest one waits until
     // the current one has been readable for a moment, and the ones in between are skipped.
+    // `hold`: how long a line stays readable before the next one may replace it (a state label that flips between
+    // "Reasoning" and "Thinking" wants a longer hold than a step name).
     let {
         text,
         shimmer = false,
         class: className = '',
-    }: { text: string; shimmer?: boolean; class?: string } = $props();
+        hold = 420,
+    }: {
+        text: string;
+        shimmer?: boolean;
+        class?: string;
+        hold?: number;
+    } = $props();
 
-    const HOLD_MS = 420;
     const reduced =
         typeof matchMedia === 'function' &&
         matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -37,7 +44,7 @@
             timer = undefined;
             return;
         }
-        const wait = shown ? HOLD_MS - (performance.now() - shownAt) : 0;
+        const wait = shown ? hold - (performance.now() - shownAt) : 0;
         clearTimeout(timer);
         if (wait <= 0) show(line);
         else timer = setTimeout(() => show(text), wait);

@@ -5,7 +5,6 @@
     import {
         ZButton,
         ZIcon,
-        ZLoading,
         ZShowMore,
         ZShimmerText,
         zModalService,
@@ -53,6 +52,17 @@
     import Markdown from '../ui/Markdown.svelte';
     import CodeView from '../files/CodeView.svelte';
     import { languageOf } from '../../files/files';
+
+    // The last non-empty line of a reasoning text, cut for the row.
+    const lastLine = (text: string) => {
+        const line =
+            text
+                .split('\n')
+                .map((part) => part.trim())
+                .filter(Boolean)
+                .at(-1) ?? '';
+        return line.length > 90 ? `${line.slice(0, 89)}…` : line || 'Thinking';
+    };
 
     // A screenshot step: click its picture to see it large.
     const showShot = (event: Event, src: string) => {
@@ -146,6 +156,10 @@
         thoughts.map((thought) => thought.text.trim()).join('\n\n'),
     );
     const thinkingNow = $derived(thoughts.some((thought) => thought.streaming));
+    // The newest line of the reasoning being streamed: shown in the Thinking row like the step a command runs.
+    const thinkingLine = $derived(
+        lastLine(thoughts.findLast((thought) => thought.streaming)?.text ?? ''),
+    );
 
     const current = $derived(liveState(items));
     // Some CLIs only report that a web search ran; they expose neither the result nor useful search detail. Keep those
@@ -436,8 +450,22 @@
                     color="primary"
                 />
             {/key}
-            <SwapLine text={current.label} shimmer class="stream-label" />
-            <span class="stream-label tabular-nums">{seconds}</span>
+            <!-- The time comes first, in a slot that fits "99s": the label after it changes length, and a time placed behind it
+           moved with every swap. -->
+            <span class="stream-label inline-block min-w-[3ch] tabular-nums"
+                >{seconds}</span
+            >
+            <span class="stream-label -mx-0.5" aria-hidden="true">·</span>
+            <SwapLine
+                text={current.label}
+                shimmer
+                class="stream-label"
+                hold={900}
+            /><span
+                class="loading-dots stream-label -ml-1.5 inline-flex"
+                aria-hidden="true"
+                ><span>.</span><span>.</span><span>.</span></span
+            >
         {:else}
             <!-- Always an icon, by the kind of work: the step running now, else what the group did most (terminal, file edit,
            search, skill, a plug for an MCP tool). The bulb only for a group that holds nothing but reasoning. -->
@@ -500,12 +528,22 @@
                                         ? ''
                                         : `${thoughts.length} times`}</span
                                 >
-                                {#if thinkingNow}<ZLoading
-                                        zLoading
-                                        zSpinner={LOADER.reasoning}
-                                        zSize={LOADER_SIZE}
-                                        zColor="primary"
-                                    />{/if}
+                                {#if thinkingNow}
+                                    <ActivityIndicator
+                                        spinner={LOADER.reasoning}
+                                        size={LOADER_SIZE}
+                                        color="primary"
+                                    />
+                                    <SwapLine
+                                        text={thinkingLine}
+                                        shimmer
+                                        hold={900}
+                                        class="font-medium"
+                                    />
+                                    <span class="stream-label tabular-nums"
+                                        >{seconds}</span
+                                    >
+                                {/if}
                                 <ZIcon
                                     zType="lucideChevronRight"
                                     class="ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform duration-300 {view.thinking
