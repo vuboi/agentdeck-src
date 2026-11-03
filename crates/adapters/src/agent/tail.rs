@@ -49,6 +49,10 @@ const HANDOVER: Duration = if cfg!(test) {
 const HANDOVER_MAX: Duration = Duration::from_secs(15 + 30 + 5);
 /// Events held while waiting for the first one that is part of an answer (token counts come before the text).
 const HELD: usize = 64;
+/// The reason an answer of the CLI on its own is told with: background work finished, or a message the user sent while
+/// the chat waited for that work (see `deliver`).
+const AUTO_REASON_TASKS: &str = "background work finished";
+const AUTO_REASON_MESSAGE: &str = "message sent while waiting";
 
 /// At most this many tails read a process at once (each holds a CLI). A turn that ends with background work open while this
 /// many are running parks its process instead, as it did before tails existed.
@@ -61,8 +65,12 @@ struct Tail {
     discard: Arc<AtomicBool>,
     stop: oneshot::Sender<()>,
     interrupt: mpsc::UnboundedSender<()>,
+    inbox: mpsc::UnboundedSender<Inbound>,
     done: oneshot::Receiver<()>,
 }
+
+/// A message the user sent while the tail reads the process, and the answer whether the CLI took it.
+type Inbound = (String, oneshot::Sender<bool>);
 
 /// Registers where tail events are sent. Called once by the app; without it no tail starts.
 pub fn set_sink(sink: EventSink) {
@@ -122,6 +130,26 @@ pub(super) fn discard_chat(chat: &str) {
         tail.discard.store(true, Ordering::Relaxed);
         let _ = tail.stop.send(());
     }
+}
+
+/// Writes a message the user sent to the chat's kept process, while its tail reads it between answers. True only when the
+/// CLI took it: the tail is there, no answer of its own is in progress, and the message was written. False otherwise,
+/// and the caller queues the message as it does for any other turn.
+pub async fn deliver(chat: &str, text: &str) -> bool {
+    let inbox = TAILS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(chat)
+        .map(|tail| tail.inbox.clone());
+    let Some(inbox) = inbox else {
+        return false;
+    };
+    let (ack, taken) = oneshot::channel();
+    if inbox.send((text.to_owned(), ack)).is_err() {
+        return false;
+    }
+    // The tail drops the message (and so the answer) when it ends before it reads it: that is a refusal.
+    taken.await.unwrap_or(false)
 }
 
 /// Stops the answer in progress of a chat's tail (an interrupt). False when the chat has none.
@@ -189,6 +217,7 @@ pub(super) fn start(chat: String, warm: Warm, provider: Arc<dyn Provider>) {
     let (stop_tx, stop_rx) = oneshot::channel();
     let (interrupt_tx, interrupt_rx) = mpsc::unbounded_channel();
     let (done_tx, done_rx) = oneshot::channel();
+    let (inbox_tx, inbox_rx) = mpsc::unbounded_channel();
     let discard = Arc::new(AtomicBool::new(false));
     {
         let mut tails = TAILS
@@ -206,6 +235,7 @@ pub(super) fn start(chat: String, warm: Warm, provider: Arc<dyn Provider>) {
                 discard: Arc::clone(&discard),
                 stop: stop_tx,
                 interrupt: interrupt_tx,
+                inbox: inbox_tx,
                 done: done_rx,
             },
         );
@@ -222,6 +252,7 @@ pub(super) fn start(chat: String, warm: Warm, provider: Arc<dyn Provider>) {
         sink,
         stop_rx,
         interrupt_rx,
+        inbox_rx,
         done_tx,
         discard,
     ));
@@ -305,6 +336,7 @@ async fn run(
     sink: EventSink,
     mut stop: oneshot::Receiver<()>,
     mut interrupts: mpsc::UnboundedReceiver<()>,
+    mut inbound: mpsc::UnboundedReceiver<Inbound>,
     done: oneshot::Sender<()>,
     discard: Arc<AtomicBool>,
 ) {
@@ -323,6 +355,8 @@ async fn run(
     let mut interrupt_at: Option<Instant> = None;
     let mut kill_at: Option<Instant> = None;
     let mut failure: Option<String> = None;
+    // Why the next answer of the CLI is told to the chat (see `AutoTurn`).
+    let mut reason = AUTO_REASON_TASKS;
     let mut dog = Watchdog::new(provider.stall_limit());
     let fate = 'read: loop {
         let wait = if !turn.is_empty() {
@@ -355,6 +389,25 @@ async fn run(
             Some(()) = interrupts.recv(), if !turn.is_empty() && !asked => {
                 interrupt_at = Some(Instant::now());
                 None
+            }
+            Some((text, taken)) = inbound.recv(), if !stopping => {
+                // Only between answers: while the CLI answers on its own the caller queues the message, as it does for
+                // any turn. A message the tail does not take is refused at once, not kept waiting.
+                if !turn.is_empty() {
+                    let _ = taken.send(false);
+                    None
+                } else {
+                    let line = format!("{}\n", provider.warm_message(&text));
+                    let written = warm.stdin.write_all(line.as_bytes()).await.is_ok() && warm.stdin.flush().await.is_ok();
+                    let _ = taken.send(written);
+                    if !written {
+                        failure = Some("could not send the message to the agent".to_owned());
+                        break 'read Fate::Drop;
+                    }
+                    // The answer that follows is the reply to this message, not a report on the background work.
+                    reason = AUTO_REASON_MESSAGE;
+                    None
+                }
             }
             () = tokio::time::sleep_until(interrupt_at.unwrap_or_else(far)), if interrupt_at.is_some() && !asked => {
                 let line = format!("{}\n", interrupt::claude_interrupt_line("agentdeck-stop-auto"));
@@ -416,7 +469,7 @@ async fn run(
                         &chat,
                         &turn,
                         AgentEvent::AutoTurn {
-                            reason: "background work finished".to_owned(),
+                            reason: reason.to_owned(),
                         },
                     );
                     for earlier in held.drain(..) {
@@ -436,6 +489,7 @@ async fn run(
         if ended {
             turn.clear();
             held.clear();
+            reason = AUTO_REASON_TASKS;
             asked = false;
             interrupt_at = None;
             kill_at = None;
@@ -771,6 +825,46 @@ read more
         );
         // Only this chat's process: `reset` would end the other tests' tails too (they share the agent id).
         let _ = crate::agent::warm::take("chat-handover", &key, None);
+    }
+
+    #[tokio::test]
+    async fn a_message_is_written_to_the_tail_until_the_tail_is_stopped() {
+        listen();
+        // The CLI keeps every line it is sent in a file, as a real one reads a message between two answers.
+        let out =
+            std::env::temp_dir().join(format!("agentdeck-tail-inbox-{}.txt", std::process::id()));
+        let out_path = out.to_string_lossy().replace('\\', "/");
+        let body = format!(
+            "read first\necho '{{\"type\":\"system\",\"subtype\":\"background_tasks_changed\",\"tasks\":[{{\"task_id\":\"a\"}}]}}'\necho '{{\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"s1\",\"result\":\"started\"}}'\nwhile read line; do echo \"$line\" >> '{out_path}'; done\n"
+        );
+        let (path, provider) = script("inbox", &body);
+        first_turn(&provider, "chat-inbox").await;
+        assert!(
+            until(|| super::holds("chat-inbox")).await,
+            "no tail reads the process"
+        );
+
+        assert!(
+            deliver("chat-inbox", "hello from the user").await,
+            "the tail did not take the message"
+        );
+        assert!(
+            until(|| std::fs::read_to_string(&out)
+                .is_ok_and(|text| text.contains("hello from the user")))
+            .await,
+            "the CLI did not get the message"
+        );
+
+        assert!(stop("chat-inbox", &mut StopToken::never()).await);
+        assert!(
+            !deliver("chat-inbox", "too late").await,
+            "a stopped tail takes no message"
+        );
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&out);
+        // Only this chat's process: `reset` would end the other tests' tails too (they share the agent id).
+        let key = settings_key("faketail", &provider.args(&request("chat-inbox")), &[]);
+        let _ = crate::agent::warm::take("chat-inbox", &key, None);
     }
 
     #[tokio::test]

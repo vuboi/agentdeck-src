@@ -8,7 +8,12 @@ import { type Message } from '../mock';
 import { parseHandoff, agentdeckLead } from '../../tasks/delegate-task';
 import { HANDBACK_HEAD } from '../runs/handback';
 import { inTauri, clock } from '../../app/platform/history';
-import { mimeOfPath } from '../agent';
+import { mimeOfPath, sendWhileWaiting } from '../agent';
+import {
+    canSendWhileWaiting,
+    hasOpenBackgroundWork,
+} from './send-while-waiting';
+import { activity } from '../runs/activity.svelte';
 import { enqueue, enqueueNext } from '../runs/queue';
 import { getPref, setPref } from '../../app/platform/prefs';
 import {
@@ -228,6 +233,33 @@ export function sendMessage(
     // Ctrl/Cmd+Enter stops the answer that runs and sends this message right after it.
     if (whileRunning === 'interrupt' && hasTurnWork(session.id))
         stopForSend(session.id);
+    // A chat that only waits for its own background work takes the message at once (Claude reads it between answers).
+    const live = liveReplies[session.id];
+    if (
+        canSendWhileWaiting({
+            agent: session.agent,
+            whileRunning,
+            foregroundTurn: Boolean(replies[session.id]) && !live?.autoTurn,
+            streamingText: Boolean(
+                live?.blocks.at(-1)?.kind === 'response' &&
+                (live.blocks.at(-1) as { streaming?: boolean }).streaming,
+            ),
+            backgroundWorkOpen: hasOpenBackgroundWork(activity, session.id),
+            needsUserInput: needsUserInput(session.id),
+        }) &&
+        !queued[session.id]?.length
+    ) {
+        void sendWhileWaitingOrQueue(
+            session.id,
+            text,
+            images,
+            elements,
+            mentions,
+            files,
+            continueCurrentRun(session.id),
+        );
+        return;
+    }
     // The same test the queue runs on (sendNextQueued): a message waits while the chat's turn is busy or a line is waiting.
     if (hasTurnWork(session.id) || queued[session.id]?.length) {
         const runGroup = continueCurrentRun(session.id);
@@ -273,6 +305,37 @@ export function sendMessage(
     send(session.id, text, images, elements, mentions, {
         files,
     });
+}
+
+/** Tries the CLI first (the chat waits for its own background work); a message it does not take goes to the queue. */
+async function sendWhileWaitingOrQueue(
+    sessionId: string,
+    text: string,
+    images: Attachment[],
+    elements: PageElement[],
+    mentions: Mention[],
+    files: FileAttachment[],
+    runGroup: string,
+) {
+    const messageId = nextId();
+    const taken = await sendWhileWaiting(sessionId, text).catch(() => false);
+    if (taken) {
+        messagesOf(sessionId).push(
+            userMessage(text, images, elements, files, runGroup, messageId),
+        );
+        persistLocal(sessionId);
+        return;
+    }
+    enqueue(queued, sessionId, {
+        text,
+        images,
+        elements,
+        mentions,
+        files,
+        runGroup,
+        messageId,
+    });
+    sendNextQueued(sessionId);
 }
 
 /** Uses the same immediate-delivery policy for the composer shortcut and a queued row's Send now action. */
