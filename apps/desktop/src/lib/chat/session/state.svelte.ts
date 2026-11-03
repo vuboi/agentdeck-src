@@ -874,7 +874,8 @@ export function addProject(path: string) {
  */
 /** A new chat nobody wrote in is not kept: Codex does the same, so empty tabs never pile up in the list. */
 export function isEmptyDraft(item: SessionItem) {
-    return item.draft && !localMessages[item.id]?.length;
+    // A chat with its own worktree is kept even when empty: dropping it would leave the worktree folder behind.
+    return item.draft && !item.worktree && !localMessages[item.id]?.length;
 }
 /** Told which sessions went when empty drafts are dropped, so a tab left open on one can go too. */
 let onDraftsDropped: ((ids: string[]) => void) | undefined;
@@ -915,10 +916,11 @@ export function moveDraftToProject(sessionId: string, projectId: string) {
 }
 
 // A new chat starts on "This computer" unless a project is named: the project is picked under the message box.
-export function newSession(projectId = NO_PROJECT) {
+export function newSession(projectId = NO_PROJECT, worktree?: WorktreeInfo) {
     if (projectId === NO_PROJECT) ensureNoProject();
     // One unsent new session at a time: all new-session entry points return to it, preserving typed text and context.
-    const empty = workspace.sessions.find(isEmptyDraft);
+    // A chat that comes with its own worktree never reuses an unsent one: it has a folder of its own.
+    const empty = worktree ? undefined : workspace.sessions.find(isEmptyDraft);
     if (empty) {
         moveDraftToProject(empty.id, projectId);
         workspace.activeId = empty.id;
@@ -941,6 +943,7 @@ export function newSession(projectId = NO_PROJECT) {
         model: start.model,
         contextLimit: DEFAULT_CONTEXT_LIMIT,
         gitBranch: projectId === NO_PROJECT ? undefined : base?.gitBranch,
+        worktree,
         status: 'idle',
         draft: true,
         made: true,

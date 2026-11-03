@@ -203,6 +203,30 @@ pub fn merge(root: &str, branch: &str, base: &str) -> Result<(), String> {
     })
 }
 
+/// Merges `base` into the worktree's branch. Returns the conflicting files; a conflict aborts the merge and nothing is
+/// resolved automatically. Any other failure is returned as an error.
+pub fn sync(path: &str, base: &str) -> Result<Vec<String>, String> {
+    let dir = Path::new(path);
+    let (ok, _, stderr) = git(dir, &["merge", "--no-edit", base])?;
+    if ok {
+        return Ok(Vec::new());
+    }
+    let unmerged = git_ok(dir, &["diff", "--name-only", "--diff-filter=U"])?;
+    let conflicts: Vec<String> = String::from_utf8_lossy(&unmerged)
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let _ = git(dir, &["merge", "--abort"]);
+    if conflicts.is_empty() {
+        return Err(if stderr.is_empty() {
+            "sync failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok(conflicts)
+}
+
 /// Only a folder under `<repo>/.agentdeck/worktrees/` and a branch named `agentdeck/...` may be removed. Anything else
 /// (the main checkout, a user's own worktree, `main`) is refused before git touches it.
 fn guard_removal(top: &Path, path: &str, branch: &str) -> Result<(), String> {
@@ -264,6 +288,11 @@ pub async fn worktree_list(root: String) -> Result<Vec<String>, String> {
 #[tauri::command]
 pub async fn worktree_merge(root: String, branch: String, base: String) -> Result<(), String> {
     blocking(move || merge(&root, &branch, &base)).await
+}
+
+#[tauri::command]
+pub async fn worktree_sync(path: String, base: String) -> Result<Vec<String>, String> {
+    blocking(move || sync(&path, &base)).await
 }
 
 #[tauri::command]
@@ -491,6 +520,33 @@ mod tests {
             assert!(!wt.path.contains('/'), "{}", wt.path);
         }
         remove(&r, &wt.path, &wt.branch, false).unwrap();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn sync_brings_the_base_in_and_reports_a_conflict() {
+        let root = repo();
+        let r = root.to_string_lossy().to_string();
+        let wt = create(&r, "sync", "main").unwrap();
+        std::fs::write(root.join("base.txt"), "base\n").unwrap();
+        commit_all(&root, "base");
+        assert!(sync(&wt.path, "main").unwrap().is_empty());
+        assert!(Path::new(&wt.path).join("base.txt").exists());
+
+        std::fs::write(Path::new(&wt.path).join("a.txt"), "theirs\n").unwrap();
+        commit_all(Path::new(&wt.path), "theirs");
+        std::fs::write(root.join("a.txt"), "ours\n").unwrap();
+        commit_all(&root, "ours");
+        assert_eq!(sync(&wt.path, "main").unwrap(), vec!["a.txt".to_string()]);
+        // The merge was aborted: the worktree is clean and keeps its own content.
+        assert_eq!(status(&wt.path, "main").unwrap().dirty_files, 0);
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&wt.path).join("a.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "theirs\n"
+        );
+        remove(&r, &wt.path, &wt.branch, true).unwrap();
         std::fs::remove_dir_all(&root).ok();
     }
 

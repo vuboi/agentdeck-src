@@ -54,6 +54,7 @@
     import { parseQuestions } from '../../chat/recovery/questions';
     import FileView from '../files/FileView.svelte';
     import ChatHeader from './ChatHeader.svelte';
+    import WorktreeBar from './WorktreeBar.svelte';
     import SubChatBar from './SubChatBar.svelte';
     import DelegateList from '../tasks/DelegateList.svelte';
     import JumpButton from './JumpButton.svelte';
@@ -770,6 +771,7 @@
     aria-label="Conversation"
 >
     <ChatHeader />
+    <WorktreeBar />
 
     <!-- overflow-hidden: the turn ruler can never paint past the conversation area, down onto the composer. -->
     <div class="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">

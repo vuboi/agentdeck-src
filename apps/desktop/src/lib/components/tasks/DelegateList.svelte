@@ -1,6 +1,5 @@
 <script lang="ts">
     import { slide } from 'svelte/transition';
-    import { invoke } from '@tauri-apps/api/core';
     import { ZIcon } from '@shival99/z-ui-svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
@@ -19,14 +18,8 @@
         workspace,
     } from '../../chat/sessions.svelte';
     import { shortCount, totalTokens, usd } from '../../chat/runs/usage';
-    import { projectOf } from '../../chat/session/state.svelte';
     import type { Block } from '../../chat/mock';
-    import { stopTurn } from '../../chat/session/turns.svelte';
-    import {
-        mergeGate,
-        mergeRootOf,
-        removeWorkerWorktree,
-    } from '../../tasks/worktree';
+    import { finishWorktree } from '../../chat/session/worktree-actions';
 
     // Delegated agents attached to a message, with their live state and links to their chats.
     let { blocks }: { blocks: Extract<Block, { kind: 'delegate' }>[] } =
@@ -66,71 +59,6 @@
     // A worker run in its own git worktree (isolation: worktree): its branch, and the two ways out of it.
     const worktreeOf = (childId: string) =>
         workspace.sessions.find((item) => item.id === childId)?.worktree;
-    /** Merges the worker's branch into the project's checked-out branch and removes its worktree, or discards both. Both ask first. */
-    async function finishWorktree(childId: string, merge: boolean) {
-        const session = workspace.sessions.find((item) => item.id === childId);
-        const wt = session?.worktree;
-        const projectPath = session ? projectOf(session)?.path : undefined;
-        if (!session || !wt || !projectPath) return;
-        const root = mergeRootOf(
-            projectPath,
-            workspace.sessions.find((item) => item.id === session.parentId)
-                ?.worktree,
-            wt.base,
-        );
-        try {
-            if (merge) {
-                // Uncommitted files stay out of the merge: offer a commit in the worktree instead, and merge on the next press.
-                const status = await invoke<{
-                    dirtyFiles: number;
-                    ahead: number;
-                }>('worktree_status', { path: wt.path, base: wt.base });
-                const gate = mergeGate(status);
-                if (!gate.ok) {
-                    if (
-                        gate.canCommit &&
-                        confirm(
-                            `${gate.message}. Commit them in the worktree now? The merge is not run; press Merge again after.`,
-                        )
-                    )
-                        await invoke('worktree_commit', {
-                            path: wt.path,
-                            message: 'worker: uncommitted changes',
-                        });
-                    else if (!gate.canCommit) alert(gate.message);
-                    return;
-                }
-            }
-            const ask = merge
-                ? `Merge ${wt.branch} into ${wt.base}, then remove its worktree?`
-                : `Discard worktree ${wt.branch} and its branch? Unmerged changes are lost.`;
-            if (!confirm(ask)) return;
-            if (merge)
-                await invoke('worktree_merge', {
-                    root,
-                    branch: wt.branch,
-                    base: wt.base,
-                });
-            // The worker is stopped and its processes ended before its folder goes (removeWorkerWorktree).
-            await removeWorkerWorktree(
-                {
-                    childId,
-                    root,
-                    worktree: wt,
-                    force: !merge,
-                },
-                {
-                    stopTurn: (id) => stopTurn(id),
-                    stopProcesses: (id) =>
-                        invoke('stop_chat_processes', { chatId: id }),
-                    removeWorktree: (args) => invoke('worktree_remove', args),
-                },
-            );
-            session.worktree = undefined;
-        } catch (error) {
-            alert(String(error));
-        }
-    }
     // A row opens in place to show the delegated agent's run details.
     let openRows = $state<Record<string, boolean>>({});
     const nodeOf = (childId: string) =>

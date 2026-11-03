@@ -589,6 +589,14 @@
             onClick: () => menu && addSession(menu.id),
         },
         {
+            label: 'New session in worktree',
+            icon: 'lucideGitBranch',
+            iconSize: '12',
+            class: ITEM,
+            disabled: !menuProject?.path,
+            onClick: () => menu && void newWorktreeSession(menu.id),
+        },
+        {
             label:
                 menuProject?.path && isPinnedProject(menuProject.path)
                     ? 'Unpin'
@@ -1040,6 +1048,7 @@
         idle: undefined,
     } as const;
     import { openSettings, warnings } from '../../agents/connectors.svelte';
+    import { newWorktreeSession } from '../../chat/session/worktree-actions';
     import { ticker } from '../../app/platform/clock.svelte';
     const limitWarnings = $derived(warnings(ticker.min));
 </script>
@@ -1424,6 +1433,11 @@
                                     >{ctx.node.label}</span
                                 >
                             {/if}
+                            {#if data.session.worktree && editing !== ctx.node.id}<span
+                                    class="max-w-40 shrink truncate text-xs text-muted-foreground"
+                                    title="Worktree branch"
+                                    >{data.session.worktree.branch}</span
+                                >{/if}
                             {#if editing !== ctx.node.id}{@render agentBadge(
                                     data.session,
                                     ctx.node.id,
@@ -1465,6 +1479,11 @@
                                     >{ctx.node.label}</span
                                 >
                             {/if}
+                            {#if data.session.worktree && editing !== ctx.node.id}<span
+                                    class="max-w-40 shrink truncate text-xs text-muted-foreground"
+                                    title="Worktree branch"
+                                    >{data.session.worktree.branch}</span
+                                >{/if}
                             {#if editing !== ctx.node.id}{@render agentBadge(
                                     data.session,
                                     ctx.node.id,
