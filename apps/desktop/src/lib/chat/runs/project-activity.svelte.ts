@@ -1,4 +1,4 @@
-import { SvelteDate, SvelteSet } from 'svelte/reactivity';
+import { SvelteDate } from 'svelte/reactivity';
 import type { Message } from '../mock';
 import { inTauri, isPreviewCopy } from '../../app/platform/history';
 import {
@@ -11,8 +11,11 @@ import {
 } from './project-activity';
 
 export const projectActivityCache = $state<Record<string, string>>({});
-const loaded = new SvelteSet<string>();
-const loading = new SvelteSet<string>();
+// Not state: loadProjectActivity runs in an $effect, and a tracked read here retried a failing folder forever.
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const loaded = new Set<string>();
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const loading = new Set<string>();
 
 async function invoke<T>(command: string, args: Record<string, unknown>) {
     const { invoke: call } = await import('@tauri-apps/api/core');

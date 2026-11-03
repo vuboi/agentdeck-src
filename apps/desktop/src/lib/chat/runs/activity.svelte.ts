@@ -60,8 +60,10 @@ export type Activity = {
     model?: string | null;
 };
 
-/** A saved picture, read back as a data URL; one read per picture. */
-const pictures = new SvelteMap<string, Promise<string>>();
+/** A saved picture, read back as a data URL; one read per picture. A plain cache, not state: `{#await auditImage(..)}`
+ * fills it while the template renders (a SvelteMap write there throws state_unsafe_mutation). */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity
+const pictures = new Map<string, Promise<string>>();
 /** Most pictures kept as data URLs at once; the oldest is read again when it is shown again. */
 const PICTURE_CACHE = 48;
 function rememberPicture(name: string, found: Promise<string>) {

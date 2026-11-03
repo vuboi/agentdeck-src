@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { SvelteMap } from 'svelte/reactivity';
     import { slide } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import {
@@ -223,7 +222,10 @@
     let diffLoading = $state<Record<string, boolean>>({});
     let visibleDiffCounts = $state<Record<string, number>>({});
     let reverting = $state('');
-    const snapshotDiffCache = new SvelteMap<
+    // A plain cache, not state: diffLines fills it while the template renders, and a SvelteMap write there throws
+    // state_unsafe_mutation ("This message could not be drawn").
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const snapshotDiffCache = new Map<
         string,
         {
             before: string;

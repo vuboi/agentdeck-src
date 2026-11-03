@@ -4,7 +4,9 @@
     // ahead of time (`warmFiles`), which also has the Rust side walk the project, so the first search is not the one that waits.
     const PAGE = 30;
     const firstPage = new SvelteMap<string, string[]>();
-    const asking = new SvelteMap<string, Promise<void>>();
+    // Not state: warmFiles runs in $effects, and a tracked read here made each finished read start the next one.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const asking = new Map<string, Promise<void>>();
 
     /** Reads the first page of a project's files in the background. Safe to call often: one read at a time per project. */
     export function warmFiles(root: string): Promise<void> {
