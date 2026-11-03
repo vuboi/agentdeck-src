@@ -35,6 +35,9 @@ export function liveLine(message: Message): LiveLine {
             : 'agent';
         return { label: `Sending task to ${who}`, spinner: LOADER.thinking };
     }
+    // The CLI compacts its context: the model is blocked until it is done, so nothing else runs meanwhile.
+    if (message.compacting)
+        return { label: 'Compressing context', spinner: LOADER.thinking };
     // The provider's background tasks still running in this chat (a sub agent, a shell): while the reply only waits for
     // them, the line says so instead of "Thinking".
     const open = activity

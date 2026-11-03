@@ -422,6 +422,7 @@ async fn run_session(
                             turn_error = Some(event.data["message"].as_str().unwrap_or("Copilot session failed").to_string());
                             None
                         }
+                        "session.compaction_start" | "session.compaction_complete" => compaction(&event.event_type, &event.data),
                         _ => None,
                     };
                     if let Some(mapped) = mapped {
@@ -773,6 +774,21 @@ impl Children {
     }
 }
 
+/// The CLI compacts its own conversation when it nears the window: a start event and a complete event
+/// (`session.compaction_start` / `session.compaction_complete` in github-copilot-sdk `session_events.rs`).
+fn compaction(event_type: &str, data: &Value) -> Option<AgentEvent> {
+    let label = match event_type {
+        "session.compaction_start" => "compacting",
+        "session.compaction_complete" => "compacted",
+        _ => return None,
+    };
+    Some(AgentEvent::Raw {
+        source: "copilot".to_string(),
+        label: label.to_string(),
+        line: data.to_string(),
+    })
+}
+
 /// An event of a sub-agent wrapped so the chat draws it under its parent call; the main agent's events and the ones
 /// that are not drawn per block (usage, errors) pass unchanged.
 fn scoped(parent: Option<String>, event: AgentEvent) -> AgentEvent {
@@ -1065,6 +1081,19 @@ pub(crate) fn emit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_compaction_event_is_passed_on_as_compacting_then_compacted() {
+        assert!(matches!(
+            compaction("session.compaction_start", &json!({})),
+            Some(AgentEvent::Raw { source, label, .. }) if source == "copilot" && label == "compacting"
+        ));
+        assert!(matches!(
+            compaction("session.compaction_complete", &json!({ "success": true })),
+            Some(AgentEvent::Raw { label, .. }) if label == "compacted"
+        ));
+        assert!(compaction("assistant.message", &json!({})).is_none());
+    }
 
     #[test]
     fn the_modes_read_copilot_kinds_as_they_read_the_other_agents() {

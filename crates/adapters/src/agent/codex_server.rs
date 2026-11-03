@@ -360,6 +360,21 @@ impl Translate {
         {
             return self.collab(method, &params["item"]);
         }
+        // Codex compacts its context in a turn: the item starts and completes around the compaction.
+        if matches!(method, "item/started" | "item/completed")
+            && params["item"]["type"] == "contextCompaction"
+        {
+            let label = if method == "item/started" {
+                "compacting"
+            } else {
+                "compacted"
+            };
+            return vec![AgentEvent::Raw {
+                source: "codex".to_string(),
+                label: label.to_string(),
+                line: params.to_string(),
+            }];
+        }
         let item_id = params["itemId"].as_str().unwrap_or_default().to_owned();
         let delta = params["delta"].as_str().unwrap_or_default();
         match method {
@@ -1064,6 +1079,24 @@ mod tests {
         assert_eq!(
             text, "one\n\ntwo",
             "streamed once, the finished copy is not repeated"
+        );
+    }
+
+    #[test]
+    fn a_context_compaction_item_is_passed_on_as_compacting_then_compacted() {
+        let codex = Codex::default();
+        let mut translate = Translate::default();
+        let started =
+            json!({ "item": { "type": "contextCompaction", "id": "c1" }, "threadId": "main" });
+        let events = translate.events(&codex, "item/started", &started);
+        assert!(
+            matches!(&events[..], [AgentEvent::Raw { source, label, .. }] if source == "codex" && label == "compacting")
+        );
+        let completed =
+            json!({ "item": { "type": "contextCompaction", "id": "c1" }, "threadId": "main" });
+        let events = translate.events(&codex, "item/completed", &completed);
+        assert!(
+            matches!(&events[..], [AgentEvent::Raw { source, label, .. }] if source == "codex" && label == "compacted")
         );
     }
 

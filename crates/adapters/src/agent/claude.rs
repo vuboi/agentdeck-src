@@ -412,6 +412,21 @@ impl Claude {
                     line: line.to_string(),
                 }]
             }
+            // The CLI compacts its own context when the chat nears the window: a status line starts it and a boundary ends it.
+            Some("system") if value["status"].as_str() == Some("compacting") => {
+                vec![AgentEvent::Raw {
+                    source: "claude".to_string(),
+                    label: "compacting".to_string(),
+                    line: line.to_string(),
+                }]
+            }
+            Some("system") if value["subtype"].as_str() == Some("compact_boundary") => {
+                vec![AgentEvent::Raw {
+                    source: "claude".to_string(),
+                    label: "compacted".to_string(),
+                    line: line.to_string(),
+                }]
+            }
             Some("result") => {
                 let denied: Vec<PermissionRequest> = value["permission_denials"]
                     .as_array()
@@ -571,6 +586,21 @@ mod tests {
         );
         assert!(Claude
             .parse_line(r#"{"type":"system","subtype":"init"}"#)
+            .is_empty());
+    }
+
+    #[test]
+    fn a_compaction_is_passed_on_as_compacting_then_compacted() {
+        let start = r#"{"type":"system","subtype":"status","status":"compacting"}"#;
+        assert!(
+            matches!(Claude.parse_line(start).as_slice(), [AgentEvent::Raw { source, label, .. }] if source == "claude" && label == "compacting")
+        );
+        let end = r#"{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":180000}}"#;
+        assert!(
+            matches!(Claude.parse_line(end).as_slice(), [AgentEvent::Raw { label, .. }] if label == "compacted")
+        );
+        assert!(Claude
+            .parse_line(r#"{"type":"system","subtype":"status","status":null}"#)
             .is_empty());
     }
 

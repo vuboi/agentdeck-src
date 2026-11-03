@@ -313,6 +313,18 @@
             }}
         />
     {/if}
+{:else if block.kind === 'mark'}
+    <div
+        class="flex items-center gap-3"
+        role="separator"
+        aria-label={block.label}
+    >
+        <span class="chat-rule"></span>
+        <span class="shrink-0 text-[0.6875rem] text-muted-foreground"
+            >{block.label}</span
+        >
+        <span class="chat-rule"></span>
+    </div>
 {:else if block.kind === 'loading'}
     <div class="block-in flex items-center gap-2 text-sm text-muted-foreground">
         <ZLoading

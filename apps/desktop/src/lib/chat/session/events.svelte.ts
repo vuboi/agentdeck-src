@@ -1549,7 +1549,8 @@ function handleEventNow(
                 ? `Tool failed: ${event.output.slice(0, 300)}`
                 : `Finished ${documentTask.progress.replace(/^Agent is running /, '')}`;
     }
-    // A line of the CLI the chat does not show: it is only kept in the Audit log. A model fallback is the one it does show.
+    // A line of the CLI the chat does not show: it is only kept in the Audit log. A model fallback and a context
+    // compaction are the ones it does show: the live line says "Compressing context", and a divider marks where it was.
     if (event.kind === 'raw') {
         if (
             reply &&
@@ -1557,6 +1558,16 @@ function handleEventNow(
             /^model_(refusal_)?fallback$/.test(event.label)
         )
             noteModelFallback(session, reply, event.line);
+        if (reply && event.label === 'compacting') reply.compacting = true;
+        if (reply && event.label === 'compacted') {
+            reply.compacting = false;
+            // An auto-compress turn already says so in its one line.
+            if (!reply.compressed)
+                reply.blocks = [
+                    ...reply.blocks,
+                    { kind: 'mark', label: 'Context compacted' },
+                ];
+        }
         return;
     }
     if (!reply) {
@@ -1573,6 +1584,8 @@ function handleEventNow(
     }
     if (event.kind === 'done' && event.cost_usd != null)
         reply.cost = (reply.cost ?? 0) + event.cost_usd;
+    if (event.kind === 'done' || event.kind === 'error')
+        reply.compacting = false;
     const update = applyAgentEvent(reply.blocks, event);
     reply.blocks = update.blocks;
     if (ownedRun?.listener) {

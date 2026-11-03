@@ -62,6 +62,8 @@ export type Block =
           >;
       }
     | { kind: 'loading'; label: string }
+    /** A line inside a reply where the agent's context was compacted. */
+    | { kind: 'mark'; label: string }
     /** A sub-agent running in its own child chat; `state` follows that chat. */
     | {
           kind: 'delegate';
@@ -133,6 +135,8 @@ export type Message = {
     context?: number;
     /** The reply of an auto-compress (`/compact`) turn. */
     compressed?: boolean;
+    /** The agent's CLI is compacting its context right now: the live line says so. */
+    compacting?: boolean;
     /** Exact cost reported by the CLI when the turn ended. */
     cost?: number;
     /** The agent that wrote this reply. A chat can switch agents, so each reply keeps its own. */
