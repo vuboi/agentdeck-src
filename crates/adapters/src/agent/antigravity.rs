@@ -21,6 +21,8 @@ use super::{AgentEvent, PermissionRequest, Provider, TaskStatus, TurnRequest};
 
 /// What an approval card hands back for a refused command: `agy:command(<command>)`.
 const ALLOW_PREFIX: &str = "agy:command(";
+/// What an approval card hands back for a refused file read: `agy:read_file(<path>)`.
+const READ_ALLOW_PREFIX: &str = "agy:read_file(";
 
 /// The environment variable that carries a turn's rules, so a change of approvals changes the settings key of the process.
 const RULES_ENV: &str = "AGENTDECK_AGY_RULES";
@@ -37,8 +39,15 @@ struct Turn {
     started: std::collections::HashSet<u64>,
     root: Option<PathBuf>,
     file_snapshots: std::collections::HashMap<u64, super::FileSnapshot>,
-    /// Commands `agy` refused to run, in order, with the id of the step that asked for each (the id of its tool call).
-    refused: Vec<(String, String)>,
+    /// Tools `agy` refused to run, in order, with the id of the step that asked for each.
+    refused: Vec<RefusedTool>,
+}
+
+struct RefusedTool {
+    id: String,
+    tool: String,
+    input: String,
+    rule: String,
 }
 
 #[derive(Default)]
@@ -96,8 +105,15 @@ fn ruleable(command: &str) -> bool {
 
 /// The `permissions.allow` rule an approval stands for, if the approval is one of ours and safe to write.
 fn allow_rule(allowed_tool: &str) -> Option<String> {
-    let command = allowed_tool.strip_prefix(ALLOW_PREFIX)?.strip_suffix(')')?;
-    ruleable(command).then(|| format!("command({command})"))
+    let (prefix, rule_name) = if allowed_tool.starts_with(ALLOW_PREFIX) {
+        (ALLOW_PREFIX, "command")
+    } else if allowed_tool.starts_with(READ_ALLOW_PREFIX) {
+        (READ_ALLOW_PREFIX, "read_file")
+    } else {
+        return None;
+    };
+    let value = allowed_tool.strip_prefix(prefix)?.strip_suffix(')')?;
+    ruleable(value).then(|| format!("{rule_name}({value})"))
 }
 
 /// The rules a turn's approvals stand for (only the ones of a refused command can be written, see `allow_rule`).
@@ -243,9 +259,10 @@ impl Provider for Antigravity {
             BREVITY.to_string()
         } else {
             format!(
-                "{}{} {BREVITY}",
+                "{}{}{} {BREVITY}",
                 super::codex::APP_CONTEXT,
-                super::claude::ASK_CONTEXT
+                super::claude::ASK_CONTEXT,
+                super::claude::WORK_CONTEXT
             )
         })
     }
@@ -573,13 +590,34 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
             };
             let parameters = &info["parameters"];
             let mut events = Vec::new();
-            if name == "Bash" {
-                // A refused command fails with a permission message, or ends without any output at all.
-                let message = info["error"]["message"].as_str().unwrap_or_default();
-                let refused = (state == "ERROR" && message.contains("permission"))
-                    || (state == "DONE" && info["output"].is_null());
-                if refused && !turn.refused.iter().any(|(_, command)| command == &input) {
-                    turn.refused.push((index.to_string(), input.clone()));
+            // In headless mode agy cannot ask for approval. A denied command has historically been
+            // reported through `denied_actions`, while a denied file read can only be observed on
+            // the tool step itself. Keep both forms so the UI can ask for approval for either one.
+            let message = info["error"]["message"].as_str().unwrap_or_default();
+            let permission_error =
+                state == "ERROR" && message.to_ascii_lowercase().contains("permission");
+            let no_output_command =
+                raw_name == "run_command" && state == "DONE" && info["output"].is_null();
+            let approval = if raw_name == "run_command" {
+                Some(("Bash", "command"))
+            } else if matches!(raw_name, "read_file" | "view_file") {
+                Some(("Read", "read_file"))
+            } else {
+                None
+            };
+            if (permission_error || no_output_command)
+                && !turn
+                    .refused
+                    .iter()
+                    .any(|refused| refused.id == index.to_string())
+            {
+                if let Some((tool, rule)) = approval {
+                    turn.refused.push(RefusedTool {
+                        id: index.to_string(),
+                        tool: tool.to_string(),
+                        input: input.clone(),
+                        rule: rule.to_string(),
+                    });
                 }
             }
             if turn.started.insert(index) {
@@ -841,28 +879,18 @@ fn finish(result: &Value, turn: &Turn) -> Vec<AgentEvent> {
     {
         events.push(AgentEvent::Session { session_id });
     }
-    // Only refused shell commands can be approved: `agy` names the action, and a command is the one kind whose
-    // exact text we know (from its step) and can put in a rule.
-    let asked = result["denied_actions"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .any(|action| action["action"] == "command");
-    let denied: Vec<PermissionRequest> = if asked {
-        turn.refused
-            .iter()
-            .filter(|(_, command)| ruleable(command))
-            .map(|(id, command)| PermissionRequest {
-                // The id of the refused step's tool call, as Claude's denials carry the id of theirs.
-                id: id.clone(),
-                tool: "Bash".to_string(),
-                summary: command.clone(),
-                allow: format!("{ALLOW_PREFIX}{command})"),
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let denied: Vec<PermissionRequest> = turn
+        .refused
+        .iter()
+        .filter(|refused| ruleable(&refused.input))
+        .map(|refused| PermissionRequest {
+            // The id of the refused step's tool call, as Claude's denials carry the id of theirs.
+            id: refused.id.clone(),
+            tool: refused.tool.clone(),
+            summary: refused.input.clone(),
+            allow: format!("agy:{}({})", refused.rule, refused.input),
+        })
+        .collect();
     if !denied.is_empty() {
         events.push(AgentEvent::PermissionDenied { requests: denied });
     }
@@ -998,6 +1026,10 @@ mod tests {
         assert_eq!(
             allow_rule("agy:command(git commit -m \"x\")").as_deref(),
             Some("command(git commit -m \"x\")")
+        );
+        assert_eq!(
+            allow_rule("agy:read_file(C:/tmp/image.webp)").as_deref(),
+            Some("read_file(C:/tmp/image.webp)")
         );
         // Not ours, empty, or able to end the rule early or span lines: no rule.
         for refused in [
@@ -1157,6 +1189,31 @@ mod tests {
         assert!(matches!(events[at + 1], AgentEvent::Done { .. }));
         // The refused tool failed with the reason the CLI gave.
         assert!(events.iter().any(|event| matches!(event, AgentEvent::ToolResult { is_error: true, output, .. } if output.contains("permission"))));
+    }
+
+    #[test]
+    fn a_denied_read_asks_for_approval_before_done() {
+        let provider = Antigravity::default();
+        let lines = [
+            r#"{"event":"step_update","step_update":{"step_index":7,"state":"ERROR","step_type":"tool","tool_name":"read_file","tool_info":{"name":"read_file","parameters":{"Path":"C:/Users/u/image.webp"},"error":{"message":"permission check failed for read_file"}}}}"#,
+            r#"{"event":"result","result":{"conversation_id":"c","status":"SUCCESS","response":"","denied_actions":[]}}"#,
+        ];
+        let events: Vec<AgentEvent> = lines
+            .iter()
+            .flat_map(|line| provider.parse_line(line))
+            .collect();
+        let at = events
+            .iter()
+            .position(|event| matches!(event, AgentEvent::PermissionDenied { .. }))
+            .expect("a read permission request");
+        let AgentEvent::PermissionDenied { requests } = &events[at] else {
+            unreachable!()
+        };
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].tool, "Read");
+        assert_eq!(requests[0].summary, "C:/Users/u/image.webp");
+        assert_eq!(requests[0].allow, "agy:read_file(C:/Users/u/image.webp)");
+        assert!(matches!(events[at + 1], AgentEvent::Done { .. }));
     }
 
     #[test]

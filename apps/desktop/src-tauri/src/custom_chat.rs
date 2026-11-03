@@ -615,8 +615,9 @@ fn system_prompt(cwd: Option<&Path>, skills: &[ProviderCommand]) -> String {
          To act on a page, call browser_elements for the list of buttons, links and fields with their numbers, then browser_click_element with a number (or the visible text, or a CSS selector); use browser_fill to fill a field by selector. Do not guess coordinates. \
          A dialog, drawer or menu that is open blocks the page behind it: close it first (its close button, or browser_key Escape) before acting on anything else. \
          After each action call browser_elements or browser_dom again to see the result, and check browser_console for errors. \
-         When the message names or attaches a page element (a selector, its text, its markup, where it sits), the change belongs to the code that renders that element: search for the words it shows to find the template, and edit exactly there. Answer in the user's language.{}",
-        project_brief(cwd)
+         When the message names or attaches a page element (a selector, its text, its markup, where it sits), the change belongs to the code that renders that element: search for the words it shows to find the template, and edit exactly there. Answer in the user's language.{}{}",
+        project_brief(cwd),
+        ag_adapters::agent::claude::WORK_CONTEXT
     );
     if !skills.is_empty() {
         prompt.push_str("\n\nSkills you can load with the Skill tool when the task matches (name: what it is for):");

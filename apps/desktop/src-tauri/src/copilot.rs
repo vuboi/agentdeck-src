@@ -829,7 +829,11 @@ async fn start_client(token: String, cwd: Option<&Path>) -> Result<Client, Strin
 fn app_system_message() -> SystemMessageConfig {
     let mut message = SystemMessageConfig::default();
     message.mode = Some("append".to_string());
-    message.content = Some(ag_adapters::agent::codex::APP_CONTEXT.to_string());
+    message.content = Some(format!(
+        "{}{}",
+        ag_adapters::agent::codex::APP_CONTEXT,
+        ag_adapters::agent::claude::WORK_CONTEXT
+    ));
     message
 }
 

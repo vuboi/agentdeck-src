@@ -26,15 +26,37 @@ pub(crate) async fn login_status() -> Login {
     )
     .await
     {
-        Ok(out) => Login {
-            logged_in: Some(out.ok),
-            detail: (!out.stdout.trim().is_empty()).then_some("OpenCode auth available".into()),
-            ..Login::default()
-        },
+        Ok(out) => {
+            let providers = auth_providers(&out.stdout);
+            Login {
+                logged_in: Some(out.ok && !providers.is_empty()),
+                detail: (!providers.is_empty()).then(|| providers.join(", ")),
+                ..Login::default()
+            }
+        }
         Err(_) => Login::default(),
     }
 }
 
+/// Provider names from `opencode auth list --format json` (an array of entries or an object keyed by provider).
+fn auth_providers(stdout: &str) -> Vec<String> {
+    let Ok(json) = serde_json::from_str::<Value>(stdout) else {
+        return Vec::new();
+    };
+    match json {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                ["name", "provider", "id"]
+                    .iter()
+                    .find_map(|key| item[key].as_str())
+                    .map(str::to_owned)
+            })
+            .collect(),
+        Value::Object(map) => map.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
 #[derive(Serialize, Clone)]
 pub(crate) struct OpenCodeQuota {
     pub(crate) windows: Vec<super::UsageWindow>,
@@ -160,4 +182,20 @@ fn now_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs() as i64)
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::auth_providers;
+
+    #[test]
+    fn reads_providers_from_an_array_or_an_object() {
+        assert_eq!(
+            auth_providers(r#"[{"name":"opencode-go"},{"provider":"x"}]"#),
+            vec!["opencode-go", "x"]
+        );
+        assert_eq!(auth_providers(r#"{"a":{}}"#), vec!["a"]);
+        assert!(auth_providers("[]").is_empty());
+        assert!(auth_providers("nope").is_empty());
+    }
 }

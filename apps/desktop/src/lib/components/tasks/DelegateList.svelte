@@ -1,7 +1,7 @@
 <script lang="ts">
     import { slide } from 'svelte/transition';
     import { invoke } from '@tauri-apps/api/core';
-    import { ZIcon, ZShimmerText } from '@shival99/z-ui-svelte';
+    import { ZIcon } from '@shival99/z-ui-svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
     import { ticker } from '../../app/platform/clock.svelte';
@@ -147,7 +147,7 @@
         const flat = text.replace(/\s+/g, ' ').trim();
         return flat.length > 280 ? `${flat.slice(0, 279)}…` : flat;
     };
-    /** What a row shows when opened: agent, model, state, time, tokens, cost, tool calls and the start of its answer. */
+    /** What a row shows when opened: agent, model, time, tokens, cost, tool calls and the start of its answer. */
     function detail(
         block: Extract<Block, { kind: 'delegate' }>,
         settled: string,
@@ -162,14 +162,6 @@
             ? (node.endedAt ?? Date.now()) - node.startedAt
             : stats?.ms;
         return {
-            status:
-                {
-                    queued: 'Queued',
-                    running: 'Working',
-                    done: 'Answered',
-                    failed: 'Failed',
-                    skipped: 'Not run',
-                }[settled] ?? settled,
             time:
                 ms != null && settled !== 'queued' && settled !== 'skipped'
                     ? span(ms)
@@ -217,6 +209,7 @@
             {@const jumpable = settled !== 'queued' && settled !== 'skipped'}
             {@const expanded = openRows[block.childId] ?? false}
             {@const wt = worktreeOf(block.childId)}
+            {@const info = detail(block, settled)}
             <div
                 class="group/row flex w-full items-stretch transition-colors hover:bg-muted/60 {i >
                 0
@@ -246,7 +239,8 @@
                         >{/if}
                     <span class="min-w-0 flex-1 truncate text-muted-foreground"
                         >{lineOf(block.childId, settled) ||
-                            modelLabel(block.model)}</span
+                            modelLabel(block.model)}{#if info.time}
+                            — {info.time}{/if}</span
                     >
                     <span
                         class="inline-flex shrink-0 items-center gap-1 {tone[
@@ -255,17 +249,10 @@
                     >
                         {#if settled === 'running'}
                             <PhyllotaxisLoader className="text-current" />
-                            <span class="stream-label"
-                                ><ZShimmerText
-                                    zBase="var(--primary)"
-                                    zPeak="var(--foreground)"
-                                    zText="Working"
-                                /></span
-                            >
                         {:else if settled === 'done'}
-                            <ZIcon zType="lucideCircleCheck" class="size-3.5" /> Answered
+                            <ZIcon zType="lucideCircleCheck" class="size-3.5" />
                         {:else if settled === 'queued'}
-                            <ZIcon zType="lucideClock" class="size-3.5" /> Queued
+                            <ZIcon zType="lucideClock" class="size-3.5" />
                         {:else if settled === 'skipped'}
                             <ZIcon zType="lucideMinusCircle" class="size-3.5" />
                             <span class="max-w-32 truncate"
@@ -331,7 +318,6 @@
                 </button>
             </div>
             {#if expanded}
-                {@const info = detail(block, settled)}
                 <div
                     transition:slide={{ duration: 300 }}
                     class="flex flex-col gap-1.5 bg-muted/20 px-3 py-2 text-[0.6875rem]"
@@ -346,15 +332,15 @@
                                     block.model,
                                 )}</span
                             >
-                            · {modelLabel(block.model)}</span
+                            > · {modelLabel(block.model)}{#if info.time}
+                                — {info.time}{/if}</span
                         >
-                        <span class={tone[settled]}>{info.status}</span>
                         {#if info.time}<span
                                 class="inline-flex items-center gap-1"
                                 ><ZIcon
                                     zType="lucideClock"
                                     class="size-3"
-                                />{info.time}</span
+                                /></span
                             >{/if}
                         {#if info.tokens}<span
                                 class="inline-flex items-center gap-1"

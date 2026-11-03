@@ -702,6 +702,19 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
             tools.push(tool);
         }
     }
+    for tool in &tools {
+        crate::flow_log::note(
+            "rust",
+            "-",
+            "connectors",
+            &format!(
+                "detect {} => {} (version {})",
+                tool.id,
+                tool.path.as_deref().unwrap_or("not found"),
+                tool.version.as_deref().unwrap_or("-")
+            ),
+        );
+    }
     let claude = if detect_selected(only, "claude") {
         match claude_binary() {
             Some(path) => {
@@ -821,10 +834,36 @@ pub async fn connectors_latest_versions() -> Vec<LatestVersion> {
     rows
 }
 
+/// Every executable named `name` along the search path, in order.
+fn copies_of(name: &str) -> Vec<PathBuf> {
+    let suffixes: &[&str] = if cfg!(windows) {
+        &[".exe", ".cmd", ".bat"]
+    } else {
+        &[""]
+    };
+    let mut found: Vec<PathBuf> = Vec::new();
+    for dir in ag_adapters::agent::runner::augmented_path()
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default()
+    {
+        for suffix in suffixes {
+            let path = dir.join(format!("{name}{suffix}"));
+            if path.is_file() && !found.contains(&path) {
+                found.push(path);
+            }
+        }
+    }
+    found
+}
+
 /// Updates a CLI in the background. Skipped (`Ok(false)`) while a chat turn runs on it, so an update never ends a turn.
 #[tauri::command]
 pub async fn connector_update_idle(app: AppHandle, id: String) -> Result<bool, String> {
     if crate::agent_runs::agent_busy(&id) {
+        return Ok(false);
+    }
+    // A pnpm and an npm copy of the same CLI: updating one leaves the other stale, so leave both alone.
+    if copies_of(&id).len() > 1 {
         return Ok(false);
     }
     connector_install(app, id).await?;
@@ -838,8 +877,20 @@ pub async fn connector_update_idle(app: AppHandle, id: String) -> Result<bool, S
 #[tauri::command]
 pub async fn connector_install(app: AppHandle, id: String) -> Result<(), String> {
     let limit = Duration::from_secs(600);
+    // Update where the CLI already lives (a pnpm-installed CLI stays with pnpm), so no second copy appears; a fresh
+    // install uses pnpm when it is the user's global tool (PNPM_HOME), else npm.
     let node_tool = |package: &str| -> Result<(PathBuf, Vec<String>), String> {
-        if let Some(npm) = which("npm") {
+        let pnpm_owned = match which(&id) {
+            Some(existing) => existing.components().any(|part| {
+                part.as_os_str()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case("pnpm")
+            }),
+            None => std::env::var_os("PNPM_HOME").is_some(),
+        };
+        if let Some(pnpm) = which("pnpm").filter(|_| pnpm_owned) {
+            Ok((pnpm, vec!["add".into(), "-g".into(), package.into()]))
+        } else if let Some(npm) = which("npm") {
             Ok((npm, vec!["install".into(), "-g".into(), package.into()]))
         } else if let Some(pnpm) = which("pnpm") {
             Ok((pnpm, vec!["add".into(), "-g".into(), package.into()]))
@@ -1030,6 +1081,7 @@ async fn connector_login_inner(app: AppHandle, id: String) -> Result<(), String>
         }
         "copilot" => {
             let gh = which("gh").ok_or("GitHub CLI (`gh`) is not installed")?;
+            let _auth_lock = github::AUTH_LOCK.lock().await;
             run_logged_with_idle_timeout(
                 &app,
                 &id,
@@ -1164,6 +1216,14 @@ fn window_label(minutes: i64) -> String {
 /// the tool prints, so the answer of the latest refresh is remembered here. `None` means it has not been checked yet.
 static CODEX_EXPIRED: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
 
+/// `codex-auth` rewrites its registry and account snapshots while switching or refreshing. Serialize every command
+/// that touches that store so `list` cannot observe a transient missing file.
+static CODEX_AUTH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// `cswap` rewrites its account list while adding, switching, or removing an account.
+/// Serialize AgentDeck's reads and writes so Settings cannot parse a half-written list.
+static CSWAP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Rows of the `codex-auth list` table whose usage columns say `401`.
 fn expired_in_list(table: &str) -> Vec<String> {
     table
@@ -1229,11 +1289,25 @@ pub async fn accounts_list(
                 .unwrap_or(true);
             if account_id.is_none() && (refresh || status_not_checked) {
                 if let Some(auth) = &manager {
+                    let _auth_lock = CODEX_AUTH_LOCK.lock().await;
                     // `list` refreshes usage and is the only source for 401 status, which is absent from the registry.
                     // On Windows `command()` routes `.cmd` shims through cmd.exe. Do not show stale registry rows as
                     // switchable if the first status check failed.
-                    let out = capture(auth, &["list"], Duration::from_secs(40)).await?;
-                    if !out.ok {
+                    let mut out = capture(auth, &["list"], Duration::from_secs(40)).await?;
+                    // codex-auth can briefly expose FileNotFound while another process has just replaced an account
+                    // snapshot. Retry only that transient shape; auth and CLI errors must still reach the UI.
+                    if !out.ok && failure(&out).contains("FileNotFound") {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        out = capture(auth, &["list"], Duration::from_secs(40)).await?;
+                    }
+                    if !out.ok && failure(&out).contains("FileNotFound") {
+                        // A broken or concurrently replaced codex-auth snapshot must not hide the accounts that
+                        // are still available in registry.json. Their live usage requests below remain the source
+                        // of truth for expired accounts.
+                        if let Ok(mut known) = CODEX_EXPIRED.lock() {
+                            *known = Some(Vec::new());
+                        }
+                    } else if !out.ok {
                         // Say why: the first line of its own message, so a broken shim or a path problem is visible.
                         let why = [out.stderr.as_str(), out.stdout.as_str()]
                             .iter()
@@ -1245,13 +1319,15 @@ pub async fn accounts_list(
                             "codex-auth list failed while checking account status: {why}"
                         ));
                     }
-                    if !has_account_rows_in_list(&out.stdout) {
+                    if out.ok && !has_account_rows_in_list(&out.stdout) {
                         return Err(
                             "codex-auth list returned no account rows to verify".to_string()
                         );
                     }
-                    if let Ok(mut known) = CODEX_EXPIRED.lock() {
-                        *known = Some(expired_in_list(&out.stdout));
+                    if out.ok {
+                        if let Ok(mut known) = CODEX_EXPIRED.lock() {
+                            *known = Some(expired_in_list(&out.stdout));
+                        }
                     }
                 }
             }
@@ -1338,6 +1414,7 @@ pub async fn accounts_list(
                     error: None,
                 });
             };
+            let _cswap_lock = CSWAP_LOCK.lock().await;
             match capture(&cswap, &["list", "--json"], Duration::from_secs(40)).await {
                 Ok(out) => match parse_cswap(&out.stdout) {
                     Ok(accounts) => Ok(Accounts {
@@ -1400,6 +1477,16 @@ pub async fn account_switch(provider: String, id: String) -> Result<(), String> 
         other => return Err(format!("`{other}` has no accounts to switch")),
     };
     let program = which(tool).ok_or_else(|| format!("`{tool}` is not installed"))?;
+    let _auth_lock = if provider == "codex" {
+        Some(CODEX_AUTH_LOCK.lock().await)
+    } else {
+        None
+    };
+    let _cswap_lock = if provider == "claude" {
+        Some(CSWAP_LOCK.lock().await)
+    } else {
+        None
+    };
     let out = capture(&program, &args, Duration::from_secs(30)).await?;
     if out.ok {
         Ok(())
@@ -1461,6 +1548,7 @@ async fn account_add_inner(app: AppHandle, provider: String) -> Result<(), Strin
     match provider.as_str() {
         "codex" => {
             let auth = which("codex-auth").ok_or("`codex-auth` is not installed")?;
+            let _auth_lock = CODEX_AUTH_LOCK.lock().await;
             run_logged_with_idle_timeout(
                 &app,
                 "codex",
@@ -1486,10 +1574,12 @@ async fn account_add_inner(app: AppHandle, provider: String) -> Result<(), Strin
                 Some("claude"),
             )
             .await?;
+            let _cswap_lock = CSWAP_LOCK.lock().await;
             run_logged(&app, "claude", &cswap, &["add"], Duration::from_secs(60)).await
         }
         "copilot" => {
             let gh = which("gh").ok_or("GitHub CLI (`gh`) is not installed")?;
+            let _auth_lock = github::AUTH_LOCK.lock().await;
             run_logged_with_idle_timeout(
                 &app,
                 "copilot",
@@ -1509,6 +1599,7 @@ async fn account_add_inner(app: AppHandle, provider: String) -> Result<(), Strin
 #[tauri::command]
 pub async fn account_adopt() -> Result<(), String> {
     let cswap = which("cswap").ok_or("`cswap` is not installed")?;
+    let _cswap_lock = CSWAP_LOCK.lock().await;
     let out = capture(&cswap, &["add"], Duration::from_secs(60)).await?;
     if out.ok {
         Ok(())
@@ -1525,9 +1616,7 @@ pub async fn account_remove(provider: String, id: String) -> Result<(), String> 
     match provider.as_str() {
         "codex" => {
             let auth = which("codex-auth").ok_or("`codex-auth` is not installed")?;
-            // Several removals can be asked at once; codex-auth edits one registry file, so they run in turn.
-            static REMOVE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-            let _turn = REMOVE_LOCK.lock().await;
+            let _auth_lock = CODEX_AUTH_LOCK.lock().await;
             let out = capture(&auth, &["remove", id], Duration::from_secs(30)).await?;
             if out.ok {
                 Ok(())
@@ -1537,6 +1626,7 @@ pub async fn account_remove(provider: String, id: String) -> Result<(), String> 
         }
         "claude" => {
             let cswap = which("cswap").ok_or("`cswap` is not installed")?;
+            let _cswap_lock = CSWAP_LOCK.lock().await;
             let listed = capture(&cswap, &["list", "--json"], Duration::from_secs(30)).await?;
             let accounts = parse_cswap(&listed.stdout)?;
             match accounts.iter().find(|account| account.id == id) {
@@ -1563,6 +1653,7 @@ pub async fn account_remove(provider: String, id: String) -> Result<(), String> 
 #[tauri::command]
 pub async fn codex_auto_switch(enabled: bool, five_hour: u8, weekly: u8) -> Result<(), String> {
     let auth = which("codex-auth").ok_or("`codex-auth` is not installed")?;
+    let _auth_lock = CODEX_AUTH_LOCK.lock().await;
     let five = five_hour.min(99).to_string();
     let week = weekly.min(99).to_string();
     let thresholds = capture(

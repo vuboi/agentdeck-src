@@ -10,7 +10,10 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use super::{AgentEvent, FileSnapshot, Provider, TurnRequest};
+use super::{
+    allow_entry, summarize_tool_input, AgentEvent, FileSnapshot, PermissionRequest, Provider,
+    TurnRequest,
+};
 
 #[derive(Default)]
 pub struct CommandCode {
@@ -72,7 +75,11 @@ impl Provider for CommandCode {
     }
 
     fn opening_context(&self, _req: &TurnRequest) -> Option<String> {
-        Some(LANGUAGE_CONTEXT.to_owned())
+        Some(format!(
+            "{LANGUAGE_CONTEXT}{}{}",
+            super::claude::ASK_CONTEXT,
+            super::claude::WORK_CONTEXT
+        ))
     }
 
     fn prepare(&self, req: &TurnRequest) -> Result<(), String> {
@@ -112,13 +119,29 @@ impl CommandCode {
             "tool_queued" => self.tool_call(event),
             "tool_completed" => self.tool_finished(event, false),
             "tool_errored" => self.tool_finished(event, true),
-            "tool_denied" => vec![AgentEvent::ToolResult {
-                id: text_field(event, "toolCallId").unwrap_or_default(),
-                output: "Not allowed in this permission mode".into(),
-                is_error: true,
-                image: None,
-                change: None,
-            }],
+            "tool_denied" => {
+                let id = text_field(event, "toolCallId").unwrap_or_default();
+                let raw_name = text_field(event, "toolName").unwrap_or_default();
+                let name = canonical_tool(&raw_name);
+                let input = &event["input"];
+                vec![
+                    AgentEvent::ToolResult {
+                        id: id.clone(),
+                        output: "Not allowed in this permission mode".into(),
+                        is_error: true,
+                        image: None,
+                        change: None,
+                    },
+                    AgentEvent::PermissionDenied {
+                        requests: vec![PermissionRequest {
+                            id,
+                            tool: name.to_owned(),
+                            summary: summarize_tool_input(name, input),
+                            allow: allow_entry(name, input),
+                        }],
+                    },
+                ]
+            }
             "run_error" => vec![AgentEvent::Error {
                 message: event["error"]["message"]
                     .as_str()
@@ -385,5 +408,20 @@ mod tests {
                 change: None,
             }]
         );
+    }
+
+    #[test]
+    fn denied_tool_becomes_a_permission_request() {
+        let provider = CommandCode::default();
+        let events = provider.parse_line(
+            r#"{"type":"event","event":{"type":"tool_denied","toolCallId":"t3","toolName":"shell_command","input":{"command":"git push"}}}"#,
+        );
+        assert!(matches!(
+            events.get(1),
+            Some(AgentEvent::PermissionDenied { requests })
+                if requests[0].id == "t3"
+                    && requests[0].tool == "Bash"
+                    && requests[0].allow == "Bash(git push)"
+        ));
     }
 }

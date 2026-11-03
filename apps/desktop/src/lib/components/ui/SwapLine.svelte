@@ -14,11 +14,13 @@
         text,
         shimmer = false,
         class: className = '',
+        containerClass = '',
         hold = 420,
     }: {
         text: string;
         shimmer?: boolean;
         class?: string;
+        containerClass?: string;
         hold?: number;
     } = $props();
 
@@ -69,7 +71,7 @@
 </script>
 
 <span
-    class="swap-line relative inline-grid min-w-0 max-w-full overflow-hidden align-middle"
+    class="swap-line relative inline-grid min-w-0 max-w-full overflow-hidden align-middle {containerClass}"
     style:width={width ? `${width}px` : undefined}
     style:transition-duration="{ms(260)}ms"
     style:transition-property={rising ? 'none' : 'width'}

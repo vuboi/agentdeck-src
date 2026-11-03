@@ -30,8 +30,6 @@ struct Tab {
 #[derive(Default)]
 struct State {
     active: String,
-    /// Which chat last opened a page in each tab: a tab driven by one chat is not taken over by another.
-    owners: HashMap<String, String>,
     /// The tab each chat drives: what its tools act on when they do not name a `tab_id`.
     current: HashMap<String, String>,
     /// The order in which chats first acted on a page: the number in the label of their pointer.
@@ -117,22 +115,20 @@ async fn lock_open_server(server: &str) -> tokio::sync::OwnedMutexGuard<()> {
     lock.lock_owned().await
 }
 
-/// The turn of `chat` ended: the tab it drove is no longer held, so another chat may reuse it. The chat keeps its
-/// `current` tab, so its next turn still goes there.
-pub fn release_chat(chat: &str) {
-    if chat.is_empty() {
-        return;
-    }
-    if let Ok(mut state) = STATE.lock() {
-        state.owners.retain(|_, owner| owner != chat);
-    }
+/// Whether an input action holds the tab now (see `TAB_LOCKS`): a click, a type or a drag of an agent is in progress.
+/// Between actions a tab is free, whichever chat opened it.
+fn tab_busy(tab: &str) -> bool {
+    TAB_LOCKS
+        .lock()
+        .ok()
+        .and_then(|locks| locks.get(tab).map(|lock| lock.try_lock().is_err()))
+        .unwrap_or(false)
 }
 
-/// The pages were closed (the app window reloaded): no tab is held or driven any more.
+/// The pages were closed (the app window reloaded): no tab is driven any more.
 pub fn reset() {
     if let Ok(mut state) = STATE.lock() {
         state.active.clear();
-        state.owners.clear();
         state.current.clear();
     }
 }
@@ -550,7 +546,7 @@ async fn open_page(
         reusable_tab(app, chat, url)
     };
     // Nothing to reuse: a new tab, unless the tab in front is free and blank (then the page goes there).
-    let new_tab = requested.unwrap_or_else(|| own.is_none() && front_taken(chat));
+    let new_tab = requested.unwrap_or_else(|| own.is_none() && front_taken());
     // Wait for an action already using the selected tab instead of opening a duplicate page beside it.
     let _tab_lock = match own.as_deref() {
         Some(tab) => lock_tab(tab).await,
@@ -578,7 +574,6 @@ async fn open_page(
             if shown.trim_end_matches('/').starts_with(&wanted) {
                 if !chat.is_empty() {
                     let mut state = STATE.lock().map_err(|_| "busy".to_string())?;
-                    state.owners.insert(tab.clone(), chat.to_string());
                     state.current.insert(chat.to_string(), tab.clone());
                 }
                 return Ok(
@@ -633,24 +628,20 @@ fn server_of(url: &str) -> String {
     )
 }
 
-/// A tab a page can open in without a new one: the chat's own tab, else a tab already on the same server that no other
-/// chat drives. A tab in front that is among them wins.
+/// A tab a page can open in without a new one: the chat's own tab, else a tab already on the same server. A tab is
+/// skipped only while an input action holds it (`tab_busy`). A tab in front that is among them wins.
 fn reusable_tab(app: &AppHandle, chat: &str, url: &str) -> Option<String> {
     let alive = |tab: &str| !tab.is_empty() && app.get_webview(&format!("browser-{tab}")).is_some();
     let state = STATE.lock().ok()?;
-    let free = |tab: &str| state.owners.get(tab).is_none_or(|owner| owner == chat);
-    if let Some(tab) = state
-        .current
-        .get(chat)
-        .filter(|tab| alive(tab) && free(tab))
-    {
+    let free = |tab: &str| alive(tab) && !tab_busy(tab);
+    if let Some(tab) = state.current.get(chat).filter(|tab| free(tab)) {
         return Some(tab.clone());
     }
     // The address a tab was asked for is kept while its error page shows, so that tab is still found on its server.
     let candidates: Vec<(String, String)> = state
         .tabs
         .keys()
-        .filter(|id| alive(id) && free(id))
+        .filter(|id| free(id))
         .filter_map(|id| Some((id.clone(), shown_address(&state, id)?)))
         .collect();
     same_server_tab(&candidates, &state.active, &server_of(url))
@@ -673,8 +664,8 @@ fn same_server_tab(candidates: &[(String, String)], active: &str, server: &str) 
     found.first().map(|(id, _)| id.clone())
 }
 
-/// Whether the tab in front is taken: it shows a page, or another chat opened and drives it. Such a tab is left alone.
-fn front_taken(chat: &str) -> bool {
+/// Whether the tab in front is taken: it shows a page, or an input action is using it now. Such a tab is left alone.
+fn front_taken() -> bool {
     let Ok(state) = STATE.lock() else {
         return false;
     };
@@ -682,11 +673,7 @@ fn front_taken(chat: &str) -> bool {
         .tabs
         .get(&state.active)
         .is_some_and(|tab| !tab.url.is_empty());
-    shows_a_page
-        || state
-            .owners
-            .get(&state.active)
-            .is_some_and(|owner| !chat.is_empty() && owner != chat)
+    shows_a_page || tab_busy(&state.active)
 }
 
 /// The MIME type of a file, from its extension, for the file the agent uploads.
@@ -1255,7 +1242,7 @@ pub(crate) async fn ask(
 
 #[cfg(test)]
 mod tests {
-    use super::{authorize, is_post_request, same_server_tab, server_of};
+    use super::{authorize, is_post_request, same_server_tab, server_of, tab_busy, TAB_LOCKS};
 
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 
@@ -1365,6 +1352,23 @@ mod tests {
             same_server_tab(&tabs, "tab-a", "http://127.0.0.1:4300"),
             None
         );
+    }
+
+    #[test]
+    fn a_tab_is_busy_only_while_an_input_action_holds_it() {
+        let tab = "test-busy-tab";
+        let lock = TAB_LOCKS
+            .lock()
+            .unwrap()
+            .entry(tab.to_string())
+            .or_default()
+            .clone();
+        assert!(!tab_busy(tab));
+        let action = lock.clone().try_lock_owned().unwrap();
+        assert!(tab_busy(tab));
+        drop(action);
+        assert!(!tab_busy(tab));
+        assert!(!tab_busy("test-never-locked"));
     }
 }
 

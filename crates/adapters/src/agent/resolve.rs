@@ -69,6 +69,7 @@ fn common_dirs(
         "windows" => {
             push(under(appdata, &["npm"]));
             push(under(local, &["pnpm"]));
+            push(under(local, &["agy", "bin"]));
             push(std::env::var_os("PNPM_HOME").map(PathBuf::from));
             push(std::env::var_os("NVM_BIN").map(PathBuf::from));
             push(std::env::var_os("FNM_MULTISHELL_PATH").map(PathBuf::from));
@@ -232,10 +233,84 @@ static PATH_CACHE: PathCache = Mutex::new(None);
 type BinaryCache = Mutex<Vec<(String, Option<OsString>, Instant, PathBuf)>>;
 static BINARY_CACHE: BinaryCache = Mutex::new(Vec::new());
 
+/// The User and Machine PATH as the registry holds them now. A process started before a CLI was installed (an app
+/// the installer reopens) keeps the old PATH; the registry already lists the new folder. Empty off Windows.
+fn registry_path() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut dirs = Vec::new();
+        for key in [
+            r"HKCU\Environment",
+            r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ] {
+            let Ok(output) = std::process::Command::new("reg")
+                .args(["query", key, "/v", "Path"])
+                .creation_flags(0x0800_0000)
+                .output()
+            else {
+                continue;
+            };
+            let text = String::from_utf8_lossy(&output.stdout);
+            for line in text.lines() {
+                let Some((_, value)) = line
+                    .trim()
+                    .strip_prefix("Path")
+                    .and_then(|rest| rest.trim_start().split_once("REG_"))
+                    .and_then(|(_, rest)| rest.split_once(char::is_whitespace))
+                else {
+                    continue;
+                };
+                dirs.extend(
+                    value
+                        .trim()
+                        .split(';')
+                        .filter(|part| !part.is_empty())
+                        .map(|part| PathBuf::from(expand_env(part))),
+                );
+            }
+        }
+        dirs
+    }
+    #[cfg(not(windows))]
+    Vec::new()
+}
+
+/// Replaces each `%NAME%` with the environment variable's value; unknown names stay as written.
+#[cfg(windows)]
+fn expand_env(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find('%') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        match after.find('%') {
+            Some(end) => {
+                let name = &after[..end];
+                match std::env::var(name) {
+                    Ok(value) => out.push_str(&value),
+                    Err(_) => out.push_str(&rest[start..start + end + 2]),
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
 fn build_augmented_path() -> Option<OsString> {
-    let current = std::env::var_os("PATH")
+    let mut current = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
         .unwrap_or_default();
+    for dir in registry_path() {
+        if !current.contains(&dir) {
+            current.push(dir);
+        }
+    }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);

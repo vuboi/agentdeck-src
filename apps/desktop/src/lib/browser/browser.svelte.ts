@@ -5,6 +5,7 @@ import { listenToNetwork } from './devtools-net.svelte';
 import { inTauri, isPreviewCopy } from '../app/platform/history';
 import { stripAnsi } from '../app/text/ansi';
 import { layout, setToolsOpen } from '../app/ui/layout.svelte';
+import { isRunning } from '../chat/session/turns.svelte';
 import { pageAddress, samePreviewAddress, serverOf } from './preview-address';
 
 export type Device = 'desktop' | 'tablet' | 'mobile';
@@ -607,13 +608,10 @@ export const resetBrowser = () =>
         ? call('browser_reset').catch(() => {})
         : Promise.resolve();
 
-/** A chat's turn ended: the tabs its agent drove are free for other chats to reuse (bridge `release_chat`). The pages stay. */
-export function releaseBrowserChat(chat: string): Promise<void> {
+/** A chat's turn ended: the tabs its agent drove are no longer its own. The pages stay. */
+export function releaseBrowserChat(chat: string) {
     for (const tab of browser.tabs)
         if (tab.chatId === chat) tab.chatId = undefined;
-    return inTauri() && !isPreviewCopy()
-        ? call('browser_release_chat', { chat }).catch(() => {})
-        : Promise.resolve();
 }
 /** A picture of the front page taken by the engine (PNG data URL). */
 export const capturePage = (scale = 1, fullPage = false) =>
@@ -969,12 +967,14 @@ export const isLocalUrl = (url: string) =>
 
 /**
  * A tab `url` can open in without a new one: the front tab when it is on that server, else another tab on it. A tab a
- * chat drives (`chatId`, until its turn ends) is left to that chat, as the bridge does.
+ * chat drives is left to that chat only while the chat's turn runs, as the bridge does.
  */
 function reusableTab(url: string): BrowserTab | undefined {
     const server = serverOf(url);
     const free = (tab: BrowserTab) =>
-        !tab.chatId && !!tab.url && serverOf(tab.url) === server;
+        !(tab.chatId && isRunning(tab.chatId)) &&
+        !!tab.url &&
+        serverOf(tab.url) === server;
     const front = activeTab();
     return free(front) ? front : browser.tabs.find(free);
 }

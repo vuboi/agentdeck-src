@@ -184,6 +184,7 @@
         if (!detected) return undefined;
         if (id === 'agy') return detected.antigravity;
         if (id === 'muse-code') return detected.muse_code;
+        if (id === 'command-code') return detected.command_code;
         return (detected as unknown as Record<string, Login | undefined>)[id];
     };
 
@@ -305,7 +306,11 @@
     const needsAgyLogin = (
         account: { expired: boolean; status: string | null },
         error: string | null | undefined,
-    ) => account.expired || authFailure(account.status) || authFailure(error);
+    ) =>
+        account.expired ||
+        authFailure(account.status) ||
+        // A lapsed access token renews itself when agy runs on that account, so it is not a sign-in problem.
+        (!/run agy once to renew/i.test(error ?? '') && authFailure(error));
 
     // Keep one shared grid so accounts with missing or different quota data cannot split the layout.
     const agyAccounts = $derived(
@@ -317,6 +322,18 @@
     async function refreshCardAccounts(card: Card) {
         if (isRefreshingCard(card.id)) return;
         refreshingCards[card.id] = true;
+        // Do not keep stale account actions clickable while a native refresh is replacing the list.
+        // A failed codex-auth read can otherwise leave removed accounts on screen and make Remove target
+        // an account that no longer exists in the CLI registry.
+        if (card.accounts && card.id !== 'agy') {
+            const current = connectors.accounts[card.accounts];
+            if (current)
+                connectors.accounts[card.accounts] = {
+                    ...current,
+                    accounts: [],
+                    error: null,
+                };
+        }
         // Let the skeleton paint before the native command starts and updates the cached account state.
         await tick();
         try {
@@ -370,13 +387,13 @@
     {#if card?.image}<img
             src={card.image}
             alt=""
-            class="size-3.5 shrink-0 rounded-xs object-contain"
+            class="block size-3.5 shrink-0 rounded-xs object-contain"
         />{:else if card?.svg}<ZIcon
             zSvg={card.svg}
-            class="size-3.5"
+            class="block size-3.5"
         />{:else if card}<ZIcon
             zType={icon(card.brand)}
-            class="size-3.5"
+            class="block size-3.5"
         />{/if}
 {/snippet}
 

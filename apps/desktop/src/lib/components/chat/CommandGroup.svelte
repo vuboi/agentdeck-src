@@ -459,7 +459,7 @@
 <div class="block-in flex flex-col text-sm">
     <button
         type="button"
-        class="flex h-6 w-fit max-w-full cursor-pointer items-center gap-2 rounded-md text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        class="flex h-6 w-full min-w-0 max-w-full cursor-pointer items-center gap-2 whitespace-nowrap text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
         aria-expanded={hasDetails && view.open}
         disabled={!hasDetails}
         onclick={() => hasDetails && toggleOpen()}
@@ -482,6 +482,7 @@
                 text={current.label}
                 shimmer
                 class="stream-label"
+                containerClass="min-w-0"
                 hold={900}
             /><span
                 class="loading-dots stream-label -ml-1.5 inline-flex"
@@ -525,6 +526,7 @@
                 shimmer={Boolean(runningStep) || working || Boolean(status)}
                 hold={status ? 900 : 420}
                 class="font-medium"
+                containerClass="min-w-0"
             />
             {#if status}<span
                     class="loading-dots stream-label -ml-1.5 inline-flex"

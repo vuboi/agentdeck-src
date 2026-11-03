@@ -439,6 +439,81 @@ messages.push(
     },
 );
 
+// Keep the chat mock's sub-agent and activity surfaces visible together at the end of the transcript.
+messages.push(
+    {
+        id: 'u-chat-work-demo',
+        role: 'user',
+        time: '11:34',
+        blocks: [
+            {
+                kind: 'response',
+                text: 'Please split the review between two sub-agents and keep the checks visible here.',
+            },
+            {
+                kind: 'delegate',
+                childId: 's-chat-work-demo-1',
+                agent: 'codex',
+                model: 'gpt-5.6-luna',
+                state: 'asking',
+                note: 'Review the task card layout',
+            },
+            {
+                kind: 'delegate',
+                childId: 's-chat-work-demo-2',
+                agent: 'claude',
+                model: 'claude-sonnet-5-5',
+                state: 'done',
+                note: 'Check the responsive spacing',
+            },
+        ],
+    },
+    {
+        id: 'a-chat-work-demo',
+        role: 'assistant',
+        time: '11:34',
+        at: new Date(Date.now() - 18_000).toISOString(),
+        ms: 18_000,
+        agent: 'claude',
+        blocks: [
+            {
+                kind: 'command',
+                id: 'c-chat-work-demo-agent',
+                command:
+                    'Agent  {"description":"Review the task card layout","subagent_type":"explore"}',
+                output: '',
+                status: 'running',
+                task: {
+                    status: 'progress',
+                    label: 'gpt-5.6-luna: Review the task card layout',
+                    summary:
+                        'Inspecting TaskCards.svelte and comparing the inline spacing.',
+                    tools: 3,
+                    startedAt: Date.now() - 16_000,
+                },
+            },
+            {
+                kind: 'command',
+                id: 'c-chat-work-demo-activity',
+                command: 'Bash  pnpm --filter desktop check',
+                output: '',
+                status: 'running',
+                task: {
+                    status: 'started',
+                    label: 'Type check',
+                    summary: 'Checking the desktop package in the background.',
+                    tools: 1,
+                    startedAt: Date.now() - 8_000,
+                },
+            },
+            {
+                kind: 'response',
+                text: 'The sub-agents are listed below your request, while their live work and activity stay visible in this reply.',
+            },
+        ],
+    },
+);
+
 // Fake questions to try the cards in the browser mock: the last reply asks one of them, picked by the address
 // (`?ask=quick`, `?ask=quick3`, `?ask=multi`; `quick` when there is none). Not used in the desktop app.
 const ASKS: Record<string, string> = {

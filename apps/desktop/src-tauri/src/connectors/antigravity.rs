@@ -25,6 +25,11 @@ use super::{
 };
 use super::{antigravity_login, capture, parse_iso, version_of, which, UsageWindow};
 
+/// Antigravity keeps its account index and credentials in separate stores. Serialize account
+/// reads and mutations so Settings cannot observe the two stores between updates.
+static ACCOUNT_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct QuotaGroup {
     pub(crate) id: String,
@@ -216,6 +221,7 @@ pub(crate) fn agy_sign_in() -> Option<Value> {
 
 /// Saved Antigravity accounts. The JSON index stores emails only; each OAuth token is held by Windows Credential Manager.
 pub async fn antigravity_accounts_list() -> Vec<AgyAccount> {
+    let _account_lock = ACCOUNT_LOCK.lock().await;
     #[cfg(windows)]
     adopt_unsaved_agy_sign_in().await;
     let active = agy_saved_active_email().or_else(|| antigravity_login().email);
@@ -288,6 +294,7 @@ pub(crate) fn agy_saved_active_email() -> Option<String> {
 
 /// Saves the Antigravity account currently signed in on this machine. Call after signing in with `agy`.
 pub async fn antigravity_account_adopt() -> Result<(), String> {
+    let _account_lock = ACCOUNT_LOCK.lock().await;
     #[cfg(not(windows))]
     return Err(
         "Antigravity account switching currently requires Windows Credential Manager".to_string(),
@@ -327,6 +334,7 @@ impl Drop for RestoreSignIn {
 
 /// Saves the current credential before clearing the shared sign-in, then waits for the desktop app to finish OAuth.
 pub(crate) async fn antigravity_sign_in_another_account(app: &AppHandle) -> Result<(), String> {
+    let _account_lock = ACCOUNT_LOCK.lock().await;
     #[cfg(not(windows))]
     let _ = app;
     #[cfg(not(windows))]
@@ -463,6 +471,7 @@ fn save_agy_account(sign_in: &Value, email: String) -> Result<(), String> {
 
 /// Makes a previously saved Antigravity account the active login used by agy and quota refresh.
 pub async fn antigravity_account_switch(id: String) -> Result<(), String> {
+    let _account_lock = ACCOUNT_LOCK.lock().await;
     #[cfg(not(windows))]
     return Err(
         "Antigravity account switching currently requires Windows Credential Manager".to_string(),
@@ -686,6 +695,7 @@ pub async fn antigravity_quotas(
     force: Option<bool>,
     account_id: Option<String>,
 ) -> Vec<AgyAccountQuota> {
+    let _account_lock = ACCOUNT_LOCK.lock().await;
     type AgyQuotaCache = Option<(std::time::Instant, Vec<AgyAccountQuota>)>;
     static CACHE: LazyLock<tokio::sync::Mutex<AgyQuotaCache>> =
         LazyLock::new(|| tokio::sync::Mutex::new(None));
@@ -836,6 +846,7 @@ pub async fn agy_modes(force: bool) -> AgyModes {
 /// Removes one saved Antigravity account: its index entry and its credential in the system store. The account in
 /// use cannot be removed (switch to another account first), so agy is never left pointing at a deleted login.
 pub async fn antigravity_account_remove(id: String) -> Result<(), String> {
+    let _account_lock = ACCOUNT_LOCK.lock().await;
     #[cfg(not(windows))]
     return Err(
         "Antigravity account removal currently requires Windows Credential Manager".to_string(),

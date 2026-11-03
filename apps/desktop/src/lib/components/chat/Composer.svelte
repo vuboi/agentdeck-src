@@ -371,7 +371,7 @@
     let model = $state('claude-sonnet-5-5');
     let effort = $state<Effort>('medium');
     let fast = $state(true);
-    let permission = $state<Permission>('auto');
+    let permission = $state<Permission>('yolo');
 
     // The chat whose picker the fields above show. It changes only once that chat's picker is applied (`applyPickerFor`):
     // until then the fields still hold the previous chat's values, which must not reach the new chat (B8).
@@ -425,7 +425,7 @@
         // A chat with nothing saved starts with fast mode on, and with the defaults: the picker of the chat before
         // is not carried over (B8).
         fast = true;
-        permission = 'auto';
+        permission = 'yolo';
         effort = 'medium';
         const session = workspace.sessions.find(
             (item) => item.id === sessionId,
@@ -492,7 +492,7 @@
                         model: nextModel,
                         effort: level ?? 'medium',
                         fast: true,
-                        permission: chatTurnOptions[id]?.permission ?? 'auto',
+                        permission: chatTurnOptions[id]?.permission ?? 'yolo',
                     }),
                     agent: next,
                     model: nextModel,
@@ -1338,7 +1338,8 @@
             >
                 <div class="flex flex-col gap-2 p-3">
                     <div class="flex items-center justify-between gap-4">
-                        <span class="text-xs font-medium text-foreground"
+                        <span
+                            class="text-[0.8125rem] font-medium text-foreground"
                             >Context usage</span
                         >
                         <span
@@ -1355,7 +1356,6 @@
                             : contextPercent >= 75
                               ? 'warning'
                               : 'primary'}
-                        zLabel="Context usage"
                     />
                     <div
                         class="flex items-center justify-between gap-3 text-[0.6875rem] text-muted-foreground"
@@ -1370,16 +1370,6 @@
                         <span>limit {shortCount(contextLimit)}</span>
                     </div>
                     <div class="mt-1 border-t border-border/60 pt-2">
-                        <div
-                            class="mb-1 flex items-center justify-between gap-3 text-[0.6875rem]"
-                        >
-                            <span class="font-medium text-foreground"
-                                >Selected limit</span
-                            >
-                            <span class="tabular-nums text-muted-foreground"
-                                >{shortCount(contextLimit)} tokens</span
-                            >
-                        </div>
                         <!-- A box of fixed height: the slider measures its label and readout after the popover is placed,
                              and any size change then moves the popover (it reads as a jump on fullscreen). -->
                         <div class="h-12 w-full">
@@ -1397,6 +1387,7 @@
                                 zFormatter={(value) =>
                                     `${shortCount(CONTEXT_LIMITS[value] ?? contextLimit)} tokens`}
                                 zLabel="Auto-compress at"
+                                class="[&>span:first-child]:text-[0.8125rem] [&>div]:mt-0.5"
                                 onValueChange={(value) =>
                                     setSessionContextLimit(
                                         sessionId,
@@ -1406,7 +1397,7 @@
                         </div>
                     </div>
                     <p
-                        class="text-[0.6875rem] leading-snug text-muted-foreground"
+                        class="mt-2 pt-[2px] text-[0.6875rem] leading-snug text-muted-foreground"
                     >
                         {contextPercent >= 100
                             ? 'Auto-compress will run before the next queued message.'

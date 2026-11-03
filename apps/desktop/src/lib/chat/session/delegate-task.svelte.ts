@@ -22,6 +22,8 @@ import {
     FOLLOW_UP_PREFACE,
     RESTORED_LOST_NOTE,
     QUESTION_WAIT_MS,
+    SIBLING_WAIT_MS,
+    pendingSiblings,
 } from '../../tasks/delegate-task';
 import { getPref, setPref } from '../../app/platform/prefs';
 import {
@@ -31,7 +33,13 @@ import {
     usagePct,
 } from '../../agents/connectors.svelte';
 import { elapsed } from '../content/blocks';
-import { type Block } from '../mock';
+import { type Block, type Message } from '../mock';
+import { automation } from '../../app/platform/automation.svelte';
+import {
+    changedPaths,
+    reviewBrief,
+    shouldAutoReview,
+} from '../../tasks/auto-review';
 import {
     type DelegateCall,
     enterWorkerSlot,
@@ -1275,6 +1283,8 @@ export function finishTask(
                         record.workflowRunId,
             );
         settleWorkflowRun(record.workflowRunId, pending);
+        // A sibling's report may be held for this task (see flushReports): it no longer has to wait.
+        if (backlog.get(record.caller)?.length) sendNextQueued(record.caller);
     }
     const text = formatTaskResult(
         {
@@ -1449,6 +1459,10 @@ export function returnTaskResult(taskId: string): void {
     });
 }
 
+/** When a ready report of a request started waiting for the other workers of that request (`caller|sourceMessageId`). */
+const siblingHold = new SvelteMap<string, number>();
+const siblingTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
+
 /** Delivers reports from one original request when the chat is idle; unrelated requests are never merged. */
 export function flushReports(callerId: string) {
     const list = backlog.get(callerId);
@@ -1472,6 +1486,39 @@ export function flushReports(callerId: string) {
             report.sourceMessageId === origin.sourceMessageId &&
             report.sourceTask === origin.sourceTask,
     );
+    // Workers of the same request still running: the lead gets their reports together, in one hand-back, rather than
+    // answering once per worker. It waits at most SIBLING_WAIT_MS from the first ready report, then gets what is there.
+    const holdKey = `${callerId}|${origin.sourceMessageId ?? ''}`;
+    const siblings = pendingSiblings(
+        Object.values(delegateTasks),
+        callerId,
+        origin.sourceMessageId,
+        batch.map((report) => report.taskId),
+    );
+    if (siblings.length) {
+        const since = siblingHold.get(holdKey) ?? Date.now();
+        siblingHold.set(holdKey, since);
+        const left = since + SIBLING_WAIT_MS - Date.now();
+        if (left > 0) {
+            clearTimeout(siblingTimers.get(holdKey));
+            siblingTimers.set(
+                holdKey,
+                setTimeout(() => {
+                    siblingTimers.delete(holdKey);
+                    sendNextQueued(callerId);
+                }, left),
+            );
+            logFlow(
+                callerId,
+                'hand-back',
+                `held for ${siblings.map((task) => task.id).join(', ')}`,
+            );
+            return;
+        }
+    }
+    siblingHold.delete(holdKey);
+    clearTimeout(siblingTimers.get(holdKey));
+    siblingTimers.delete(holdKey);
     const rest = list.filter((report) => !batch.includes(report));
     if (rest.length) backlog.set(callerId, rest);
     else backlog.delete(callerId);
@@ -1703,6 +1750,55 @@ export function startProposalWorker(
             args: workerArgsOf(call),
         },
         answer,
+    );
+}
+
+/** Auto reviews started per user request (`chat|message id`), this run of the app. */
+const reviewRounds = new SvelteMap<string, number>();
+
+/**
+ * A main chat's turn finished well: when it changed enough files and Auto review is on, the diff goes to the agent routed
+ * for the review role, in the background. Its report comes back like any other (flushReports, handbackPrompt).
+ */
+export function maybeAutoReview(sessionId: string, reply: Message) {
+    const caller = callerOf(sessionId);
+    const source = liveAsks[sessionId];
+    if (!caller || !source) return;
+    const key = `${sessionId}|${source.id}`;
+    const rounds = reviewRounds.get(key) ?? 0;
+    const paths = changedPaths(reply.blocks);
+    if (
+        !shouldAutoReview({
+            enabled: automation.review,
+            orchestrate: automation.orchestrate,
+            worker: isWorkerChat(sessionId) || Boolean(caller.side),
+            hasRoute: routesOf(taskRoles, 'review').length > 0,
+            paths,
+            rounds,
+        })
+    )
+        return;
+    reviewRounds.set(key, rounds + 1);
+    logFlow(
+        sessionId,
+        'auto review',
+        `round ${rounds + 1}: ${paths.length} files`,
+    );
+    startTask(
+        {
+            callId: `review-${crypto.randomUUID()}`,
+            tool: 'delegate_task',
+            caller: sessionId,
+            args: {
+                role: 'review',
+                task: reviewBrief(askText(source), paths, rounds + 1),
+                wait: false,
+            },
+        },
+        (text, isError) => {
+            if (isError)
+                logFlow(sessionId, 'auto review', `not started: ${text}`);
+        },
     );
 }
 

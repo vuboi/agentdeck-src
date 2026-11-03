@@ -84,7 +84,13 @@ fn login_from_status(stdout: &str) -> Login {
     };
     Login {
         logged_in: Some(authenticated),
-        detail: authenticated.then(|| "Command Code CLI signed in".to_owned()),
+        email: authenticated
+            .then(|| json["user"].as_str().map(str::to_owned))
+            .flatten(),
+        detail: authenticated.then(|| match json["model"].as_str() {
+            Some(model) => format!("Command Code CLI signed in · {model}"),
+            None => "Command Code CLI signed in".to_owned(),
+        }),
         ..Login::default()
     }
 }
@@ -104,5 +110,12 @@ mod tests {
             Some(false)
         );
         assert_eq!(login_from_status("not json").logged_in, None);
+    }
+
+    #[test]
+    fn keeps_the_user_and_model_of_the_cli_status() {
+        let login = login_from_status(r#"{"authenticated":true,"user":"vuboi","model":"m1"}"#);
+        assert_eq!(login.email.as_deref(), Some("vuboi"));
+        assert!(login.detail.is_some_and(|detail| detail.contains("m1")));
     }
 }

@@ -20,8 +20,8 @@ const state = (
     off: string[] = [],
 ): RoleState => ({ routes, on, off });
 
-test('there are ten roles, each with a label, an icon and a hint', () => {
-    assert.equal(TASK_ROLES.length, 10);
+test('there are eleven roles, each with a label, an icon and a hint', () => {
+    assert.equal(TASK_ROLES.length, 11);
     for (const role of TASK_ROLES)
         assert.ok(role.label && role.icon && role.hint, role.id);
 });
@@ -142,6 +142,8 @@ test('an id from before the grouping is read as its new role', () => {
     assert.equal(canonicalRole('security'), 'security');
     assert.equal(canonicalRole('coding'), 'coding');
     assert.equal(canonicalRole('refactor'), 'refactor');
+    assert.equal(canonicalRole('tests'), 'test');
+    assert.equal(canonicalRole('test'), 'test');
     assert.equal(canonicalRole('summary'), 'text');
     assert.equal(canonicalRole('research'), 'research');
     assert.equal(canonicalRole('nope'), undefined);

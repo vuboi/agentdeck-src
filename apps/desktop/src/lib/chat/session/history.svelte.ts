@@ -343,9 +343,12 @@ export async function importHistory({ refresh = false } = {}) {
     }
 }
 
-/** The parent remembered for a sub chat, when that parent still exists (in the history, or as a chat of this app). */
+/** The parent remembered for a sub chat, when that parent still exists (in the history, or as a chat of this app). The chat's
+ * own parent counts too: a worker made just now is not in `parents` until the next save, and a read in between must keep it. */
 function knownParent(id: string, ids: Set<string>): string | undefined {
-    const parent = parents[id];
+    const parent =
+        parents[id] ??
+        workspace.sessions.find((item) => item.id === id)?.parentId;
     if (!parent || parent === id) return undefined;
     return ids.has(parent) ||
         workspace.sessions.some((item) => item.id === parent)

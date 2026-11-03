@@ -5,7 +5,7 @@ import {
 } from '../../agents/credential-switch';
 import { credentialScope } from '../../agents/credential-scope';
 import { type Message } from '../mock';
-import { parseHandoff, agentdeckLead } from '../../tasks/delegate-task';
+import { handbackMode, agentdeckLead } from '../../tasks/delegate-task';
 import { HANDBACK_HEAD } from '../runs/handback';
 import { inTauri, clock } from '../../app/platform/history';
 import { mimeOfPath, sendWhileWaiting } from '../agent';
@@ -106,15 +106,13 @@ import {
 /** A step that reviews or verifies: it looks at the result itself when it can, and ends with a verdict the owner reads. */
 /** Sends an answer to a question asked by an agent in its chat. */
 export function answerQuestions(sessionId: string, text: string): boolean {
-    if (!text.trim() || replies[sessionId]) return false;
-    send(sessionId, text, [], []);
+    if (!text.trim()) return false;
+    send(sessionId, text, [], [], [], { questionAnswer: true });
     return true;
 }
 
 /** Longest worker report put whole into the integration prompt; the rest stays in the worker's own chat. */
 const HANDBACK_ANSWER_MAX = 8000;
-/** An answer that says the work failed, is blocked or needs a new plan: then the lead has to act, not only summarise. */
-const TROUBLE = /VERDICT:\s*FAIL|STATUS:\s*(?:blocked|needs-plan-change)/i;
 
 /** The prompt that returns background worker reports to the lead model. */
 export function handbackPrompt(batch: DelegateReports): string {
@@ -126,15 +124,9 @@ export function handbackPrompt(batch: DelegateReports): string {
         .map((result) => `### ${result.label}\n${cut(result.text)}`)
         .join('\n\n');
     // When nothing went wrong the lead only reads the answers and replies, like a manager reading a report: no tools, no
-    // second round of the work. It re-checks and fixes (see `owner`) only when an answer reports trouble.
-    const trouble = batch.results.some((result) => {
-        const handoff = parseHandoff(result.text);
-        return (
-            handoff?.status === 'blocked' ||
-            handoff?.status === 'needs-plan-change' ||
-            TROUBLE.test(result.text)
-        );
-    });
+    // second round of the work. It re-checks and fixes (see `owner`) only when an answer reports trouble, and runs the
+    // checks (see `check`) when a worker changed files without running any.
+    const mode = handbackMode(batch.results.map((result) => result.text));
     const memo = batch.memo ? `\n\n${batch.memo}` : '';
     const finish = batch.orchestrator
         ? `${batch.orchestrator}\n\nThe user's request: ${batch.task}`
@@ -145,7 +137,9 @@ export function handbackPrompt(batch: DelegateReports): string {
         "You own the result. Fix only what blocks the request: a step's VERDICT: FAIL, a failed check, or work that is wrong/unfinished. Then do not just report: see all changes (handoff FILES; git status, git diff), undo wrong ones, delete leftovers (debug output, stray files, notes), redo correctly, run the project's checks, end with what you fixed/removed. Suggestions and risks a step lists are not failures: do not edit for them, list them for the user in one short line each. If all is right, say so in one line.";
     const light =
         "The answers above are compact digests; each full answer is in that agent's own chat. Do not redo or re-check their work: run no commands, read no files, look at no git state. Write the reply to the user from the digests: combine them, say in a line where they disagree, what was done, and what the user should do next. Short.";
-    return `${HANDBACK_HEAD}\n\n${answers}${memo}\n\n${finish}\n\n${trouble ? owner : light}\n\n${LANGUAGE_RULE}`;
+    const check =
+        "Some answers changed files (handoff FILES) without running any check (no VERIFY). Do not redo their work: look at git diff of those files and run the project's checks that cover them. Fix only what a check reports as failing, then reply short: what was done, what you ran and its result, what the user should do next.";
+    return `${HANDBACK_HEAD}\n\n${answers}${memo}\n\n${finish}\n\n${mode === 'owner' ? owner : mode === 'check' ? check : light}\n\n${LANGUAGE_RULE}`;
 }
 
 /**
@@ -628,6 +622,8 @@ export function send(
             'triggeredByMessageId' | 'taskTitle' | 'taskIds' | 'workflowRunId'
         >;
         coordination?: boolean;
+        /** A question answer may be queued behind the active reply, then clear the pending question when dispatched. */
+        questionAnswer?: boolean;
         /** A silent send is not queued when a reply already runs: this tells its caller, who puts the work back in line. */
         onDropped?: () => void;
         /** A recovery's continuation: the generation it was planned under (see the check at the top of send). */
@@ -671,8 +667,8 @@ export function send(
     if (!session) return;
     // Account-switch waiters can wake together. Once one owns the reply, retain later user messages in FIFO order.
     if (replies[sessionId] && !extra.listener) {
-        if (!extra.silent)
-            enqueue(queued, sessionId, {
+        if (!extra.silent) {
+            const item = {
                 text,
                 images,
                 elements,
@@ -680,8 +676,11 @@ export function send(
                 files,
                 runGroup: extra.runGroup,
                 messageId: extra.messageId ?? nextId(),
-            });
-        else if (extra.coordination && extra.prompt && extra.silent)
+                questionAnswer: extra.questionAnswer,
+            };
+            if (extra.questionAnswer) enqueueNext(queued, sessionId, item);
+            else enqueue(queued, sessionId, item);
+        } else if (extra.coordination && extra.prompt && extra.silent)
             queueCoordinationPrompt(sessionId, {
                 prompt: extra.prompt,
                 silent: extra.silent,

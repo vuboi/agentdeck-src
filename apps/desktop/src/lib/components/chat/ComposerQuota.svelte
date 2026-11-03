@@ -313,9 +313,7 @@
                 class="relative h-full rounded-full transition-[width] duration-500 {quota.remaining <=
                 10
                     ? 'bg-destructive'
-                    : quota.remaining <= 30
-                      ? 'bg-amber-500'
-                      : 'bg-primary'}"
+                    : 'bg-primary'}"
                 class:quota-low={quota.remaining > 0 && quota.remaining <= 20}
                 style:width="{quota.remaining}%"
             >
@@ -341,9 +339,7 @@
                         class="absolute -right-1 top-1/2 grid size-2 -translate-y-1/2 place-items-center rounded-full {quota.remaining <=
                         10
                             ? 'text-destructive'
-                            : quota.remaining <= 30
-                              ? 'text-amber-500'
-                              : 'text-primary'}"
+                            : 'text-primary'}"
                     >
                         <!-- The tip glows on and off, like a pulse, so the end of the bar reads as live; a change pings it once more. -->
                         <span

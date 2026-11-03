@@ -108,22 +108,33 @@ export function buildTree(
         if (list) list.push(item);
         else forksByRoot.set(root, [item]);
     }
-    const forksOf = (root: SessionItem): ZTreeNode<TreeData>[] =>
-        (forksByRoot.get(root.id) ?? [])
-            .slice()
-            .sort(newest)
-            .map((item, index, list) =>
-                sessionNode(item, index === list.length - 1),
-            );
+    // A long list of forks or workers folds like any other list: its first rows, then "Show more".
+    const forksOf = (
+        root: SessionItem,
+        key = 'session',
+    ): ZTreeNode<TreeData>[] => {
+        const forks = (forksByRoot.get(root.id) ?? []).slice().sort(newest);
+        return limited(
+            `${key}:fork:${root.id}`,
+            forks.map((item, index) => ({
+                item,
+                last: index === forks.length - 1,
+            })),
+            LIST_LIMIT,
+            ({ item, last }) => sessionNode(item, last, key),
+        );
+    };
 
+    // `key` keeps the ids unique when a chat is listed twice (its project, and This computer or Pinned).
     const sessionNode = (
         session: SessionItem,
         last = false,
+        key = 'session',
     ): ZTreeNode<TreeData> => ({
-        id: `session:${session.id}`,
+        id: `${key}:${session.id}`,
         label: session.title,
         icon: session.parentId ? 'lucideGitFork' : 'lucideMessageSquare',
-        children: session.parentId ? [] : forksOf(session),
+        children: session.parentId ? [] : forksOf(session, key),
         data: { kind: 'session', session, last },
     });
 
@@ -242,7 +253,12 @@ export function buildTree(
         .filter((item): item is Project => Boolean(item));
     const pins = section('pinned', 'Pinned', [
         ...pinnedProjects.map(projectNode),
-        ...pinnedChats.map((item) => flatNode(item, 'pin')),
+        // A pinned chat with forks keeps them under it; the other pinned chats stay one flat line.
+        ...pinnedChats.map((item) =>
+            forksByRoot.has(item.id) && !item.parentId
+                ? sessionNode(item)
+                : flatNode(item, 'pin'),
+        ),
     ]);
 
     const chats = workspace.sessions.filter(
@@ -326,8 +342,11 @@ export function buildTree(
         ...section(
             'computer',
             'This computer',
+            // A chat here has no project to show its forks under, so it shows them itself.
             limited('computer', ordered(outside), LIST_LIMIT * 3, (item) =>
-                flatNode(item, 'session'),
+                forksByRoot.has(item.id) && !item.parentId
+                    ? sessionNode(item, false, 'computer')
+                    : flatNode(item, 'session'),
             ),
             true,
         ),

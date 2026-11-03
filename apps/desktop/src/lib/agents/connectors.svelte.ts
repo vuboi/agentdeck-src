@@ -169,6 +169,7 @@ type SavedAccountCache = {
     accounts: Partial<Record<AccountProvider, Accounts | null>>;
     agyAccounts: AgyAccount[];
     agyQuota: AgyQuota | null;
+    agyAccountQuotas?: AgyAccountQuota[];
 };
 export type QuotaGroup = { id: string; label: string; windows: UsageWindow[] };
 export type AgyQuota = { observed_at: number | null; groups: QuotaGroup[] };
@@ -393,6 +394,8 @@ const accountCacheReady = getPref<SavedAccountCache>(ACCOUNT_CACHE_KEY)
         if (Array.isArray(saved.agyAccounts))
             connectors.accounts.agy = saved.agyAccounts;
         if (saved.agyQuota) connectors.agyQuota = saved.agyQuota;
+        if (Array.isArray(saved.agyAccountQuotas))
+            connectors.agyAccountQuotas = saved.agyAccountQuotas;
     })
     .catch(() => undefined);
 const autoSwitchReady = getPref<Partial<Record<ConnectorId, boolean>>>(
@@ -414,6 +417,7 @@ function saveAccountCache() {
         },
         agyAccounts: connectors.accounts.agy,
         agyQuota: connectors.agyQuota,
+        agyAccountQuotas: connectors.agyAccountQuotas,
     } satisfies SavedAccountCache);
 }
 
@@ -690,6 +694,10 @@ function mergeDetected(id: ConnectorId, next: Detected) {
     connectors.detected = merged;
 }
 
+/** Connectors whose CLI check has run on its own, and whether a full check has run. */
+const detectedFor = new SvelteSet<ConnectorId>();
+let detectedAll = false;
+
 export async function refreshDetect(only?: ConnectorId) {
     if (!inTauri()) return;
     void listenToLogs();
@@ -700,8 +708,13 @@ export async function refreshDetect(only?: ConnectorId) {
             only ? { only } : undefined,
             30_000,
         );
-        if (only) mergeDetected(only, next);
-        else connectors.detected = next;
+        if (only) {
+            mergeDetected(only, next);
+            detectedFor.add(only);
+        } else {
+            connectors.detected = next;
+            detectedAll = true;
+        }
     });
     if (!ok && only)
         connectors.errors.detect =
@@ -897,14 +910,39 @@ export async function refreshAccount(
     await refreshAccounts(provider, true, false, accountId);
 }
 
+let prefetching = false;
+
+/** Checks the other connectors in the background right after the visible tab, so opening one finds its version already there. */
+function prefetchDetect() {
+    if (prefetching || detectedAll) return;
+    prefetching = true;
+    const rest = ALL_CONNECTORS.filter((other) => !detectedFor.has(other));
+    void Promise.all(rest.map((other) => refreshDetect(other))).finally(() => {
+        prefetching = false;
+    });
+}
+
+const ALL_CONNECTORS: ConnectorId[] = [
+    'claude',
+    'codex',
+    'agy',
+    'opencode',
+    'copilot',
+    'workbuddy',
+    'muse-code',
+    'command-code',
+];
+
 /** Loads only the connector whose tab is visible in Settings. */
 export async function refreshConnector(id: ConnectorId, refresh = false) {
     if (!inTauri()) return;
     await Promise.all([accountCacheReady, autoSwitchReady]);
-    if (!connectors.detected) {
+    // A tab that was never checked has no tool entries yet (an earlier tab's check only filled its own).
+    if (!connectors.detected || (!detectedAll && !detectedFor.has(id))) {
         await refreshDetect(id);
         if (!connectors.detected) return;
     }
+    prefetchDetect();
 
     switch (id) {
         case 'claude':

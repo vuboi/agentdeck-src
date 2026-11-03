@@ -351,7 +351,11 @@ impl Provider for Codex {
         }
         config(
             "developer_instructions",
-            toml_string(&format!("{APP_CONTEXT}{}", super::claude::ASK_CONTEXT)),
+            toml_string(&format!(
+                "{APP_CONTEXT}{}{}",
+                super::claude::ASK_CONTEXT,
+                super::claude::WORK_CONTEXT
+            )),
         );
         if let Ok(bridge) = std::env::var("AGENTDECK_BRIDGE") {
             config(

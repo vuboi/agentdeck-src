@@ -458,9 +458,39 @@ export function parseHandoff(answer: string): HandoffReport | null {
     };
 }
 
+/** An answer that says the work failed, is blocked or needs a new plan: then the lead has to act, not only summarise. */
+const TROUBLE = /VERDICT:\s*FAIL|STATUS:\s*(?:blocked|needs-plan-change)/i;
+/** A handoff value that says there is nothing: "none", "-", "n/a". */
+const NONE = /^(?:none|-|n\/a)\b/i;
+
+/**
+ * How the lead treats the reports it gets back: `owner` when one reports trouble (it fixes and cleans up), `check` when
+ * one changed files without running any check (it runs the checks on those files), else `light` (it only writes the reply).
+ */
+export type HandbackMode = 'owner' | 'check' | 'light';
+
+export function handbackMode(answers: string[]): HandbackMode {
+    const handoffs = answers.map((answer) => parseHandoff(answer));
+    if (
+        answers.some(
+            (answer, index) =>
+                handoffs[index]?.status === 'blocked' ||
+                handoffs[index]?.status === 'needs-plan-change' ||
+                TROUBLE.test(answer),
+        )
+    )
+        return 'owner';
+    const unchecked = handoffs.some(
+        (handoff) =>
+            Boolean(handoff?.files.some((path) => !NONE.test(path))) &&
+            !handoff?.verify.some((line) => !NONE.test(line)),
+    );
+    return unchecked ? 'check' : 'light';
+}
+
 /** What a worker is told to end with: the compact report that goes back to the agent that asked. */
 export const REPORT_RULE =
-    'End with "## Handoff" (<=600 words, fewer when the answer is short; only this goes back to the agent that asked, which answers the user from it; the user can read your full answer in your own chat): STATUS: done|blocked / RESULT: <the answer, telegraphic> / FILES: <paths> / FACTS: <<=8, "; "-separated, path:line> / OPEN: <<=3>. Telegraphic: no filler, no restating the task.';
+    'End with "## Handoff" (<=600 words, fewer when the answer is short; only this goes back to the agent that asked, which answers the user from it; the user can read your full answer in your own chat): STATUS: done|blocked|needs-plan-change / RESULT: <the answer, telegraphic> / FILES: <paths you changed> / FACTS: <<=8, "; "-separated, path:line> / VERIFY: <each check you ran -> pass|fail; "none" if you ran none> / OPEN: <<=3>. Telegraphic: no filler, no restating the task.';
 
 /** The part of an answer meant for the next step: its "## Handoff" section, else its end. */
 export function handoffOf(answer: string, max = 1600): string {
@@ -662,6 +692,33 @@ export function pickTask(
         ? free.find((item) => same(item) && item.task.startsWith(args.task!))
         : undefined;
     return (exact ?? free.find(same) ?? free[0])?.id;
+}
+
+/** How long a finished background report waits for the other workers of the same request before the lead gets it. */
+export const SIBLING_WAIT_MS = 120_000;
+
+const UNFINISHED: TaskState[] = ['queued', 'waiting', 'running', 'approval'];
+
+/**
+ * Background workers started for the same request as a report that is ready (same caller and source message), still
+ * unfinished and not paused: their reports should reach the lead together with it, in one hand-back.
+ */
+export function pendingSiblings(
+    tasks: TaskRecord[],
+    caller: string,
+    sourceMessageId: string | undefined,
+    ready: string[],
+): TaskRecord[] {
+    if (!sourceMessageId) return [];
+    return tasks.filter(
+        (task) =>
+            task.caller === caller &&
+            task.sourceMessageId === sourceMessageId &&
+            !task.wait &&
+            !task.pausedAt &&
+            !ready.includes(task.id) &&
+            UNFINISHED.includes(task.state),
+    );
 }
 
 /** A task as the app keeps it while it runs and after (sessions.svelte.ts holds these). */

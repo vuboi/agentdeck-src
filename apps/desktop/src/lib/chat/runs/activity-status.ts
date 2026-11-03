@@ -6,8 +6,22 @@ import type { Activity, ActivityStatus } from './activity.svelte';
  * Whether the provider's own task event already ended this call. The CLI reports some foreground calls (a Bash) as
  * tasks too, and that event can arrive before the call's tool result: the call is then done and recorded.
  */
-export function endedByTask(item: Pick<Activity, 'status' | 'nativeTaskId' | 'endedAt'>): boolean {
-  return item.nativeTaskId !== undefined && item.endedAt !== undefined && item.status !== 'running' && item.status !== 'background';
+export function endedByTask(
+    item: Pick<Activity, 'status' | 'nativeTaskId' | 'endedAt'>,
+): boolean {
+    return (
+        item.nativeTaskId !== undefined &&
+        item.endedAt !== undefined &&
+        item.status !== 'running' &&
+        item.status !== 'background'
+    );
+}
+
+/** Provider-native background work survives a successful reply; a foreground command promoted by the UI does not. */
+export function keepsAfterSuccessfulTurn(
+    item: Pick<Activity, 'launchedInBackground'>,
+): boolean {
+    return item.launchedInBackground === true;
 }
 
 /**
@@ -15,9 +29,20 @@ export function endedByTask(item: Pick<Activity, 'status' | 'nativeTaskId' | 'en
  * result only adds output. Otherwise an error is 'fail', a background call (a shell that answers with its id) stays
  * 'background' until its task ends, and any other call is 'ok'.
  */
-export function statusAfterResult(item: Pick<Activity, 'background' | 'status' | 'nativeTaskId' | 'endedAt' | 'promotedToBackground'>, isError: boolean): ActivityStatus {
-  if (endedByTask(item)) return item.status;
-  if (isError) return 'fail';
-  if (item.promotedToBackground && item.nativeTaskId === undefined) return 'ok';
-  return item.background ? 'background' : 'ok';
+export function statusAfterResult(
+    item: Pick<
+        Activity,
+        | 'background'
+        | 'status'
+        | 'nativeTaskId'
+        | 'endedAt'
+        | 'promotedToBackground'
+    >,
+    isError: boolean,
+): ActivityStatus {
+    if (endedByTask(item)) return item.status;
+    if (isError) return 'fail';
+    if (item.promotedToBackground && item.nativeTaskId === undefined)
+        return 'ok';
+    return item.background ? 'background' : 'ok';
 }

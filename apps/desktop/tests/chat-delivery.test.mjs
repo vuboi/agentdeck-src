@@ -4,6 +4,10 @@ import test from 'node:test';
 import { enqueue, enqueueNext } from '../src/lib/chat/runs/queue.ts';
 import { applyAgentEvent } from '../src/lib/chat/agent-reply.ts';
 import { credentialScope } from '../src/lib/agents/credential-scope.ts';
+import {
+    pendingSiblings,
+    SIBLING_WAIT_MS,
+} from '../src/lib/tasks/delegate-task.ts';
 import { resolveBinding } from '../src/lib/chat/session/binding.ts';
 import { isLongRunningWork } from '../src/lib/chat/runs/run-lanes.ts';
 import {
@@ -273,6 +277,8 @@ test('a background report keeps the originating request even when a newer prompt
         send: (...args) => sent.push(args),
         handbackPrompt: (batch) => batch.task,
         NO_HANDOUT: {},
+        pendingSiblings,
+        SIBLING_WAIT_MS,
     });
     const api = await load('delegate-task', f.bindings);
     f.messages.push({
@@ -304,6 +310,53 @@ test('a background report keeps the originating request even when a newer prompt
     assert.deepEqual(Array.from(sent[0][5].report.taskIds), ['first']);
     assert.equal(api.backlog.get('chat').length, 1);
     assert.equal(api.backlog.get('chat')[0].sourceMessageId, 'other');
+});
+
+test('a ready report waits for the other workers of its request, then goes out in one hand-back', async () => {
+    const f = fixture('codex');
+    const sent = [];
+    const pumped = [];
+    Object.assign(f.bindings, {
+        inTauri: () => false,
+        hasTurnWork: () => false,
+        send: (...args) => sent.push(args),
+        handbackPrompt: (batch) => batch.task,
+        NO_HANDOUT: {},
+        pendingSiblings,
+        SIBLING_WAIT_MS,
+        logFlow() {},
+        sendNextQueued: (id) => pumped.push(id),
+    });
+    const api = await load('delegate-task', f.bindings);
+    const record = (id, state) => ({
+        id,
+        state,
+        caller: 'chat',
+        sourceMessageId: 'original',
+        wait: false,
+    });
+    const report = (taskId) => ({
+        taskId,
+        label: taskId,
+        text: 'result',
+        sourceMessageId: 'original',
+        sourceTask: 'Original request',
+    });
+    api.delegateTasks.first = record('first', 'done');
+    api.delegateTasks.second = record('second', 'running');
+    api.backlog.set('chat', [report('first')]);
+    api.flushReports('chat');
+    assert.equal(sent.length, 0);
+    assert.equal(api.backlog.get('chat').length, 1);
+    api.delegateTasks.second.state = 'done';
+    api.backlog.set('chat', [report('first'), report('second')]);
+    api.flushReports('chat');
+    assert.equal(sent.length, 1);
+    assert.deepEqual(Array.from(sent[0][5].report.taskIds), [
+        'first',
+        'second',
+    ]);
+    assert.equal(api.backlog.get('chat'), undefined);
 });
 
 test('pending input and a busy lane keep background reports without polling or dropping them', async () => {

@@ -108,7 +108,6 @@ import {
     missedTurns,
     nativeDelegationHinted,
     orchestrateTold,
-    priorDelegateHinted,
     queuePaused,
     queued,
     rememberDelegateHint,
@@ -1007,28 +1006,35 @@ export function startTurn(
         const told = orchestrateTold.get(hintKey);
         const orchestrate = automation.orchestrate;
         const nativeDelegation = NATIVE_DELEGATION.has(session.agent);
-        const previouslyToldToUseAgentDeck =
-            delegateHinted.has(hintKey) || priorDelegateHinted.has(hintKey);
+        // Claude and Codex get their own note (native sub-agents first, AgentDeck for other providers) when the
+        // conversation starts, so they also hand work across providers without being asked.
         const delegateHint = isWorkerChat(session.id)
             ? ''
-            : nativeDelegation
-              ? previouslyToldToUseAgentDeck &&
-                !nativeDelegationHinted.has(hintKey)
-                  ? NATIVE_DELEGATION_HINT
-                  : ''
-              : orchestrate
-                ? !resume || !delegateHinted.has(hintKey) || told === false
+            : orchestrate
+              ? nativeDelegation
+                  ? !resume ||
+                    !nativeDelegationHinted.has(hintKey) ||
+                    told === false
+                      ? NATIVE_DELEGATION_HINT
+                      : ''
+                  : !resume || !delegateHinted.has(hintKey) || told === false
                     ? DELEGATE_HINT
                     : ''
-                : told !== false
-                  ? NO_DELEGATE_HINT
-                  : '';
+              : told !== false
+                ? NO_DELEGATE_HINT
+                : '';
+        // Task routing (Settings > Task roles) hands work to other agents, so it follows auto-orchestrate: off, nothing is routed.
+        const routing =
+            !isWorkerChat(session.id) && orchestrate
+                ? taskRoleHint(taskRoles, routeLabel)
+                : '';
         // Later turns: a short reminder for nontrivial prompts only (not twice in a row for a short one, and not with inline
-        // @ai mentions, which already carry delegation instructions).
+        // @ai mentions, which already carry delegation instructions). Claude and Codex only get it when a task role routes
+        // work to another agent: otherwise their native sub-agents cover it.
         let reminder = '';
         if (
             orchestrate &&
-            !nativeDelegation &&
+            (!nativeDelegation || routing) &&
             !isWorkerChat(session.id) &&
             !delegateHint &&
             !preface.includes('inline sub-agent requests')
@@ -1082,11 +1088,6 @@ export function startTurn(
         const profileNote =
             !resume && mainChat && replyStyle.userProfile
                 ? profileHint(loadProfile())
-                : '';
-        // Task routing (Settings > Task roles) hands work to other agents, so it follows auto-orchestrate: off, nothing is routed.
-        const routing =
-            !isWorkerChat(session.id) && orchestrate
-                ? taskRoleHint(taskRoles, routeLabel)
                 : '';
         const hint = agentdeckLead(
             openHint,
@@ -1619,7 +1620,15 @@ function sendNextQueuedNow(sessionId: string, pump: QueuePump) {
     }
     clearStaleLanes(sessionId);
     clearStalePrimaryReply(sessionId);
-    if (hasTurnWork(sessionId) && !listenerAvailable()) {
+    const nextIsQuestionAnswer =
+        queued[sessionId]?.[0]?.questionAnswer === true;
+    const canClearPendingQuestion =
+        nextIsQuestionAnswer && !replies[sessionId] && !isRunning(sessionId);
+    if (
+        hasTurnWork(sessionId) &&
+        !listenerAvailable() &&
+        !canClearPendingQuestion
+    ) {
         requestQueuePump(sessionId, QUEUE_RETRY_MS);
         return;
     }
@@ -1649,6 +1658,7 @@ function sendNextQueuedNow(sessionId: string, pump: QueuePump) {
                     files: next.files,
                     runGroup: next.runGroup,
                     messageId: next.messageId,
+                    questionAnswer: next.questionAnswer,
                 },
             );
         }

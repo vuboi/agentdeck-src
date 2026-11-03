@@ -50,7 +50,7 @@ fn thread_params(req: &TurnRequest) -> Value {
         "approvalPolicy": approval,
         "sandbox": sandbox,
         "config": config,
-        "developerInstructions": format!("{APP_CONTEXT}{}", super::claude::ASK_CONTEXT),
+        "developerInstructions": format!("{APP_CONTEXT}{}{}", super::claude::ASK_CONTEXT, super::claude::WORK_CONTEXT),
     });
     if mode == Mode::Auto {
         params["approvalsReviewer"] = json!("auto_review");

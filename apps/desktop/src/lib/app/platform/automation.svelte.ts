@@ -3,30 +3,37 @@
 //   "Compressing context" line in the chat;
 // - fallback: at a usage limit, a sign-out or a server error, the next agent of the chain carries on
 //   (`connectors.recovery.enabled`, turn-failure.ts);
-// - orchestrate: the agent is told it may hand light or separable parts to other agents (delegate_task).
+// - orchestrate: the agent is told it may hand light or separable parts to other agents (delegate_task);
+// - review: after a turn that changed files, the diff goes to the agent of the review task role (auto-review.ts). Off
+//   until it is switched on: every review is one more worker.
 import { getPref, setPref } from './prefs';
 import { connectors } from '../../agents/connectors.svelte';
 
-export const automation = $state({ compress: true, orchestrate: true, prehandle: true });
+export const automation = $state({
+    compress: true,
+    orchestrate: true,
+    prehandle: true,
+    review: false,
+});
 
 const KEY = 'chat.automation';
 let hydrated = false;
 void getPref<Partial<typeof automation>>(KEY).then((saved) => {
-  if (saved) Object.assign(automation, saved);
-  hydrated = true;
+    if (saved) Object.assign(automation, saved);
+    hydrated = true;
 });
 
 $effect.root(() => {
-  $effect(() => {
-    const value = { ...automation };
-    if (hydrated) setPref(KEY, value);
-  });
+    $effect(() => {
+        const value = { ...automation };
+        if (hydrated) setPref(KEY, value);
+    });
 });
 
 /** Moving to another agent when one fails: off until it is switched on (it used to run by itself). */
 export const fallbackOn = () => connectors.recovery.enabled;
 export function setFallback(on: boolean) {
-  connectors.recovery = { ...connectors.recovery, enabled: on, chosen: true };
+    connectors.recovery = { ...connectors.recovery, enabled: on, chosen: true };
 }
 
 /** A chat's context is compacted once it reaches this many tokens, for every model. */

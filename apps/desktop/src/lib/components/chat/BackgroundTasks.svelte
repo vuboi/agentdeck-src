@@ -114,17 +114,6 @@
     const countPaused = Tween.of(() => paused.length, COUNT);
     const countCheck = Tween.of(() => uncertain.length, COUNT);
     const countSaved = Tween.of(() => finished.length, COUNT);
-    const labels = {
-        queued: 'Queued',
-        running: 'Working',
-        paused: 'Paused',
-        waiting: 'Waiting',
-        input: 'Needs approval',
-        done: 'Answered',
-        failed: 'Failed',
-        stopped: 'Stopped',
-        unknown: 'Check status',
-    } as const;
     // The icon that leads each row, by state. Pending and waiting read as a clock.
     const STATE_ICON: Record<ChatWork['state'], ZIconName> = {
         queued: 'lucideListOrdered' as ZIconName,
@@ -146,7 +135,7 @@
                 ? 'text-emerald-500'
                 : 'text-muted-foreground';
     const ICON_BUTTON =
-        'mt-0.5 grid size-4 shrink-0 cursor-pointer place-items-center text-muted-foreground outline-none transition-colors hover:text-primary disabled:cursor-default disabled:opacity-40 disabled:hover:text-muted-foreground';
+        'mt-0.5 grid size-6 shrink-0 cursor-pointer place-items-center text-muted-foreground outline-none transition-colors hover:text-primary disabled:cursor-default disabled:opacity-40 disabled:hover:text-muted-foreground';
     // Stop all still uses each row's own handle; it never stops the main chat turn as a shortcut.
     const stoppable = $derived(
         active.filter((item) => stopTarget(item) !== null),
@@ -307,10 +296,13 @@
                     {@const workModel = item.model
                         ? modelLabel(item.model) || item.model
                         : ''}
-                    {@const statusLabel =
-                        item.kind === 'agent' && item.state === 'done'
-                            ? 'Answered'
-                            : labels[item.state]}
+                    {@const workTime = elapsed(
+                        (item.state === 'paused'
+                            ? (item.pausedAt ?? ticker.sec)
+                            : isWorkActive(item)
+                              ? ticker.sec
+                              : (item.endedAt ?? ticker.sec)) - item.startedAt,
+                    )}
                     <div
                         data-work-id={item.id}
                         animate:flip={{ duration: 300, easing: cubicOut }}
@@ -332,7 +324,7 @@
                                         item,
                                     )}"
                                     role="img"
-                                    aria-label={labels[item.state]}
+                                    aria-label={item.state}
                                 >
                                     {#if item.state === 'running'}<PhyllotaxisLoader
                                             className="text-current"
@@ -356,47 +348,8 @@
                                             class="min-w-0 flex-1 truncate text-[0.8125rem] font-medium text-foreground"
                                             >{workOwner}{workModel
                                                 ? ` · ${workModel}`
-                                                : ''}</span
+                                                : ''} — {workTime}</span
                                         >
-                                        <span
-                                            class="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[0.6875rem] {tone(
-                                                item,
-                                            )}"
-                                        >
-                                            <span
-                                                class="inline-flex items-center"
-                                            >
-                                                {#if item.state === 'running'}
-                                                    <ZShimmerText
-                                                        class="font-medium"
-                                                        zBase="var(--primary)"
-                                                        zPeak="var(--foreground)"
-                                                        zText="Working"
-                                                    /><span
-                                                        class="loading-dots ml-0.5 inline-flex"
-                                                        aria-hidden="true"
-                                                        ><span>.</span><span
-                                                            >.</span
-                                                        ><span>.</span></span
-                                                    >
-                                                {:else}
-                                                    <span>{statusLabel}</span>
-                                                {/if}
-                                            </span>
-                                            <span
-                                                class="tabular-nums text-muted-foreground"
-                                                >{elapsed(
-                                                    (item.state === 'paused'
-                                                        ? (item.pausedAt ??
-                                                          ticker.sec)
-                                                        : isWorkActive(item)
-                                                          ? ticker.sec
-                                                          : (item.endedAt ??
-                                                            ticker.sec)) -
-                                                        item.startedAt,
-                                                )}</span
-                                            >
-                                        </span>
                                     </span>
                                     <span
                                         class="min-w-0 truncate text-xs text-muted-foreground"
@@ -421,6 +374,23 @@
                                     />
                                 </button>
                             {/if}
+                            <button
+                                type="button"
+                                class={ICON_BUTTON}
+                                aria-label="Toggle details: {item.title}"
+                                aria-expanded={Boolean(details[item.id])}
+                                onclick={() =>
+                                    (details[item.id] = !details[item.id])}
+                            >
+                                <ZIcon
+                                    zType={'lucideChevronDown' as ZIconName}
+                                    class="size-3.5 transition-transform duration-200 motion-reduce:transition-none {details[
+                                        item.id
+                                    ]
+                                        ? ''
+                                        : '-rotate-90'}"
+                                />
+                            </button>
                             {#if item.canPause || item.canResume}
                                 <button
                                     type="button"

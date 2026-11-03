@@ -25,6 +25,9 @@ import {
     resolveModel,
     startedText,
     toolKindOf,
+    handbackMode,
+    pendingSiblings,
+    REPORT_RULE,
 } from '../src/lib/tasks/delegate-task.ts';
 import { applyAgentEvent } from '../src/lib/chat/agent-reply.ts';
 import {
@@ -591,4 +594,96 @@ test('the lead is one paragraph: a hand-back behind it is still recognised, and 
     assert.equal(stripLead(lead + 'fix the login bug'), 'fix the login bug');
     assert.equal(stripLead('fix the login bug'), 'fix the login bug');
     assert.equal(stripLead('[AgentDeck] only a lead'), '');
+});
+
+// ---------- hand-back mode and sibling reports ----------
+
+test('the report rule asks for VERIFY and needs-plan-change', () => {
+    assert.match(REPORT_RULE, /VERIFY:/);
+    assert.match(REPORT_RULE, /needs-plan-change/);
+});
+
+test('handbackMode: trouble makes the lead the owner', () => {
+    assert.equal(
+        handbackMode(['## Handoff\nSTATUS: blocked\nRESULT: tests fail']),
+        'owner',
+    );
+    assert.equal(handbackMode(['Review\nVERDICT: FAIL\n- bug']), 'owner');
+    assert.equal(
+        handbackMode([
+            '## Handoff\nSTATUS: done\nFILES: a.ts',
+            '## Handoff\nSTATUS: needs-plan-change\nRESULT: x',
+        ]),
+        'owner',
+    );
+});
+
+test('handbackMode: changed files without a check ask the lead to run checks', () => {
+    assert.equal(
+        handbackMode([
+            '## Handoff\nSTATUS: done\nRESULT: ok\nFILES: src/a.ts; src/b.ts',
+        ]),
+        'check',
+    );
+    assert.equal(
+        handbackMode([
+            '## Handoff\nSTATUS: done\nFILES: src/a.ts\nVERIFY: none',
+        ]),
+        'check',
+    );
+});
+
+test('handbackMode: checked work or no files stays light', () => {
+    assert.equal(
+        handbackMode([
+            '## Handoff\nSTATUS: done\nFILES: src/a.ts\nVERIFY: pnpm check -> pass',
+        ]),
+        'light',
+    );
+    assert.equal(
+        handbackMode([
+            '## Handoff\nSTATUS: done\nRESULT: found it\nFILES: none',
+        ]),
+        'light',
+    );
+    assert.equal(handbackMode(['A plain answer without a handoff.']), 'light');
+});
+
+const task = (over) => ({
+    id: 't-1',
+    caller: 'main',
+    sourceMessageId: 'm1',
+    childId: 'c',
+    state: 'running',
+    wait: false,
+    label: 'x',
+    agent: 'codex',
+    agentId: 'codex',
+    model: 'm',
+    task: 'do',
+    startedAt: 0,
+    ...over,
+});
+
+test('pendingSiblings: unfinished background workers of the same request', () => {
+    const tasks = [
+        task({ id: 'a', state: 'done' }),
+        task({ id: 'b', state: 'running' }),
+        task({ id: 'c', state: 'queued' }),
+        task({ id: 'd', state: 'waiting' }),
+        task({ id: 'e', state: 'failed' }),
+        task({ id: 'f', sourceMessageId: 'other' }),
+        task({ id: 'g', caller: 'another chat' }),
+        task({ id: 'h', wait: true }),
+        task({ id: 'i', pausedAt: 5 }),
+    ];
+    assert.deepEqual(
+        pendingSiblings(tasks, 'main', 'm1', ['a']).map((item) => item.id),
+        ['b', 'c', 'd'],
+    );
+    assert.deepEqual(
+        pendingSiblings(tasks, 'main', 'm1', ['a', 'b', 'c', 'd']),
+        [],
+    );
+    assert.deepEqual(pendingSiblings(tasks, 'main', undefined, []), []);
 });

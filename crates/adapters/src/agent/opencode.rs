@@ -188,6 +188,91 @@ pub fn answer_permission(data: &Value, mode: Mode, allowed: &[String]) -> Permis
 }
 
 /// A tool's argument worth showing next to its name: the command, the file, the pattern.
+impl OpenCode {
+    /// OpenCode's own `question` tool waits for an answer a headless run cannot give. Where the server lets it
+    /// through, the call is turned into the app's question block and the turn ends there; the answer comes with the
+    /// next message, which resumes the same session.
+    fn question_asked(&self, part: &Value, session: Option<String>) -> Vec<AgentEvent> {
+        let raw = part.to_string();
+        super::trace::note(
+            "-",
+            "opencode question",
+            raw.chars().take(500).collect::<String>(),
+        );
+        // A call can show up first without its arguments; it is answered once they are there.
+        let Some(block) = ask_block(&part["state"]["input"]) else {
+            return Vec::new();
+        };
+        let id = part["id"]
+            .as_str()
+            .or_else(|| part["callID"].as_str())
+            .unwrap_or("question")
+            .to_owned();
+        let first = self
+            .tools
+            .lock()
+            .map(|mut seen| seen.insert(id))
+            .unwrap_or(false);
+        if !first {
+            return Vec::new();
+        }
+        let text = format!("```agentdeck-ask\n{block}\n```");
+        let cost = match self.answer.lock() {
+            Ok(mut answer) => {
+                answer.push_text(&text);
+                answer.cost_usd()
+            }
+            Err(_) => None,
+        };
+        let full = self
+            .answer
+            .lock()
+            .map(|answer| answer.text())
+            .unwrap_or_default();
+        vec![
+            AgentEvent::Delta { text },
+            AgentEvent::Done {
+                session_id: session,
+                text: full,
+                cost_usd: cost,
+            },
+        ]
+    }
+}
+
+/// The app's question block (`{"questions":[…]}`) for the arguments of OpenCode's `question` tool.
+fn ask_block(input: &Value) -> Option<String> {
+    let questions: Vec<Value> = input["questions"]
+        .as_array()?
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let question = item["question"].as_str()?;
+            let options: Vec<Value> = item["options"]
+                .as_array()
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|option| {
+                            let label = option["label"].as_str().or_else(|| option.as_str())?;
+                            Some(serde_json::json!({
+                                "label": label,
+                                "description": option["description"].as_str().unwrap_or_default(),
+                            }))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(serde_json::json!({
+                "id": format!("q{index}"),
+                "header": item["header"].as_str().unwrap_or_default(),
+                "question": question,
+                "multi": item["multiple"].as_bool().unwrap_or(false),
+                "options": options,
+            }))
+        })
+        .collect();
+    (!questions.is_empty()).then(|| serde_json::json!({ "questions": questions }).to_string())
+}
 fn input_summary(input: &Value) -> String {
     input
         .as_object()
@@ -345,7 +430,13 @@ impl Provider for OpenCode {
                 .session_id
                 .as_ref()
                 .is_some_and(|session| session.starts_with("ses_"));
-        (!continues).then(|| format!("{APP_CONTEXT}{}", super::claude::ASK_CONTEXT))
+        (!continues).then(|| {
+            format!(
+                "{APP_CONTEXT}{}{}",
+                super::claude::ASK_CONTEXT,
+                super::claude::WORK_CONTEXT
+            )
+        })
     }
     fn environment(&self, req: &TurnRequest) -> Vec<(String, String)> {
         // OpenCode's own `question` tool waits for an answer that a headless run cannot give, so the turn hung. It is
@@ -415,6 +506,7 @@ impl Provider for OpenCode {
             }
             // One line per call, and its `state.status` says how far it got: a quick tool arrives already completed,
             // so the call is announced first and the result follows in the same step.
+            "tool_use" if part["tool"] == "question" => self.question_asked(part, session),
             "tool_use" => {
                 let id = part["id"]
                     .as_str()
@@ -564,7 +656,7 @@ mod tests {
         let mut fresh = request("hi");
         assert!(OpenCode::default()
             .opening_context(&fresh)
-            .is_some_and(|text| text.contains("```agentdeck-ask")));
+            .is_some_and(|text| text.contains("agentdeck-ask")));
         fresh.session_id = Some("ses_1".into());
         fresh.resume = true;
         assert!(OpenCode::default().opening_context(&fresh).is_none());
@@ -886,5 +978,19 @@ mod tests {
                 cost_usd: Some(0.1),
             })
         );
+    }
+
+    #[test]
+    fn the_question_tool_becomes_a_question_block_and_ends_the_turn() {
+        let provider = OpenCode::default();
+        let line = r#"{"type":"tool_use","sessionID":"ses_q","part":{"id":"call_q","tool":"question","state":{"status":"running","input":{"questions":[{"question":"Which?","header":"Pick","options":[{"label":"A","description":"first"},{"label":"B"}]}]}}}}"#;
+        let events = provider.parse_line(line);
+        assert!(
+            matches!(&events[0], AgentEvent::Delta { text } if text.contains("agentdeck-ask") && text.contains("Which?"))
+        );
+        assert!(
+            matches!(&events[1], AgentEvent::Done { session_id: Some(id), .. } if id == "ses_q")
+        );
+        assert!(provider.parse_line(line).is_empty());
     }
 }

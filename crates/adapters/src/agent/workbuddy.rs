@@ -8,7 +8,9 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use super::{AgentEvent, Provider, TurnRequest};
+use super::{
+    allow_entry, summarize_tool_input, AgentEvent, PermissionRequest, Provider, TurnRequest,
+};
 
 pub struct WorkBuddy;
 
@@ -61,7 +63,11 @@ impl Provider for WorkBuddy {
     }
 
     fn opening_context(&self, _req: &TurnRequest) -> Option<String> {
-        Some(LANGUAGE_CONTEXT.to_owned())
+        Some(format!(
+            "{LANGUAGE_CONTEXT}{}{}",
+            super::claude::ASK_CONTEXT,
+            super::claude::WORK_CONTEXT
+        ))
     }
 
     fn environment(&self, req: &TurnRequest) -> Vec<(String, String)> {
@@ -111,23 +117,46 @@ fn parse_value(value: &Value) -> Vec<AgentEvent> {
             }
         }
         "result" => {
+            let denied: Vec<PermissionRequest> = value["permission_denials"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|denial| {
+                    let tool = denial["tool_name"].as_str().unwrap_or_default();
+                    PermissionRequest {
+                        id: denial["tool_use_id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                        tool: tool.to_owned(),
+                        summary: summarize_tool_input(tool, &denial["tool_input"]),
+                        allow: allow_entry(tool, &denial["tool_input"]),
+                    }
+                })
+                .collect();
+            let mut events = Vec::new();
+            if !denied.is_empty() {
+                events.push(AgentEvent::PermissionDenied { requests: denied });
+            }
             if value["is_error"].as_bool().unwrap_or(false) {
-                return vec![AgentEvent::Error {
+                events.push(AgentEvent::Error {
                     message: value["result"]
                         .as_str()
                         .or_else(|| value["error"]["message"].as_str())
                         .or_else(|| value["errors"].as_array()?.first()?.as_str())
                         .unwrap_or("CodeBuddy turn failed")
                         .to_owned(),
-                }];
+                });
+                return events;
             }
-            vec![AgentEvent::Done {
+            events.push(AgentEvent::Done {
                 session_id: value["session_id"].as_str().map(str::to_owned),
                 text: value["result"].as_str().unwrap_or_default().to_owned(),
                 cost_usd: value["cost_usd"]
                     .as_f64()
                     .or_else(|| value["total_cost_usd"].as_f64()),
-            }]
+            });
+            events
         }
         _ => Vec::new(),
     }
@@ -191,7 +220,11 @@ mod tests {
         .into_iter()
         .map(String::from)
         .collect::<Vec<_>>();
-        expected.push(format!("{LANGUAGE_CONTEXT}\n\nhello"));
+        expected.push(format!(
+            "{LANGUAGE_CONTEXT}{}{}\n\nhello",
+            crate::agent::claude::ASK_CONTEXT,
+            crate::agent::claude::WORK_CONTEXT
+        ));
         assert_eq!(WorkBuddy.args(&request), expected);
     }
 
@@ -254,5 +287,18 @@ mod tests {
                 message: "Authentication required".into()
             }]
         );
+    }
+
+    #[test]
+    fn permission_denials_become_a_permission_request_before_the_result() {
+        let events = WorkBuddy.parse_line(
+            r#"{"type":"result","session_id":"s1","result":"blocked","permission_denials":[{"tool_name":"Bash","tool_use_id":"t1","tool_input":{"command":"git push"}}]}"#,
+        );
+        assert!(matches!(
+            events.first(),
+            Some(AgentEvent::PermissionDenied { requests })
+                if requests[0].allow == "Bash(git push)"
+        ));
+        assert!(matches!(events.last(), Some(AgentEvent::Done { .. })));
     }
 }

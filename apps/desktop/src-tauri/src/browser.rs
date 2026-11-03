@@ -1033,12 +1033,6 @@ pub fn browser_reset(app: AppHandle) {
     crate::bridge::reset();
 }
 
-/// The turn of a chat ended: the tabs it drove are free for other chats to reuse (see `bridge::release_chat`).
-#[tauri::command]
-pub fn browser_release_chat(chat: String) {
-    crate::bridge::release_chat(&chat);
-}
-
 #[tauri::command]
 pub fn browser_navigate(app: AppHandle, tab: String, url: String) -> Result<(), String> {
     webview(&app, &tab)?

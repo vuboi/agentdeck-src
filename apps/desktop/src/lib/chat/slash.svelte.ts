@@ -184,6 +184,15 @@ export const BUILTIN: SlashItem[] = [
             "Suggest a layout for: $ARGUMENTS\n\nFirst call the agentdeck tool project_context: use the project's own design tokens, components and rules, not a new look. Look at one or two existing screens of the app in the Preview (browser_open, browser_screenshot) so the new one belongs with them.\nThen give 2 or 3 layout options. For each: what the user does on the screen first, the structure as a small ASCII wireframe, which existing components it uses, how it behaves on a phone, and its trade-off. Avoid the usual AI look: no gradient hero, no card grid of equal boxes, no decorative icons in every heading, no centred everything; hierarchy comes from size, weight, spacing and alignment, with one accent colour. Recommend one option and say why in two lines. Do not write code until I pick one; when I do, build it, open it in the Preview, run ui_audit (desktop and with browser_device mobile) and run_checks, and fix what they report.",
     },
     {
+        name: 'design',
+        description:
+            'Create a polished UI concept or prototype from the project context',
+        kind: 'builtin',
+        origin: 'AgentDeck',
+        template:
+            "Design this: $ARGUMENTS\n\nUse the Baoyu Design workflow. First inspect the project context, existing screens, design tokens, UI components and any supplied references. Define the user, the job they need to finish, the content hierarchy and the visual direction before writing code. Reuse the project's existing components and tokens; do not invent a new design system.\n\nCreate a focused concept or interactive prototype in the project's normal format. Prefer a self-contained HTML prototype under designs/<short-slug>/ when the request is exploratory; when the request is for an existing screen, edit the real screen in the project. Make the important states visible: loading, empty, error, success and the main responsive layout when they matter. Use real-looking content with varied lengths instead of filler.\n\nKeep the visual system restrained: clear hierarchy, deliberate spacing, readable typography, one accent colour, no gradients, glass effects, glow, decorative animation, heavy shadows or equal card grids. Check keyboard focus, accessible names, contrast, responsive behaviour and the project's existing interaction patterns. Open the result in the AgentDeck Preview, take a screenshot, inspect the console, and fix visible or functional problems before reporting. Summarise the design decisions, files created or changed, and what you verified. If the request is ambiguous in a way that changes the design, ask one focused question before editing.",
+    },
+    {
         name: 'research',
         description: 'Research a question quickly, with sources',
         kind: 'builtin',

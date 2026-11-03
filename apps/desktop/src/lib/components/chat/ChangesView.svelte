@@ -667,8 +667,6 @@
         D: { label: 'Deleted', tone: 'text-red-500' },
         '?': { label: 'Untracked', tone: 'text-emerald-500' },
     };
-    const dirOf = (path: string) =>
-        path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
     const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 </script>
 
@@ -889,10 +887,6 @@
                                     <span
                                         class="min-w-0 flex-1 truncate whitespace-nowrap"
                                         >{nameOf(change.path)}</span
-                                    >
-                                    <span
-                                        class="min-w-0 flex-1 truncate text-muted-foreground"
-                                        >{dirOf(change.path)}</span
                                     >
                                 </button>
                                 <span

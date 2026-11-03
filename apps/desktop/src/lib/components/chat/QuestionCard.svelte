@@ -393,40 +393,63 @@
                         ></button>
                     {/each}
                 </span>
+                <span class="flex items-center gap-1">
+                    {#if at > 0}<ZButton
+                            zWave={false}
+                            zType="ghost"
+                            zSize="sm"
+                            class="size-7 p-0"
+                            aria-label="Back"
+                            title="Back"
+                            onclick={() => at--}
+                            ><ZIcon
+                                zType={icon('lucideArrowLeft')}
+                                class="size-3.5"
+                            /></ZButton
+                        >{/if}
+                    {#if !last}<ZButton
+                            zWave={false}
+                            zType="ghost"
+                            zSize="sm"
+                            class="size-7 p-0"
+                            aria-label="Next"
+                            title="Next"
+                            onclick={() => at++}
+                            ><ZIcon
+                                zType={icon('lucideArrowRight')}
+                                class="size-3.5"
+                            /></ZButton
+                        >{/if}
+                </span>
                 <span class="flex-1"></span>
-                {#if oncancel}<ZButton
+                {#if oncancel}
+                    <ZButton
                         zWave={false}
                         zType="secondary"
                         zSize="sm"
                         class="h-7 px-3 text-sm"
                         onclick={oncancel}>Cancel</ZButton
-                    >{/if}
-                <ZButton zWave={false} zType="ghost" zSize="sm" onclick={skip}
-                    >Skip</ZButton
-                >
-                {#if at > 0}<ZButton
+                    >
+                {:else}
+                    <ZButton
                         zWave={false}
                         zType="ghost"
                         zSize="sm"
-                        onclick={() => at--}>Back</ZButton
-                    >{/if}
+                        class="h-7 px-3 text-sm"
+                        onclick={skip}>Skip</ZButton
+                    >
+                {/if}
                 {#if last}
                     <ZButton
                         zWave={false}
                         zType="default"
                         zSize="sm"
+                        class="h-7 px-3 text-sm"
                         onclick={send}
                         ><ZIcon
                             zType={icon('lucideSend')}
                             class="size-3.5"
                         />Send</ZButton
-                    >
-                {:else}
-                    <ZButton
-                        zWave={false}
-                        zType="default"
-                        zSize="sm"
-                        onclick={() => at++}>Next</ZButton
                     >
                 {/if}
             </footer>

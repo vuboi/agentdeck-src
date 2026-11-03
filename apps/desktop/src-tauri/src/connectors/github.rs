@@ -1,8 +1,14 @@
 //! GitHub CLI account state used by the GitHub Copilot connector.
 
+use std::sync::LazyLock;
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 use super::{capture, copilot_usage, which, Account, Accounts, Login};
+
+/// GitHub CLI updates its local auth store during switch/logout/login. Serialize account reads
+/// and mutations; the lightweight login probe stays unlocked because login polls it interactively.
+pub(crate) static AUTH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::const_new(()));
 
 /// Reads the active GitHub CLI account without loading or persisting a token.
 pub(crate) async fn login() -> Login {
@@ -49,6 +55,7 @@ pub(crate) async fn accounts(account_id: Option<String>) -> Result<Accounts, Str
             error: None,
         });
     };
+    let _auth_lock = AUTH_LOCK.lock().await;
     let out = capture(
         &gh,
         &["auth", "status", "--hostname", "github.com"],
@@ -128,6 +135,7 @@ pub(crate) async fn accounts(account_id: Option<String>) -> Result<Accounts, Str
 /// Switches the active account in GitHub CLI.
 pub(crate) async fn switch(id: &str) -> Result<(), String> {
     let gh = which("gh").ok_or("`gh` is not installed")?;
+    let _auth_lock = AUTH_LOCK.lock().await;
     let out = capture(
         &gh,
         &["auth", "switch", "--hostname", "github.com", "--user", id],
@@ -144,6 +152,7 @@ pub(crate) async fn switch(id: &str) -> Result<(), String> {
 /// Removes an inactive account from GitHub CLI.
 pub(crate) async fn remove(id: &str) -> Result<(), String> {
     let gh = which("gh").ok_or("`gh` is not installed")?;
+    let _auth_lock = AUTH_LOCK.lock().await;
     let listed = capture(
         &gh,
         &["auth", "status", "--hostname", "github.com"],

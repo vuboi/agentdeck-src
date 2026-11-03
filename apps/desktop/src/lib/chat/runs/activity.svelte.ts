@@ -17,7 +17,11 @@ import {
     type ServerLike,
 } from './inflight';
 import { sessionTail, watchOutput } from '../../terminal/terminal-session';
-import { endedByTask, statusAfterResult } from './activity-status';
+import {
+    endedByTask,
+    keepsAfterSuccessfulTurn,
+    statusAfterResult,
+} from './activity-status';
 import { isLongRunningWork } from './run-lanes';
 
 export type ActivityStatus =
@@ -674,7 +678,7 @@ export function trackActivity(
                 continue;
             if (
                 item.turn !== turn ||
-                (event.kind === 'done' && item.background)
+                (event.kind === 'done' && keepsAfterSuccessfulTurn(item))
             )
                 continue;
             item.status =

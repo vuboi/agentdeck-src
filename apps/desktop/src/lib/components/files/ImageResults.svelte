@@ -21,11 +21,9 @@
 
     const working = $derived(gen.working);
     const previews = $derived<Preview[]>(gen.previews);
-    const failureLines = $derived(gen.failureLines);
     const runMs = $derived(gen.runMs);
     const loadingRun = $derived(gen.loadingRun);
     const runSkeleton = $derived(gen.runSkeleton);
-    let failuresOpen = $state(false);
     let failedSources = $state<Set<string>>(new Set());
 
     function resultSrc(image: Preview) {
@@ -181,42 +179,5 @@
             title="No image candidates yet"
             hint="Enter a prompt, choose your models, then generate a few options here."
         />
-    </div>
-{/if}
-
-{#if failureLines.length && !working}
-    <div
-        class="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-[0.6875rem] text-destructive"
-    >
-        <button
-            type="button"
-            class="flex w-full cursor-pointer items-center gap-1.5 text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-expanded={failuresOpen}
-            onclick={() => (failuresOpen = !failuresOpen)}
-        >
-            <ZIcon
-                zType="lucideChevronDown"
-                class="size-3.5 shrink-0 transition-transform duration-300 ease-out motion-reduce:transition-none {failuresOpen
-                    ? ''
-                    : '-rotate-90'}"
-            />
-            {failureLines.length} candidate{failureLines.length === 1
-                ? ''
-                : 's'} failed
-        </button>
-        <!-- The rows animate their height with the grid, so the list never jumps: no margin outside the animated box. -->
-        <div
-            class="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none {failuresOpen
-                ? 'grid-rows-[1fr]'
-                : 'grid-rows-[0fr]'}"
-        >
-            <div class="min-h-0 overflow-hidden">
-                <ul class="list-disc space-y-1 pt-1.5 pl-4">
-                    {#each failureLines as line (line)}
-                        <li>{line}</li>
-                    {/each}
-                </ul>
-            </div>
-        </div>
     </div>
 {/if}

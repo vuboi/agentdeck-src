@@ -15,6 +15,9 @@ use super::{
 
 pub struct Claude;
 
+/// Working rules added to every agent's system prompt: keep the change to what was asked.
+pub const WORK_CONTEXT: &str = r#" Work rules: do only what the user asked, and every changed line must trace to the request. Do not refactor, rename or "improve" nearby code; mention unrelated problems in your reply instead of changing them. For a clear request, pick the most likely reading, state it in one line and proceed; ask only when the answer changes the result (wrong target, destructive action, missing access). Choose the simplest change that works: no speculative options, flags or single-use abstractions. Before editing, name the check that proves the change (test, command or screenshot), run it and report the real result. Remove only the imports, variables or functions your own change made unused."#;
+
 /// Added to the CLI's system prompt on every turn.
 /// How an agent asks the user multiple-choice questions in AgentDeck (rendered as a question card).
 pub const ASK_CONTEXT: &str = r#" To ask the user before you plan (only when a wrong guess would waste work), end your reply with one fenced block ```agentdeck-ask holding {"questions":[{"id","header","question","multi":false,"options":[{"label","description"}]}]} (1-3 questions, 2-4 options, recommended first, no "Other") and stop: the app shows it as a question card. Your own question tool does not reach the user here."#;
@@ -102,7 +105,7 @@ fn sdk_runner() -> PathBuf {
 
 fn sdk_args(req: &TurnRequest, mode: &str) -> Vec<String> {
     let bridge = std::env::var("AGENTDECK_BRIDGE").ok();
-    let mut system_prompt = format!("{APP_CONTEXT}{ASK_CONTEXT}");
+    let mut system_prompt = format!("{APP_CONTEXT}{ASK_CONTEXT}{WORK_CONTEXT}");
     system_prompt.push_str(" In the z-ui workspace, start the app the user asked for with its own script: `pnpm start:svelte` for the Svelte 5 app (default http://localhost:4301) and `pnpm start:angular` for the Angular app (default http://localhost:4200). Never open the Angular server when the user asks for Svelte, Svelte 5 or z-ui-svelte.");
 
     let mut allowed_tools = req.allowed_tools.clone();

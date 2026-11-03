@@ -575,6 +575,28 @@ mod tests {
         assert!(checked_source("https://github.com/anthropics/skills/").is_ok());
         assert!(checked_source("http://example.com/x").is_err());
     }
+
+    #[test]
+    fn baoyu_design_is_a_curated_cross_provider_skill() {
+        let item = builtins()
+            .into_iter()
+            .find(|item| item.key == "builtin:claude-design")
+            .expect("claude-design is listed");
+        assert_eq!(item.name, "claude-design");
+        assert_eq!(
+            item.agents,
+            super::library::SKILL_AGENTS
+                .iter()
+                .map(|agent| (*agent).to_owned())
+                .collect::<Vec<_>>()
+        );
+        assert!(matches!(
+            item.install,
+            Install::Skill { ref url, ref subpath }
+                if url == "https://github.com/jimliu/baoyu-design"
+                    && subpath == "skills/claude-design"
+        ));
+    }
 }
 
 #[cfg(test)]
@@ -682,12 +704,13 @@ mod page_tests {
 
 /// Curated entries remain available before the first online catalog refresh.
 fn builtins() -> Vec<CatalogItem> {
-    let agents: Vec<String> = ["claude", "codex", "copilot"]
+    let agents: Vec<String> = super::library::SKILL_AGENTS
         .iter()
         .map(|a| (*a).to_owned())
         .collect();
     vec![
         CatalogItem { key: "builtin:security-audit".into(), kind: "skill".into(), name: "security-audit".into(), summary: "Cloudflare multi-phase security audit. Install when needed.".into(), version: String::new(), publisher: "Cloudflare".into(), agents: agents.clone(), install: Install::Skill { url: "https://github.com/cloudflare/security-audit-skill".into(), subpath: "skills/security-audit".into() } },
+        CatalogItem { key: "builtin:claude-design".into(), kind: "skill".into(), name: "claude-design".into(), summary: "Create polished, editable canvas prototypes and UI concepts as local artifacts.".into(), version: String::new(), publisher: "JimLiu/baoyu-design".into(), agents: agents.clone(), install: Install::Skill { url: "https://github.com/jimliu/baoyu-design".into(), subpath: "skills/claude-design".into() } },
         CatalogItem { key: "builtin:chrome-devtools".into(), kind: "mcp".into(), name: "Chrome DevTools".into(), summary: "Control your running Chrome (144+). Enable remote debugging at chrome://inspect/#remote-debugging and allow Chrome's connection prompt. Not enabled until installed.".into(), version: "latest".into(), publisher: "ChromeDevTools".into(), agents: agents.clone(), install: Install::Mcp { spec: json!({"name":"chrome-devtools", "transport":"stdio", "target":"pnpm", "args":["dlx","chrome-devtools-mcp@latest","--autoConnect","--no-usage-statistics"], "agents":agents}) } },
     ]
 }

@@ -99,6 +99,7 @@ import {
     delegateTasks,
     endWaitingTasks,
     isWorkerChat,
+    maybeAutoReview,
     noteWorkerRecovering,
     pauseDelegateTask,
     resumeDelegateTask,
@@ -1884,6 +1885,9 @@ function handleEventNow(
                     event.kind === 'error',
                 );
                 endWaitingTasks(sessionId);
+                // Auto review (model popover): a main chat's turn that changed files gets a clean-context review.
+                if (event.kind === 'done' && !coordination && !reply.compressed)
+                    maybeAutoReview(sessionId, reply);
             } else {
                 // The worker is being recovered: its caller hears why, through the watchdog's check-in, and the task goes on.
                 const failure = (

@@ -2836,7 +2836,6 @@ pub fn run() {
             browser::browser_hide,
             browser::browser_navigate,
             browser::browser_reset,
-            browser::browser_release_chat,
             browser::browser_park,
             browser::browser_layer,
             browser::browser_eval,

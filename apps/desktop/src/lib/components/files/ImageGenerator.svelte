@@ -61,6 +61,7 @@
     import { pictureMenuItems } from '../../chat/content/attachment-menu';
     import ImageHistoryDrawer from './ImageHistoryDrawer.svelte';
     import ImageResults from './ImageResults.svelte';
+    import Splitter from '../ui/Splitter.svelte';
     import {
         EFFORT_LABEL,
         GEMINI_HOST,
@@ -245,7 +246,18 @@
     let nestedCloseTimer: ReturnType<typeof setTimeout> | undefined;
     let historyOpen = $state(false);
     let promptHistoryOpen = $state(false);
+    let promptHistoryLoading = $state(false);
     let generatedPromptHistory = $state<ImagePrompt[]>([]);
+    let composerPane = $state<HTMLDivElement | null>(null);
+    let promptPane = $state<HTMLDivElement | null>(null);
+    let filtersPane = $state<HTMLDivElement | null>(null);
+    let resultsPane = $state<HTMLDivElement | null>(null);
+    let resultsHeight = $state<number | null>(null);
+    let resizingResults = $state(false);
+    const MIN_COMPOSER_HEIGHT = 120;
+    const MIN_RESULTS_HEIGHT = 160;
+    const SPLITTER_HEIGHT = 1;
+    const PANE_GAP = 12;
     const promptSuggestions = $derived.by(() => {
         const source = promptHistoryOpen
             ? [
@@ -260,6 +272,50 @@
         Math.min(360, Math.max(160, modelPanelMax - 40)),
     );
     const settingsViewportRatio = 0.38;
+
+    function maxResultsHeight() {
+        const parent = resultsPane?.parentElement;
+        if (!parent || !promptPane || !filtersPane) return 0;
+
+        const composerHeight = Math.max(
+            MIN_COMPOSER_HEIGHT,
+            promptPane.offsetHeight + filtersPane.offsetHeight + PANE_GAP,
+        );
+        return Math.max(
+            0,
+            parent.clientHeight -
+                composerHeight -
+                SPLITTER_HEIGHT -
+                PANE_GAP * 2,
+        );
+    }
+
+    function resizeResults(delta: number) {
+        const current = resultsHeight ?? resultsPane?.clientHeight ?? 0;
+        const maximum = maxResultsHeight();
+        if (!current || !maximum) return;
+        resultsHeight = Math.min(
+            Math.max(current - delta, Math.min(MIN_RESULTS_HEIGHT, maximum)),
+            maximum,
+        );
+    }
+
+    $effect(() => {
+        const parent = resultsPane?.parentElement;
+        if (!parent || !composerPane || !promptPane || !filtersPane) return;
+
+        const observer = new ResizeObserver(() => {
+            if (resultsHeight === null) return;
+            const maximum = maxResultsHeight();
+            const nextHeight = Math.min(resultsHeight, maximum);
+            if (nextHeight !== resultsHeight) resultsHeight = nextHeight;
+        });
+        observer.observe(parent);
+        observer.observe(composerPane);
+        observer.observe(promptPane);
+        observer.observe(filtersPane);
+        return () => observer.disconnect();
+    });
 
     const variantCount = $derived(
         Math.max(1, Math.min(4, Math.round(variants))),
@@ -442,9 +498,20 @@
     }
 
     async function togglePromptHistory() {
-        promptHistoryOpen = !promptHistoryOpen;
-        if (promptHistoryOpen)
+        if (promptHistoryOpen) {
+            promptHistoryOpen = false;
+            return;
+        }
+        if (promptHistoryLoading) return;
+
+        promptHistoryLoading = true;
+        try {
+            // Load the complete list before the fold starts so the first open does not relayout mid-animation.
             generatedPromptHistory = await loadImagePrompts();
+            promptHistoryOpen = true;
+        } finally {
+            promptHistoryLoading = false;
+        }
     }
 
     /** A suggested keyword goes to its setting when one of its options fits, otherwise it is added to the prompt. */
@@ -708,480 +775,458 @@
     <div class="min-h-0 flex-1 overflow-hidden p-1.5">
         <div class="flex h-full min-h-0 flex-col gap-3">
             <div
-                class="relative min-w-0 shrink-0 rounded-2xl border border-input bg-card p-2 shadow-lg transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-ring/20 focus-within:ring-2"
+                bind:this={composerPane}
+                class="flex min-h-30 min-w-0 flex-col gap-3 overflow-hidden {resultsHeight !==
+                null
+                    ? 'flex-1'
+                    : ''}"
             >
-                {#if references.length > 0}
-                    <div
-                        class="mb-2 flex flex-wrap gap-2"
-                        aria-label="Reference images"
-                    >
-                        {#each references as reference (reference.id)}
-                            <div
-                                class="group/ref relative"
-                                role="group"
-                                aria-label={reference.name}
-                                oncontextmenu={(event) =>
-                                    attachmentMenu?.openAt(
-                                        event,
-                                        pictureMenuItems(reference, {
-                                            preview: () =>
-                                                openImages(
-                                                    references,
-                                                    references.indexOf(
-                                                        reference,
+                <div
+                    bind:this={promptPane}
+                    class="relative min-w-0 shrink-0 rounded-2xl border border-input bg-card p-2 shadow-lg transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-ring/20 focus-within:ring-2"
+                >
+                    {#if references.length > 0}
+                        <div
+                            class="mb-2 flex flex-wrap gap-2"
+                            aria-label="Reference images"
+                        >
+                            {#each references as reference (reference.id)}
+                                <div
+                                    class="group/ref relative"
+                                    role="group"
+                                    aria-label={reference.name}
+                                    oncontextmenu={(event) =>
+                                        attachmentMenu?.openAt(
+                                            event,
+                                            pictureMenuItems(reference, {
+                                                preview: () =>
+                                                    openImages(
+                                                        references,
+                                                        references.indexOf(
+                                                            reference,
+                                                        ),
                                                     ),
-                                                ),
-                                            remove: () =>
-                                                (references = references.filter(
-                                                    (item) =>
-                                                        item !== reference,
-                                                )),
-                                        }),
-                                    )}
-                            >
-                                <button
-                                    type="button"
-                                    class="block size-12 cursor-zoom-in overflow-hidden rounded-lg border border-border outline-none transition hover:ring-2 hover:ring-primary/50 focus-visible:ring-2 focus-visible:ring-ring"
-                                    aria-label="Preview {reference.name}"
-                                    onclick={() =>
-                                        openImages(
-                                            references,
-                                            references.indexOf(reference),
+                                                remove: () =>
+                                                    (references =
+                                                        references.filter(
+                                                            (item) =>
+                                                                item !==
+                                                                reference,
+                                                        )),
+                                            }),
                                         )}
                                 >
-                                    <img
-                                        src={pictureSrc(reference)}
-                                        alt={reference.name}
-                                        class="size-full object-cover"
-                                    />
-                                </button>
-                                <button
-                                    type="button"
-                                    class="absolute -top-3 -right-2.5 flex size-5.5 cursor-pointer items-center justify-center rounded-full border border-border bg-popover text-popover-foreground shadow-md opacity-0 transition-opacity group-hover/ref:opacity-100 focus-visible:opacity-100"
-                                    aria-label="Remove {reference.name}"
-                                    onclick={() =>
-                                        (references = references.filter(
-                                            (item) => item !== reference,
-                                        ))}
-                                >
-                                    <ZIcon
-                                        zType="lucideX"
-                                        zSize="12"
-                                        class="block size-[12px]! shrink-0"
-                                    />
-                                </button>
-                            </div>
-                        {/each}
-                    </div>
-                {/if}
-                <textarea
-                    bind:this={promptArea}
-                    bind:value={prompt}
-                    rows="2"
-                    aria-label="Image prompt"
-                    onkeydown={onPromptKeydown}
-                    onpaste={onPaste}
-                    oncontextmenu={(event) =>
-                        promptArea && textEditMenu?.openAt(event, promptArea)}
-                    ondragover={(event) => event.preventDefault()}
-                    ondrop={onDrop}
-                    placeholder="Describe the image, style, composition and constraints…"
-                    class="max-h-45 min-h-6 w-[calc(100%+0.5rem)] resize-none overflow-x-hidden break-words border-0 bg-transparent p-0 pr-2 text-sm leading-normal outline-none placeholder:text-muted-foreground"
-                ></textarea>
-                <TextEditContextMenu bind:this={textEditMenu} />
-                <AttachmentMenu bind:this={attachmentMenu} />
-
-                <div class="flex min-w-0 items-center justify-between gap-2">
-                    <div class="flex min-w-0 items-center gap-0.5">
-                        <button
-                            type="button"
-                            class="grid size-8 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40"
-                            aria-label="Attach images"
-                            title="Attach images (up to {MAX_REFERENCES}, or paste / drop)"
-                            disabled={references.length >= MAX_REFERENCES}
-                            onclick={() => fileInput?.click()}
-                        >
-                            <ZIcon zType="lucidePaperclip" class="size-3.5" />
-                        </button>
-                        <input
-                            bind:this={fileInput}
-                            type="file"
-                            accept="image/png,image/jpeg,image/gif,image/webp"
-                            multiple
-                            hidden
-                            onchange={(event) => {
-                                void addPictures([
-                                    ...(event.currentTarget.files ?? []),
-                                ]);
-                                event.currentTarget.value = '';
-                            }}
-                        />
-                        <button
-                            bind:this={settingsTrigger}
-                            type="button"
-                            class="flex h-8 min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring {settingsOpen
-                                ? 'bg-primary/10 text-primary'
-                                : ''}"
-                            aria-haspopup="menu"
-                            aria-expanded={settingsOpen}
-                            aria-label="Image settings"
-                            onclick={toggleSettings}
-                        >
-                            <ZIcon
-                                zSvg={OPENAI_SVG}
-                                class="size-3.5 shrink-0 text-foreground"
-                            />
-                            <span
-                                class="truncate"
-                                {@attach zTooltip({
-                                    content: `${settingsSummary} · ${variantCount}×`,
-                                    position: 'top',
-                                    autoDetect: true,
-                                })}>{settingsSummary}</span
-                            >
-                            <span
-                                class="hidden shrink-0 text-muted-foreground min-[720px]:inline"
-                                >· {variantCount}×</span
-                            >
-                            <ZIcon
-                                zType="lucideChevronDown"
-                                class="size-3 shrink-0 text-muted-foreground"
-                            />
-                        </button>
-                    </div>
-
-                    <div
-                        class="flex h-8 shrink-0 items-center gap-0.5 rounded-full border border-border bg-background p-0.5"
-                        role="group"
-                        aria-label="Image actions"
-                    >
-                        <button
-                            type="button"
-                            class="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring {promptHistoryOpen
-                                ? 'bg-primary/15 text-primary'
-                                : ''}"
-                            aria-label="Show prompt generation history"
-                            title="Show prompt generation history"
-                            aria-expanded={promptHistoryOpen}
-                            onclick={() => void togglePromptHistory()}
-                        >
-                            <ZIcon zType="lucideClock3" class="size-3.5" />
-                        </button>
-                        <button
-                            type="button"
-                            class="relative grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
-                            aria-label="AI suggestions"
-                            title="AI suggestions"
-                            disabled={(!prompt.trim() &&
-                                references.length === 0) ||
-                                !promptModel ||
-                                working}
-                            aria-busy={suggesting}
-                            onclick={() => void suggestPrompts()}
-                        >
-                            {#if suggesting}
-                                {@render busyRing()}
-                                <ZIcon
-                                    zType="lucideWandSparkles"
-                                    class="relative size-3.5 text-primary"
-                                />
-                            {:else}
-                                <ZIcon
-                                    zType="lucideWandSparkles"
-                                    class="size-3.5"
-                                />
-                            {/if}
-                        </button>
-
-                        {#if working}
-                            <button
-                                type="button"
-                                class="relative grid size-7 cursor-pointer place-items-center rounded-full bg-primary text-primary-foreground transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40"
-                                aria-label="Stop generating"
-                                title="Stop"
-                                disabled={stopping}
-                                onclick={() => void stop()}
-                            >
-                                {@render busyRing()}
-                                <svg
-                                    class="relative size-2.5"
-                                    viewBox="0 0 16 16"
-                                    aria-hidden="true"
-                                    ><rect
-                                        x="2.5"
-                                        y="2.5"
-                                        width="11"
-                                        height="11"
-                                        rx="2.5"
-                                        fill="currentColor"
-                                    /></svg
-                                >
-                            </button>
-                        {:else}
-                            <button
-                                type="button"
-                                class="grid size-7 cursor-pointer place-items-center rounded-full bg-primary text-primary-foreground transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40"
-                                aria-label="Generate images"
-                                title="Generate {candidateCount} image candidates"
-                                disabled={!prompt.trim() ||
-                                    selectedModels.length === 0 ||
-                                    suggesting}
-                                onclick={generate}
-                            >
-                                <ZIcon zType="lucideArrowUp" class="size-3.5" />
-                            </button>
-                        {/if}
-                    </div>
-                </div>
-
-                <ZPopover
-                    anchor={settingsTrigger}
-                    bind:open={settingsOpen}
-                    zTrigger="manual"
-                    zPosition="bottom-left"
-                    zOffset={8}
-                    zWidth={256}
-                >
-                    <div
-                        class="flex w-full flex-col gap-4 overflow-x-hidden overflow-y-auto px-2.5 py-2.5 text-sm"
-                        style:max-height="{settingsPanelMax}px"
-                        role="menu"
-                        aria-label="Image settings"
-                        {@attach glide()}
-                    >
-                        <section aria-label="Image models">
-                            <SectionTitle label="MODEL" />
-                            <button
-                                bind:this={modelsRow}
-                                type="button"
-                                data-glide-item
-                                role="menuitem"
-                                aria-haspopup="menu"
-                                aria-expanded={modelsOpen}
-                                class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {modelsOpen
-                                    ? 'bg-primary/10 text-primary'
-                                    : ''}"
-                                onpointerenter={() =>
-                                    hoverOpens() && openSub('models')}
-                                onpointerleave={closeNestedMenusSoon}
-                            >
-                                <span
-                                    class="min-w-0 flex-1 truncate"
-                                    {@attach zTooltip({
-                                        content: settingsSummary,
-                                        position: 'right',
-                                        autoDetect: true,
-                                    })}>{settingsSummary}</span
-                                >
-                                <ZIcon
-                                    zType="lucideChevronRight"
-                                    class="size-3.5 shrink-0 text-muted-foreground"
-                                />
-                            </button>
-                        </section>
-
-                        <section aria-label="Prompt model">
-                            <SectionTitle label="PROMPT MODEL" />
-                            <div class="flex flex-col gap-[3.5px]">
-                                {#each promptGroups as group (group.provider)}
-                                    {@const activeProvider =
-                                        promptSource?.provider ===
-                                        group.provider}
                                     <button
                                         type="button"
-                                        role="menuitem"
-                                        aria-haspopup="dialog"
-                                        aria-expanded={promptModelsOpen &&
-                                            promptSubProvider ===
-                                                group.provider}
-                                        data-glide-item
-                                        class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-[5px] text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {activeProvider ||
-                                        (promptModelsOpen &&
-                                            promptSubProvider ===
-                                                group.provider)
-                                            ? 'bg-primary/10'
-                                            : ''} {promptModelsOpen &&
-                                        promptSubProvider === group.provider
-                                            ? 'text-primary'
-                                            : ''}"
-                                        onpointerenter={(event) =>
-                                            openPromptModels(
-                                                group.provider,
-                                                event.currentTarget,
-                                            )}
-                                        onpointerleave={closeNestedMenusSoon}
-                                        onfocus={(event) =>
-                                            openPromptModels(
-                                                group.provider,
-                                                event.currentTarget,
-                                            )}
-                                        onclick={(event) =>
-                                            openPromptModels(
-                                                group.provider,
-                                                event.currentTarget,
+                                        class="block size-12 cursor-zoom-in overflow-hidden rounded-lg border border-border outline-none transition hover:ring-2 hover:ring-primary/50 focus-visible:ring-2 focus-visible:ring-ring"
+                                        aria-label="Preview {reference.name}"
+                                        onclick={() =>
+                                            openImages(
+                                                references,
+                                                references.indexOf(reference),
                                             )}
                                     >
-                                        <AgentLogo
-                                            agent={group.agent}
-                                            model={group.agent === 'custom'
-                                                ? group.items[0]?.value
-                                                : undefined}
-                                            class="size-3.5 shrink-0"
-                                        />
-                                        <!-- As in the chat's model picker: the provider's name keeps its room, the model's gives way (truncated). -->
-                                        <span
-                                            class="flex min-w-0 flex-1 items-baseline gap-2"
-                                        >
-                                            <span
-                                                class="truncate {activeProvider
-                                                    ? 'max-w-[60%] shrink-0'
-                                                    : 'min-w-0 flex-1'}"
-                                                >{group.label}</span
-                                            >
-                                            {#if activeProvider}<span
-                                                    class="min-w-0 flex-1 truncate text-right text-[0.6875rem] text-muted-foreground"
-                                                    >{promptModelLabel}</span
-                                                >{/if}
-                                        </span>
-                                        <ZIcon
-                                            zType="lucideChevronRight"
-                                            class="size-3 shrink-0 text-muted-foreground"
+                                        <img
+                                            src={pictureSrc(reference)}
+                                            alt={reference.name}
+                                            class="size-full object-cover"
                                         />
                                     </button>
-                                {/each}
-                            </div>
-                        </section>
-
-                        <section aria-label="Variants per model">
-                            <SectionTitle label="VARIANTS" />
-                            <ZTabs
-                                zTabs={variantTabs}
-                                zType="segmented"
-                                zSize="xs"
-                                zTabsOnly
-                                zNavFullWidth
-                                zCache={false}
-                                class="w-full [&_.z-tab-item]:flex-1 [&_.z-tab-item-label]:text-center"
-                                activeTab={String(variantCount)}
-                                onTabChange={(value) =>
-                                    (variants = Number(value))}
-                            />
-                        </section>
-
-                        <section aria-label="Reasoning effort">
-                            <SectionTitle label="EFFORT" />
-                            <ZTabs
-                                zTabs={effortTabs}
-                                zType="segmented"
-                                zSize="xs"
-                                zTabsOnly
-                                zNavFullWidth
-                                zCache={false}
-                                class="w-full [&_.z-tab-item]:flex-1 [&_.z-tab-item-label]:text-center"
-                                activeTab={effort}
-                                onTabChange={(value) =>
-                                    (effort = String(value))}
-                            />
-                        </section>
-
-                        <section
-                            aria-label="Speed"
-                            class="flex items-center justify-between gap-6 px-0.5"
-                        >
-                            <div>
-                                <div
-                                    class="flex items-center gap-1.5 text-sm font-medium"
-                                >
-                                    <ZIcon
-                                        zType="lucideZap"
-                                        class="size-3.5 text-warning"
-                                    />
-                                    Fast mode
+                                    <button
+                                        type="button"
+                                        class="absolute -top-3 -right-2.5 flex size-5.5 cursor-pointer items-center justify-center rounded-full border border-border bg-popover text-popover-foreground shadow-md opacity-0 transition-opacity group-hover/ref:opacity-100 focus-visible:opacity-100"
+                                        aria-label="Remove {reference.name}"
+                                        onclick={() =>
+                                            (references = references.filter(
+                                                (item) => item !== reference,
+                                            ))}
+                                    >
+                                        <ZIcon
+                                            zType="lucideX"
+                                            zSize="12"
+                                            class="block size-[12px]! shrink-0"
+                                        />
+                                    </button>
                                 </div>
-                                <div
-                                    class="mt-1 text-[0.6875rem] leading-snug text-muted-foreground"
-                                >
-                                    Faster output, higher usage
-                                </div>
-                            </div>
-                            <ZSwitch
-                                zVariant="dot"
-                                bind:checked={fast}
-                                zSize="sm"
-                            />
-                        </section>
-                    </div>
-                </ZPopover>
-
-                <ZPopover
-                    anchor={modelsRow}
-                    bind:open={modelsOpen}
-                    zTrigger="manual"
-                    zPosition="right-top"
-                    zOffset={6}
-                    zWidth={203}
-                >
-                    <div
-                        class="flex w-full flex-col gap-0.5 overflow-x-hidden overflow-y-auto overscroll-contain p-1.5 text-sm"
-                        style:max-height="{modelNestedMax}px"
-                        role="menu"
-                        aria-label="Image models"
-                        tabindex="-1"
-                        onpointerenter={keepNestedMenusOpen}
-                        onpointerleave={closeNestedMenusSoon}
-                        {@attach glide()}
-                    >
-                        <div
-                            class="mr-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase"
-                            role="separator"
-                        >
-                            <span>Codex</span><span
-                                class="h-px flex-1 bg-primary"
-                            ></span>
+                            {/each}
                         </div>
-                        {#each openAiModels as item (item.model)}
-                            {@const active = selectedModels.includes(
-                                item.model,
-                            )}
+                    {/if}
+                    <textarea
+                        bind:this={promptArea}
+                        bind:value={prompt}
+                        rows="2"
+                        aria-label="Image prompt"
+                        onkeydown={onPromptKeydown}
+                        onpaste={onPaste}
+                        oncontextmenu={(event) =>
+                            promptArea &&
+                            textEditMenu?.openAt(event, promptArea)}
+                        ondragover={(event) => event.preventDefault()}
+                        ondrop={onDrop}
+                        placeholder="Describe the image, style, composition and constraints…"
+                        class="max-h-45 min-h-6 w-[calc(100%+0.5rem)] resize-none overflow-x-hidden break-words border-0 bg-transparent p-0 pr-2 text-sm leading-normal outline-none placeholder:text-muted-foreground"
+                    ></textarea>
+                    <TextEditContextMenu bind:this={textEditMenu} />
+                    <AttachmentMenu bind:this={attachmentMenu} />
+
+                    <div
+                        class="flex min-w-0 items-center justify-between gap-2"
+                    >
+                        <div class="flex min-w-0 items-center gap-0.5">
                             <button
                                 type="button"
-                                data-glide-item
-                                role="menuitemcheckbox"
-                                aria-checked={active}
-                                class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active
+                                class="grid size-8 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40"
+                                aria-label="Attach images"
+                                title="Attach images (up to {MAX_REFERENCES}, or paste / drop)"
+                                disabled={references.length >= MAX_REFERENCES}
+                                onclick={() => fileInput?.click()}
+                            >
+                                <ZIcon
+                                    zType="lucidePaperclip"
+                                    class="size-3.5"
+                                />
+                            </button>
+                            <input
+                                bind:this={fileInput}
+                                type="file"
+                                accept="image/png,image/jpeg,image/gif,image/webp"
+                                multiple
+                                hidden
+                                onchange={(event) => {
+                                    void addPictures([
+                                        ...(event.currentTarget.files ?? []),
+                                    ]);
+                                    event.currentTarget.value = '';
+                                }}
+                            />
+                            <button
+                                bind:this={settingsTrigger}
+                                type="button"
+                                class="flex h-8 min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring {settingsOpen
                                     ? 'bg-primary/10 text-primary'
                                     : ''}"
-                                onclick={() => toggleModel(item.model)}
-                                {@attach zTooltip({
-                                    content: item.label,
-                                    position: 'right',
-                                    autoDetect: true,
-                                    offset: 6,
-                                })}
+                                aria-haspopup="menu"
+                                aria-expanded={settingsOpen}
+                                aria-label="Image settings"
+                                onclick={toggleSettings}
                             >
                                 <ZIcon
                                     zSvg={OPENAI_SVG}
                                     class="size-3.5 shrink-0 text-foreground"
                                 />
-                                <span class="min-w-0 flex-1 truncate"
-                                    >{item.label}</span
+                                <span
+                                    class="truncate"
+                                    {@attach zTooltip({
+                                        content: `${settingsSummary} · ${variantCount}×`,
+                                        position: 'top',
+                                        autoDetect: true,
+                                    })}>{settingsSummary}</span
                                 >
-                                {#if active}<ZIcon
-                                        zType="lucideCheck"
-                                        class="size-3.5 shrink-0"
-                                    />{/if}
+                                <span
+                                    class="hidden shrink-0 text-muted-foreground min-[720px]:inline"
+                                    >· {variantCount}×</span
+                                >
+                                <ZIcon
+                                    zType="lucideChevronDown"
+                                    class="size-3 shrink-0 text-muted-foreground"
+                                />
                             </button>
-                        {/each}
-                        <div
-                            class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase"
-                            role="separator"
-                        >
-                            <span>Google Gemini</span><span
-                                class="h-px flex-1 bg-primary"
-                            ></span>
                         </div>
-                        {#if geminiReady}
-                            {#each gemini as item (item.model)}
+
+                        <div
+                            class="flex h-8 shrink-0 items-center gap-0.5 rounded-full border border-border bg-background p-0.5"
+                            role="group"
+                            aria-label="Image actions"
+                        >
+                            <button
+                                type="button"
+                                class="grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent {promptHistoryOpen
+                                    ? 'bg-primary/15 text-primary'
+                                    : ''}"
+                                aria-label="Show prompt generation history"
+                                title="Show prompt generation history"
+                                aria-expanded={promptHistoryOpen}
+                                disabled={suggesting || promptHistoryLoading}
+                                onclick={() => void togglePromptHistory()}
+                            >
+                                <ZIcon zType="lucideClock3" class="size-3.5" />
+                            </button>
+                            <button
+                                type="button"
+                                class="relative grid size-7 cursor-pointer place-items-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+                                aria-label="AI suggestions"
+                                title="AI suggestions"
+                                disabled={(!prompt.trim() &&
+                                    references.length === 0) ||
+                                    !promptModel ||
+                                    working}
+                                aria-busy={suggesting}
+                                onclick={() => void suggestPrompts()}
+                            >
+                                {#if suggesting}
+                                    {@render busyRing()}
+                                    <ZIcon
+                                        zType="lucideWandSparkles"
+                                        class="relative size-3.5 text-primary"
+                                    />
+                                {:else}
+                                    <ZIcon
+                                        zType="lucideWandSparkles"
+                                        class="size-3.5"
+                                    />
+                                {/if}
+                            </button>
+
+                            {#if working}
+                                <button
+                                    type="button"
+                                    class="relative grid size-7 cursor-pointer place-items-center rounded-full bg-primary text-primary-foreground transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40"
+                                    aria-label="Stop generating"
+                                    title="Stop"
+                                    disabled={stopping}
+                                    onclick={() => void stop()}
+                                >
+                                    {@render busyRing()}
+                                    <svg
+                                        class="relative size-2.5"
+                                        viewBox="0 0 16 16"
+                                        aria-hidden="true"
+                                        ><rect
+                                            x="2.5"
+                                            y="2.5"
+                                            width="11"
+                                            height="11"
+                                            rx="2.5"
+                                            fill="currentColor"
+                                        /></svg
+                                    >
+                                </button>
+                            {:else}
+                                <button
+                                    type="button"
+                                    class="grid size-7 cursor-pointer place-items-center rounded-full bg-primary text-primary-foreground transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40"
+                                    aria-label="Generate images"
+                                    title="Generate {candidateCount} image candidates"
+                                    disabled={!prompt.trim() ||
+                                        selectedModels.length === 0 ||
+                                        suggesting}
+                                    onclick={generate}
+                                >
+                                    <ZIcon
+                                        zType="lucideArrowUp"
+                                        class="size-3.5"
+                                    />
+                                </button>
+                            {/if}
+                        </div>
+                    </div>
+
+                    <ZPopover
+                        anchor={settingsTrigger}
+                        bind:open={settingsOpen}
+                        zTrigger="manual"
+                        zPosition="bottom-left"
+                        zOffset={8}
+                        zWidth={256}
+                    >
+                        <div
+                            class="flex w-full flex-col gap-4 overflow-x-hidden overflow-y-auto px-2.5 py-2.5 text-sm"
+                            style:max-height="{settingsPanelMax}px"
+                            role="menu"
+                            aria-label="Image settings"
+                            {@attach glide()}
+                        >
+                            <section aria-label="Image models">
+                                <SectionTitle label="MODEL" />
+                                <button
+                                    bind:this={modelsRow}
+                                    type="button"
+                                    data-glide-item
+                                    role="menuitem"
+                                    aria-haspopup="menu"
+                                    aria-expanded={modelsOpen}
+                                    class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {modelsOpen
+                                        ? 'bg-primary/10 text-primary'
+                                        : ''}"
+                                    onpointerenter={() =>
+                                        hoverOpens() && openSub('models')}
+                                    onpointerleave={closeNestedMenusSoon}
+                                >
+                                    <span
+                                        class="min-w-0 flex-1 truncate"
+                                        {@attach zTooltip({
+                                            content: settingsSummary,
+                                            position: 'right',
+                                            autoDetect: true,
+                                        })}>{settingsSummary}</span
+                                    >
+                                    <ZIcon
+                                        zType="lucideChevronRight"
+                                        class="size-3.5 shrink-0 text-muted-foreground"
+                                    />
+                                </button>
+                            </section>
+
+                            <section aria-label="Prompt model">
+                                <SectionTitle label="PROMPT MODEL" />
+                                <div class="flex flex-col gap-[3.5px]">
+                                    {#each promptGroups as group (group.provider)}
+                                        {@const activeProvider =
+                                            promptSource?.provider ===
+                                            group.provider}
+                                        <button
+                                            type="button"
+                                            role="menuitem"
+                                            aria-haspopup="dialog"
+                                            aria-expanded={promptModelsOpen &&
+                                                promptSubProvider ===
+                                                    group.provider}
+                                            data-glide-item
+                                            class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-[5px] text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {activeProvider ||
+                                            (promptModelsOpen &&
+                                                promptSubProvider ===
+                                                    group.provider)
+                                                ? 'bg-primary/10'
+                                                : ''} {promptModelsOpen &&
+                                            promptSubProvider === group.provider
+                                                ? 'text-primary'
+                                                : ''}"
+                                            onpointerenter={(event) =>
+                                                openPromptModels(
+                                                    group.provider,
+                                                    event.currentTarget,
+                                                )}
+                                            onpointerleave={closeNestedMenusSoon}
+                                            onfocus={(event) =>
+                                                openPromptModels(
+                                                    group.provider,
+                                                    event.currentTarget,
+                                                )}
+                                            onclick={(event) =>
+                                                openPromptModels(
+                                                    group.provider,
+                                                    event.currentTarget,
+                                                )}
+                                        >
+                                            <AgentLogo
+                                                agent={group.agent}
+                                                model={group.agent === 'custom'
+                                                    ? group.items[0]?.value
+                                                    : undefined}
+                                                class="size-3.5 shrink-0"
+                                            />
+                                            <!-- As in the chat's model picker: the provider's name keeps its room, the model's gives way (truncated). -->
+                                            <span
+                                                class="flex min-w-0 flex-1 items-baseline gap-2"
+                                            >
+                                                <span
+                                                    class="truncate {activeProvider
+                                                        ? 'max-w-[60%] shrink-0'
+                                                        : 'min-w-0 flex-1'}"
+                                                    >{group.label}</span
+                                                >
+                                                {#if activeProvider}<span
+                                                        class="min-w-0 flex-1 truncate text-right text-[0.6875rem] text-muted-foreground"
+                                                        >{promptModelLabel}</span
+                                                    >{/if}
+                                            </span>
+                                            <ZIcon
+                                                zType="lucideChevronRight"
+                                                class="size-3 shrink-0 text-muted-foreground"
+                                            />
+                                        </button>
+                                    {/each}
+                                </div>
+                            </section>
+
+                            <section aria-label="Variants per model">
+                                <SectionTitle label="VARIANTS" />
+                                <ZTabs
+                                    zTabs={variantTabs}
+                                    zType="segmented"
+                                    zSize="xs"
+                                    zTabsOnly
+                                    zNavFullWidth
+                                    zCache={false}
+                                    class="w-full [&_.z-tab-item]:flex-1 [&_.z-tab-item-label]:text-center"
+                                    activeTab={String(variantCount)}
+                                    onTabChange={(value) =>
+                                        (variants = Number(value))}
+                                />
+                            </section>
+
+                            <section aria-label="Reasoning effort">
+                                <SectionTitle label="EFFORT" />
+                                <ZTabs
+                                    zTabs={effortTabs}
+                                    zType="segmented"
+                                    zSize="xs"
+                                    zTabsOnly
+                                    zNavFullWidth
+                                    zCache={false}
+                                    class="w-full [&_.z-tab-item]:flex-1 [&_.z-tab-item-label]:text-center"
+                                    activeTab={effort}
+                                    onTabChange={(value) =>
+                                        (effort = String(value))}
+                                />
+                            </section>
+
+                            <section
+                                aria-label="Speed"
+                                class="flex items-center justify-between gap-6 px-0.5"
+                            >
+                                <div>
+                                    <div
+                                        class="flex items-center gap-1.5 text-sm font-medium"
+                                    >
+                                        <ZIcon
+                                            zType="lucideZap"
+                                            class="size-3.5 text-warning"
+                                        />
+                                        Fast mode
+                                    </div>
+                                    <div
+                                        class="mt-1 text-[0.6875rem] leading-snug text-muted-foreground"
+                                    >
+                                        Faster output, higher usage
+                                    </div>
+                                </div>
+                                <ZSwitch
+                                    zVariant="dot"
+                                    bind:checked={fast}
+                                    zSize="sm"
+                                />
+                            </section>
+                        </div>
+                    </ZPopover>
+
+                    <ZPopover
+                        anchor={modelsRow}
+                        bind:open={modelsOpen}
+                        zTrigger="manual"
+                        zPosition="right-top"
+                        zOffset={6}
+                        zWidth={203}
+                    >
+                        <div
+                            class="flex w-full flex-col gap-0.5 overflow-x-hidden overflow-y-auto overscroll-contain p-1.5 text-sm"
+                            style:max-height="{modelNestedMax}px"
+                            role="menu"
+                            aria-label="Image models"
+                            tabindex="-1"
+                            onpointerenter={keepNestedMenusOpen}
+                            onpointerleave={closeNestedMenusSoon}
+                            {@attach glide()}
+                        >
+                            <div
+                                class="mr-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase"
+                                role="separator"
+                            >
+                                <span>Codex</span><span
+                                    class="h-px flex-1 bg-primary"
+                                ></span>
+                            </div>
+                            {#each openAiModels as item (item.model)}
                                 {@const active = selectedModels.includes(
                                     item.model,
                                 )}
@@ -1202,7 +1247,7 @@
                                     })}
                                 >
                                     <ZIcon
-                                        zType="lucideSparkles"
+                                        zSvg={OPENAI_SVG}
                                         class="size-3.5 shrink-0 text-foreground"
                                     />
                                     <span class="min-w-0 flex-1 truncate"
@@ -1214,117 +1259,114 @@
                                         />{/if}
                                 </button>
                             {/each}
-                        {:else}
-                            <p
-                                class="m-0 px-1.5 py-1 text-[0.6875rem] leading-snug text-muted-foreground"
-                            >
-                                Add a Gemini API key in Settings, Cloud
-                                providers, to use Nano Banana.
-                            </p>
-                        {/if}
-                        {#if workbuddyImageModels.length}
                             <div
                                 class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase"
                                 role="separator"
                             >
-                                <span>WorkBuddy</span><span
+                                <span>Google Gemini</span><span
                                     class="h-px flex-1 bg-primary"
                                 ></span>
                             </div>
-                            {#each workbuddyImageModels as item (`workbuddy:${item.model}`)}
-                                {@const active = selectedModels.includes(
-                                    item.model,
-                                )}
-                                <button
-                                    type="button"
-                                    data-glide-item
-                                    role="menuitemcheckbox"
-                                    aria-checked={active}
-                                    class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active
-                                        ? 'bg-primary/10 text-primary'
-                                        : ''}"
-                                    onclick={() => toggleModel(item.model)}
-                                    {@attach zTooltip({
-                                        content: item.label,
-                                        position: 'right',
-                                        autoDetect: true,
-                                        offset: 6,
-                                    })}
-                                >
-                                    <AgentLogo
-                                        agent="workbuddy"
-                                        class="size-3.5 shrink-0"
-                                    />
-                                    <span class="min-w-0 flex-1 truncate"
-                                        >{item.label.replace(
-                                            'WorkBuddy · ',
-                                            '',
-                                        )}</span
+                            {#if geminiReady}
+                                {#each gemini as item (item.model)}
+                                    {@const active = selectedModels.includes(
+                                        item.model,
+                                    )}
+                                    <button
+                                        type="button"
+                                        data-glide-item
+                                        role="menuitemcheckbox"
+                                        aria-checked={active}
+                                        class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active
+                                            ? 'bg-primary/10 text-primary'
+                                            : ''}"
+                                        onclick={() => toggleModel(item.model)}
+                                        {@attach zTooltip({
+                                            content: item.label,
+                                            position: 'right',
+                                            autoDetect: true,
+                                            offset: 6,
+                                        })}
                                     >
-                                    {#if active}<ZIcon
-                                            zType="lucideCheck"
-                                            class="size-3.5 shrink-0"
-                                        />{/if}
-                                </button>
-                            {/each}
-                        {/if}
-                        <div
-                            class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase"
-                            role="separator"
-                        >
-                            <span>Free community</span><span
-                                class="h-px flex-1 bg-primary"
-                            ></span>
-                        </div>
-                        {#each freeImageModels as item (item.model)}
-                            {@const active = selectedModels.includes(
-                                item.model,
-                            )}
-                            <button
-                                type="button"
-                                data-glide-item
-                                role="menuitemcheckbox"
-                                aria-checked={active}
-                                class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active
-                                    ? 'bg-primary/10 text-primary'
-                                    : ''}"
-                                onclick={() => toggleModel(item.model)}
-                                {@attach zTooltip({
-                                    content: item.label,
-                                    position: 'right',
-                                    autoDetect: true,
-                                    offset: 6,
-                                })}
-                            >
-                                <ZIcon
-                                    zType="lucideWandSparkles"
-                                    class="size-3.5 shrink-0 text-foreground"
-                                />
-                                <span class="min-w-0 flex-1 truncate"
-                                    >{item.label}</span
+                                        <ZIcon
+                                            zType="lucideSparkles"
+                                            class="size-3.5 shrink-0 text-foreground"
+                                        />
+                                        <span class="min-w-0 flex-1 truncate"
+                                            >{item.label}</span
+                                        >
+                                        {#if active}<ZIcon
+                                                zType="lucideCheck"
+                                                class="size-3.5 shrink-0"
+                                            />{/if}
+                                    </button>
+                                {/each}
+                            {:else}
+                                <p
+                                    class="m-0 px-1.5 py-1 text-[0.6875rem] leading-snug text-muted-foreground"
                                 >
-                                {#if active}<ZIcon
-                                        zType="lucideCheck"
-                                        class="size-3.5 shrink-0"
-                                    />{/if}
-                            </button>
-                        {/each}
-                        {#if customImageModels.length}
+                                    Add a Gemini API key in Settings, Cloud
+                                    providers, to use Nano Banana.
+                                </p>
+                            {/if}
+                            {#if workbuddyImageModels.length}
+                                <div
+                                    class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase"
+                                    role="separator"
+                                >
+                                    <span>WorkBuddy</span><span
+                                        class="h-px flex-1 bg-primary"
+                                    ></span>
+                                </div>
+                                {#each workbuddyImageModels as item (`workbuddy:${item.model}`)}
+                                    {@const active = selectedModels.includes(
+                                        item.model,
+                                    )}
+                                    <button
+                                        type="button"
+                                        data-glide-item
+                                        role="menuitemcheckbox"
+                                        aria-checked={active}
+                                        class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active
+                                            ? 'bg-primary/10 text-primary'
+                                            : ''}"
+                                        onclick={() => toggleModel(item.model)}
+                                        {@attach zTooltip({
+                                            content: item.label,
+                                            position: 'right',
+                                            autoDetect: true,
+                                            offset: 6,
+                                        })}
+                                    >
+                                        <AgentLogo
+                                            agent="workbuddy"
+                                            class="size-3.5 shrink-0"
+                                        />
+                                        <span class="min-w-0 flex-1 truncate"
+                                            >{item.label.replace(
+                                                'WorkBuddy · ',
+                                                '',
+                                            )}</span
+                                        >
+                                        {#if active}<ZIcon
+                                                zType="lucideCheck"
+                                                class="size-3.5 shrink-0"
+                                            />{/if}
+                                    </button>
+                                {/each}
+                            {/if}
                             <div
                                 class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase"
                                 role="separator"
                             >
-                                <span>Configured image APIs</span><span
+                                <span>Free community</span><span
                                     class="h-px flex-1 bg-primary"
                                 ></span>
                             </div>
-                            {#each customImageModels as item, index (`custom:${index}:${item.custom?.base_url ?? ''}:${item.model}`)}
+                            {#each freeImageModels as item (item.model)}
                                 {@const active = selectedModels.includes(
                                     item.model,
                                 )}
-                                {@const logo = item.custom
-                                    ? brandLogoFor(item.custom.base_url)
-                                    : undefined}
                                 <button
                                     type="button"
                                     data-glide-item
@@ -1341,14 +1383,10 @@
                                         offset: 6,
                                     })}
                                 >
-                                    {#if logo}<img
-                                            src={logo}
-                                            alt=""
-                                            class="size-3.5 shrink-0 rounded-sm object-contain"
-                                        />{:else}<ZIcon
-                                            zType="lucideImagePlus"
-                                            class="size-3.5 shrink-0 text-foreground"
-                                        />{/if}
+                                    <ZIcon
+                                        zType="lucideWandSparkles"
+                                        class="size-3.5 shrink-0 text-foreground"
+                                    />
                                     <span class="min-w-0 flex-1 truncate"
                                         >{item.label}</span
                                     >
@@ -1358,252 +1396,327 @@
                                         />{/if}
                                 </button>
                             {/each}
-                        {/if}
-                    </div>
-                </ZPopover>
-
-                <ZPopover
-                    anchor={promptModelsAnchor}
-                    bind:open={promptModelsOpen}
-                    zTrigger="manual"
-                    zPosition="right-top"
-                    zOffset={6}
-                    zWidth={203}
-                >
-                    {@const selectedGroup = promptGroups.find(
-                        (group) => group.provider === promptSubProvider,
-                    )}
-                    {@const sorted = freeFirst(selectedGroup?.items ?? [])}
-                    <div
-                        class="flex w-full flex-col gap-0.5 overflow-x-hidden overflow-y-auto py-1 pl-1 text-sm"
-                        style:max-height="320px"
-                        role="radiogroup"
-                        aria-label="Prompt models"
-                        tabindex="-1"
-                        onpointerenter={keepNestedMenusOpen}
-                        onpointerleave={closeNestedMenusSoon}
-                        {@attach glide()}
-                    >
-                        {#if selectedGroup && !modelsReady[selectedGroup.agent]}
-                            <!-- The CLI's own list is still being read: rows that stand where its models will, instead of a list that would be replaced. -->
-                            <div
-                                class="flex w-full flex-col gap-1 px-2 py-2"
-                                role="status"
-                                aria-label="Loading models"
-                            >
-                                {#each [70, 55, 82, 48] as width (width)}<span
-                                        class="h-4 animate-pulse rounded bg-muted"
-                                        style:width="{width}%"
-                                    ></span>{/each}
-                            </div>
-                        {:else if !selectedGroup?.items.length}
-                            <!-- The same empty state as the chat's model picker: the provider listed no models. -->
-                            <div
-                                class="flex w-full flex-col items-center gap-1.5 px-2 py-3 text-center"
-                            >
-                                <ZIcon
-                                    zType="lucideShieldAlert"
-                                    class="size-5 text-muted-foreground"
-                                />
-                                <div class="text-sm font-medium">
-                                    No AI models
-                                </div>
-                                <p
-                                    class="m-0 text-[0.6875rem] leading-snug text-muted-foreground"
-                                >
-                                    {selectedGroup?.label ?? 'This provider'} returned
-                                    no models, or its provider has an error. Check
-                                    it in Settings.
-                                </p>
-                            </div>
-                        {/if}
-                        {#each selectedGroup && modelsReady[selectedGroup.agent] ? sorted.items : [] as item, index (item.value)}
-                            {@const active = item.value === promptModel}
-                            {#each sorted.dividers.filter((divider) => divider.at === index) as divider (divider.label)}<div
-                                    class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-2 text-[10px] font-medium tracking-wide text-primary uppercase"
-                                    class:text-green-500={divider.label ===
-                                        'Free'}
-                                    class:text-red-500={divider.label ===
-                                        'Paid'}
-                                    class:text-muted-foreground={divider.label ===
-                                        'Hide'}
+                            {#if customImageModels.length}
+                                <div
+                                    class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-1.5 py-1 text-[10px] font-medium tracking-wide text-primary uppercase"
                                     role="separator"
                                 >
-                                    <span>{divider.label}</span><span
+                                    <span>Configured image APIs</span><span
                                         class="h-px flex-1 bg-primary"
-                                        class:bg-green-500={divider.label ===
-                                            'Free'}
-                                        class:bg-red-500={divider.label ===
-                                            'Paid'}
-                                        class:bg-muted-foreground={divider.label ===
-                                            'Hide'}
                                     ></span>
-                                </div>{/each}
-                            <button
-                                type="button"
-                                data-glide-item
-                                role="radio"
-                                aria-checked={active}
-                                class="mr-1 flex cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active
-                                    ? 'bg-primary/10 text-primary'
-                                    : ''}"
-                                onclick={() => {
-                                    promptModel = item.value;
-                                    promptModelsOpen = false;
-                                }}
-                                {@attach zTooltip({
-                                    content: item.label,
-                                    position: 'right',
-                                    autoDetect: true,
-                                    offset: 6,
-                                })}
-                            >
-                                <span class="min-w-0 truncate"
-                                    >{item.label}</span
-                                >
-                                {#if active}<ZIcon
-                                        zType="lucideCheck"
-                                        class="size-3.5 shrink-0 text-primary"
-                                    />{/if}
-                            </button>
-                        {/each}
-                    </div>
-                </ZPopover>
-
-                {#if suggesting || promptSuggestions.length || promptHistoryOpen}
-                    <div
-                        transition:fold
-                        class="-mx-1.5 -mb-2 mt-2 flex flex-col gap-1 overflow-hidden border-t border-border px-1.5 pt-2 pb-2"
-                        aria-label="Prompt suggestions"
-                    >
-                        <div
-                            class="flex items-center justify-between gap-2 px-1"
-                        >
-                            <span class="text-[0.6875rem] text-muted-foreground"
-                                >{promptHistoryOpen
-                                    ? `Prompt generation history · ${promptSuggestions.length}/5 · click to use`
-                                    : promptSuggestions.length
-                                      ? `Suggested prompts · ${promptSuggestions.length}/5 · click to use`
-                                      : 'Recent prompt'}</span
-                            >
-                        </div>
-                        {#if suggesting}
-                            <div
-                                class="flex flex-col gap-2 px-1 py-1"
-                                role="status"
-                                aria-label="Writing prompt suggestions"
-                            >
-                                {#each [0, 1, 2, 3, 4] as line (line)}
-                                    <div
-                                        class="h-3 animate-pulse rounded bg-muted {line ===
-                                        4
-                                            ? 'w-3/5'
-                                            : 'w-full'}"
-                                    ></div>
-                                {/each}
-                            </div>
-                        {:else}
-                            {#each promptSuggestions as suggestion, index (`${suggestion}:${index}`)}
-                                <button
-                                    in:fade={{ duration: 220 }}
-                                    type="button"
-                                    class="rounded-md bg-muted/50 px-2 py-1.5 text-left text-sm leading-4 text-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:bg-primary/10 focus-visible:text-primary outline-none"
-                                    aria-label={`Suggested prompt ${index + 1} of ${promptSuggestions.length}`}
-                                    onclick={() => useSuggestion(suggestion)}
-                                >
-                                    {suggestion}
-                                </button>
-                            {/each}
-                            {#if suggestedKeywords.length > 0}
-                                <div
-                                    class="flex flex-wrap gap-1 px-1 pt-1"
-                                    aria-label="Suggested keywords"
-                                >
-                                    {#each suggestedKeywords as keyword (keyword.category + keyword.value)}
-                                        <button
-                                            type="button"
-                                            class="rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[0.6875rem] text-primary outline-none transition-colors hover:bg-primary/15 focus-visible:ring-2 focus-visible:ring-ring"
-                                            title={SETTINGS.find(
-                                                (item) =>
-                                                    item.key ===
-                                                    SETTING_CATEGORY[
-                                                        keyword.category
-                                                    ],
-                                            )?.label ?? 'Prompt keyword'}
-                                            onclick={() => useKeyword(keyword)}
+                                </div>
+                                {#each customImageModels as item, index (`custom:${index}:${item.custom?.base_url ?? ''}:${item.model}`)}
+                                    {@const active = selectedModels.includes(
+                                        item.model,
+                                    )}
+                                    {@const logo = item.custom
+                                        ? brandLogoFor(item.custom.base_url)
+                                        : undefined}
+                                    <button
+                                        type="button"
+                                        data-glide-item
+                                        role="menuitemcheckbox"
+                                        aria-checked={active}
+                                        class="flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active
+                                            ? 'bg-primary/10 text-primary'
+                                            : ''}"
+                                        onclick={() => toggleModel(item.model)}
+                                        {@attach zTooltip({
+                                            content: item.label,
+                                            position: 'right',
+                                            autoDetect: true,
+                                            offset: 6,
+                                        })}
+                                    >
+                                        {#if logo}<img
+                                                src={logo}
+                                                alt=""
+                                                class="size-3.5 shrink-0 rounded-sm object-contain"
+                                            />{:else}<ZIcon
+                                                zType="lucideImagePlus"
+                                                class="size-3.5 shrink-0 text-foreground"
+                                            />{/if}
+                                        <span class="min-w-0 flex-1 truncate"
+                                            >{item.label}</span
                                         >
-                                            {keyword.value}
-                                        </button>
-                                    {/each}
+                                        {#if active}<ZIcon
+                                                zType="lucideCheck"
+                                                class="size-3.5 shrink-0"
+                                            />{/if}
+                                    </button>
+                                {/each}
+                            {/if}
+                        </div>
+                    </ZPopover>
+
+                    <ZPopover
+                        anchor={promptModelsAnchor}
+                        bind:open={promptModelsOpen}
+                        zTrigger="manual"
+                        zPosition="right-top"
+                        zOffset={6}
+                        zWidth={203}
+                    >
+                        {@const selectedGroup = promptGroups.find(
+                            (group) => group.provider === promptSubProvider,
+                        )}
+                        {@const sorted = freeFirst(selectedGroup?.items ?? [])}
+                        <div
+                            class="flex w-full flex-col gap-0.5 overflow-x-hidden overflow-y-auto py-1 pl-1 text-sm"
+                            style:max-height="320px"
+                            role="radiogroup"
+                            aria-label="Prompt models"
+                            tabindex="-1"
+                            onpointerenter={keepNestedMenusOpen}
+                            onpointerleave={closeNestedMenusSoon}
+                            {@attach glide()}
+                        >
+                            {#if selectedGroup && !modelsReady[selectedGroup.agent]}
+                                <!-- The CLI's own list is still being read: rows that stand where its models will, instead of a list that would be replaced. -->
+                                <div
+                                    class="flex w-full flex-col gap-1 px-2 py-2"
+                                    role="status"
+                                    aria-label="Loading models"
+                                >
+                                    {#each [70, 55, 82, 48] as width (width)}<span
+                                            class="h-4 animate-pulse rounded bg-muted"
+                                            style:width="{width}%"
+                                        ></span>{/each}
+                                </div>
+                            {:else if !selectedGroup?.items.length}
+                                <!-- The same empty state as the chat's model picker: the provider listed no models. -->
+                                <div
+                                    class="flex w-full flex-col items-center gap-1.5 px-2 py-3 text-center"
+                                >
+                                    <ZIcon
+                                        zType="lucideShieldAlert"
+                                        class="size-5 text-muted-foreground"
+                                    />
+                                    <div class="text-sm font-medium">
+                                        No AI models
+                                    </div>
+                                    <p
+                                        class="m-0 text-[0.6875rem] leading-snug text-muted-foreground"
+                                    >
+                                        {selectedGroup?.label ??
+                                            'This provider'} returned no models, or
+                                        its provider has an error. Check it in Settings.
+                                    </p>
                                 </div>
                             {/if}
-                        {/if}
-                    </div>
-                {/if}
+                            {#each selectedGroup && modelsReady[selectedGroup.agent] ? sorted.items : [] as item, index (item.value)}
+                                {@const active = item.value === promptModel}
+                                {#each sorted.dividers.filter((divider) => divider.at === index) as divider (divider.label)}<div
+                                        class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-2 text-[10px] font-medium tracking-wide text-primary uppercase"
+                                        class:text-green-500={divider.label ===
+                                            'Free'}
+                                        class:text-red-500={divider.label ===
+                                            'Paid'}
+                                        class:text-muted-foreground={divider.label ===
+                                            'Hide'}
+                                        role="separator"
+                                    >
+                                        <span>{divider.label}</span><span
+                                            class="h-px flex-1 bg-primary"
+                                            class:bg-green-500={divider.label ===
+                                                'Free'}
+                                            class:bg-red-500={divider.label ===
+                                                'Paid'}
+                                            class:bg-muted-foreground={divider.label ===
+                                                'Hide'}
+                                        ></span>
+                                    </div>{/each}
+                                <button
+                                    type="button"
+                                    data-glide-item
+                                    role="radio"
+                                    aria-checked={active}
+                                    class="mr-1 flex cursor-pointer items-center justify-between rounded-md px-2 py-1 text-left outline-none hover:bg-primary/10 focus-visible:bg-primary/10 {active
+                                        ? 'bg-primary/10 text-primary'
+                                        : ''}"
+                                    onclick={() => {
+                                        promptModel = item.value;
+                                        promptModelsOpen = false;
+                                    }}
+                                    {@attach zTooltip({
+                                        content: item.label,
+                                        position: 'right',
+                                        autoDetect: true,
+                                        offset: 6,
+                                    })}
+                                >
+                                    <span class="min-w-0 truncate"
+                                        >{item.label}</span
+                                    >
+                                    {#if active}<ZIcon
+                                            zType="lucideCheck"
+                                            class="size-3.5 shrink-0 text-primary"
+                                        />{/if}
+                                </button>
+                            {/each}
+                        </div>
+                    </ZPopover>
+
+                    {#if suggesting || promptSuggestions.length || promptHistoryOpen}
+                        <div
+                            transition:fold
+                            class="-mx-1.5 -mb-2 mt-2 flex flex-col gap-1 overflow-hidden border-t border-border px-1.5 pt-2 pb-2"
+                            aria-label="Prompt suggestions"
+                        >
+                            <div
+                                class="flex items-center justify-between gap-2 px-1"
+                            >
+                                <span
+                                    class="text-[0.6875rem] text-muted-foreground"
+                                    >{promptHistoryOpen
+                                        ? `Prompt generation history · ${promptSuggestions.length}/5 · click to use`
+                                        : promptSuggestions.length
+                                          ? `Suggested prompts · ${promptSuggestions.length}/5 · click to use`
+                                          : 'Recent prompt'}</span
+                                >
+                            </div>
+                            {#if suggesting}
+                                <div
+                                    class="-mr-1.5 flex min-h-10 max-h-60 flex-col gap-2 overflow-y-auto px-1 py-1 pr-1.5"
+                                    role="status"
+                                    aria-label="Writing prompt suggestions"
+                                >
+                                    {#each [0, 1, 2, 3, 4] as line (line)}
+                                        <div
+                                            class="h-3 animate-pulse rounded bg-muted {line ===
+                                            4
+                                                ? 'w-3/5'
+                                                : 'w-full'}"
+                                        ></div>
+                                    {/each}
+                                </div>
+                            {:else}
+                                <div
+                                    class="-mr-1.5 min-h-10 max-h-60 overflow-y-auto pr-1.5"
+                                >
+                                    {#each promptSuggestions as suggestion, index (`${suggestion}:${index}`)}
+                                        <button
+                                            in:fade={{ duration: 220 }}
+                                            type="button"
+                                            class="mb-1 block w-full rounded-md bg-muted/50 px-2 py-1.5 text-left text-sm leading-4 text-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:bg-primary/10 focus-visible:text-primary outline-none last:mb-0"
+                                            aria-label={`Suggested prompt ${index + 1} of ${promptSuggestions.length}`}
+                                            onclick={() =>
+                                                useSuggestion(suggestion)}
+                                        >
+                                            {suggestion}
+                                        </button>
+                                    {/each}
+                                    {#if suggestedKeywords.length > 0}
+                                        <div
+                                            class="flex flex-wrap gap-1 px-1 pt-1"
+                                            aria-label="Suggested keywords"
+                                        >
+                                            {#each suggestedKeywords as keyword (keyword.category + keyword.value)}
+                                                <button
+                                                    type="button"
+                                                    class="rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[0.6875rem] text-primary outline-none transition-colors hover:bg-primary/15 focus-visible:ring-2 focus-visible:ring-ring"
+                                                    title={SETTINGS.find(
+                                                        (item) =>
+                                                            item.key ===
+                                                            SETTING_CATEGORY[
+                                                                keyword.category
+                                                            ],
+                                                    )?.label ??
+                                                        'Prompt keyword'}
+                                                    onclick={() =>
+                                                        useKeyword(keyword)}
+                                                >
+                                                    {keyword.value}
+                                                </button>
+                                            {/each}
+                                        </div>
+                                    {/if}
+                                </div>
+                            {/if}
+                        </div>
+                    {/if}
+                </div>
+
+                <!-- The settings under the prompt: sent with it, and suggested with it by the prompt model. -->
+                <div
+                    bind:this={filtersPane}
+                    class="flex shrink-0 flex-wrap items-center gap-1.5"
+                    role="group"
+                    aria-label="Image settings"
+                >
+                    {#each SETTINGS as setting (setting.key)}
+                        {@const chosen = settings[setting.key]}
+                        <button
+                            type="button"
+                            class="flex h-8 min-w-0 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring {settingOpen &&
+                            settingKey === setting.key
+                                ? ACTIVE_ON
+                                : ''} {chosen
+                                ? 'text-foreground'
+                                : 'text-muted-foreground'}"
+                            aria-haspopup="menu"
+                            aria-expanded={settingOpen &&
+                                settingKey === setting.key}
+                            onclick={(event) =>
+                                openSetting(setting.key, event.currentTarget)}
+                        >
+                            <ZIcon
+                                zType={(chosen && OPTION_ICON[chosen]) ||
+                                    SETTING_ICON[setting.key]}
+                                class="size-3.5 shrink-0 text-muted-foreground"
+                            />
+                            <span class="shrink-0 text-muted-foreground"
+                                >{setting.label}</span
+                            >
+                            <span class="max-w-36 truncate"
+                                >{chosen || 'Auto'}</span
+                            >
+                            <ZIcon
+                                zType="lucideChevronDown"
+                                class="size-3 shrink-0 text-muted-foreground"
+                            />
+                        </button>
+                    {/each}
+                </div>
+
+                <PickerPopover
+                    anchor={settingAnchor}
+                    bind:open={settingOpen}
+                    bind:query={settingQuery}
+                    items={settingItems}
+                    local
+                    search
+                    fitContent={settingFitsContent}
+                    fillHeight={!settingFitsContent}
+                    heightReduction={settingFitsContent ? 0 : 50}
+                    placeholder="Search…"
+                    label="Setting options"
+                    empty="No option matches"
+                    position="bottom-left"
+                    size="sm"
+                    width={210}
+                    onpick={(item) => pickSetting(item.data)}
+                    onclose={() => (settingQuery = '')}
+                />
             </div>
 
-            <!-- The settings under the prompt: sent with it, and suggested with it by the prompt model. -->
-            <div
-                class="flex shrink-0 flex-wrap items-center gap-1.5"
-                role="group"
-                aria-label="Image settings"
-            >
-                {#each SETTINGS as setting (setting.key)}
-                    {@const chosen = settings[setting.key]}
-                    <button
-                        type="button"
-                        class="flex h-8 min-w-0 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring {settingOpen &&
-                        settingKey === setting.key
-                            ? ACTIVE_ON
-                            : ''} {chosen
-                            ? 'text-foreground'
-                            : 'text-muted-foreground'}"
-                        aria-haspopup="menu"
-                        aria-expanded={settingOpen &&
-                            settingKey === setting.key}
-                        onclick={(event) =>
-                            openSetting(setting.key, event.currentTarget)}
-                    >
-                        <ZIcon
-                            zType={(chosen && OPTION_ICON[chosen]) ||
-                                SETTING_ICON[setting.key]}
-                            class="size-3.5 shrink-0 text-muted-foreground"
-                        />
-                        <span class="shrink-0 text-muted-foreground"
-                            >{setting.label}</span
-                        >
-                        <span class="max-w-36 truncate">{chosen || 'Auto'}</span
-                        >
-                        <ZIcon
-                            zType="lucideChevronDown"
-                            class="size-3 shrink-0 text-muted-foreground"
-                        />
-                    </button>
-                {/each}
+            <div class="-mx-1.5">
+                <Splitter
+                    axis="y"
+                    label="Resize generated image results"
+                    bind:dragging={resizingResults}
+                    onDelta={resizeResults}
+                />
             </div>
-
-            <PickerPopover
-                anchor={settingAnchor}
-                bind:open={settingOpen}
-                bind:query={settingQuery}
-                items={settingItems}
-                local
-                search
-                fitContent={settingFitsContent}
-                fillHeight={!settingFitsContent}
-                heightReduction={settingFitsContent ? 0 : 50}
-                placeholder="Search…"
-                label="Setting options"
-                empty="No option matches"
-                position="bottom-left"
-                size="sm"
-                width={210}
-                onpick={(item) => pickSetting(item.data)}
-                onclose={() => (settingQuery = '')}
-            />
-
             <div
-                class="-mx-1.5 flex min-h-0 flex-1 flex-col border-t border-border pt-3"
+                bind:this={resultsPane}
+                class="-mx-1.5 flex min-h-0 flex-col pt-3 {resultsHeight ===
+                null
+                    ? 'flex-1'
+                    : 'shrink-0'}"
+                style:height={resultsHeight === null
+                    ? undefined
+                    : `${resultsHeight}px`}
             >
                 <div
                     class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-1.5"

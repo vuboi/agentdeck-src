@@ -106,7 +106,7 @@ export function planTask(input: PlanInput, state: PlanState): PlanResult {
     const roleId = args.role ? canonicalRole(args.role) : undefined;
     if (args.role && !roleId)
         return refuse(
-            `Unknown task role "${args.role}". Use one of: read, research, plan, review, security, refactor, coding, write, text, logic.`,
+            `Unknown task role "${args.role}". Use one of: read, research, plan, review, security, refactor, coding, test, write, text, logic.`,
         );
     const configured = roleId ? state.routesFor(roleId) : [];
     if (roleId && !configured.length)

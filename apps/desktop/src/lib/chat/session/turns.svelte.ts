@@ -81,7 +81,7 @@ export const NO_DELEGATE_HINT =
 /** These CLIs already own and invoke their native sub-agent orchestration; AgentDeck only adds its handoff hint to other providers. */
 export const NATIVE_DELEGATION = new SvelteSet<Agent>(['claude', 'codex']);
 export const NATIVE_DELEGATION_HINT =
-    'Use your native CLI sub-agent tools for internal parallel work when useful. AgentDeck delegate_task is for handing work across providers; do not replace native sub-agents with it.';
+    'Use your native CLI sub-agent tools for internal parallel work when useful. AgentDeck delegate_task is for handing work across providers; do not replace native sub-agents with it. Do not wait for the user to ask: for a nontrivial request, use delegate_task (wait:false) on your own when another provider clearly adds value, such as a clean-context review or security check of your diff, research, or a role routed below, and keep integration and the final answer here.';
 export const delegateHinted = new SvelteSet<string>();
 void getPref<string[]>('chat.delegateHinted.v2').then((saved) => {
     for (const key of saved ?? []) delegateHinted.add(key);
@@ -91,7 +91,7 @@ void getPref<string[]>('chat.delegateHinted').then((saved) => {
     for (const key of saved ?? []) priorDelegateHinted.add(key);
 });
 export const nativeDelegationHinted = new SvelteSet<string>();
-void getPref<string[]>('chat.nativeDelegationHinted.v1').then((saved) => {
+void getPref<string[]>('chat.nativeDelegationHinted.v2').then((saved) => {
     for (const key of saved ?? []) nativeDelegationHinted.add(key);
 });
 export function rememberDelegateHint(key: string) {
@@ -101,7 +101,7 @@ export function rememberDelegateHint(key: string) {
 export function rememberNativeDelegationHint(key: string) {
     nativeDelegationHinted.add(key);
     setPref(
-        'chat.nativeDelegationHinted.v1',
+        'chat.nativeDelegationHinted.v2',
         [...nativeDelegationHinted].slice(-500),
     );
 }
@@ -290,7 +290,7 @@ export const PERMISSION_MODE: Record<Permission, string> = {
 };
 /** The permission setting of the Composer, read when a turn starts. */
 export const turnOptions = $state<{ permission: Permission; effort: Effort }>({
-    permission: 'auto',
+    permission: 'yolo',
     effort: 'medium',
 });
 
@@ -323,6 +323,8 @@ export const turns: Record<string, string> = {};
 export type Queued = {
     /** Explicit Send now request waiting for an available provider lane. */
     priority?: boolean;
+    /** A reply to an already displayed question: it may clear that pending input when the active turn ends. */
+    questionAnswer?: boolean;
     /** Stable transcript identity retained from enqueue until dispatch. */
     messageId?: string;
     text: string;

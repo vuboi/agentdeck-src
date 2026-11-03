@@ -28,6 +28,15 @@ When changing Store skill installation/sync/update, read `docs/development/store
 - Keep changes minimal and within the assigned module.
 - At the end, run all DoD commands for the module and report the actual results.
 
+## Working style
+
+- Scope: do what was asked. Every changed line must trace to the request. No drive-by refactors, renames, or "improvements" to nearby code.
+- Unrelated dead code or problems you notice: mention them in the final message, do not change them.
+- Clear request: pick the most likely reading, state it in one line, proceed. Ask only when the answer changes the result (wrong target, destructive action, missing access).
+- Simplest change that works. No speculative options, flags, or single-use abstractions.
+- Before editing, name the check that proves it works (test, command, or screenshot). Run it and report the real result.
+- Remove imports, variables, or functions that your own change made unused. Leave pre-existing dead code alone.
+
 ## Before editing code
 
 - Vague request (unclear file, expected behavior, or scope): ask up to 3 questions first; do not edit yet.
