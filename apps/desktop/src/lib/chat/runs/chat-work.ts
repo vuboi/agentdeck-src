@@ -6,10 +6,16 @@ import {
 } from '../../tasks/delegate-task';
 import type { DelegateRun } from '../session/delegation.svelte';
 import { isLongRunningWork } from './run-lanes';
+import {
+    providerOfSubagent,
+    subagentTypeOf,
+} from '../content/subagent-provider';
 
 /** One addressable piece of background work; source records remain owned by their existing runtime. */
 export type ChatWork = {
     id: string;
+    /** The agent the work's chat runs on, when `agent` is another provider's sub agent (a plugin's, such as Codex's rescue). */
+    via?: string;
     sessionId: string;
     title: string;
     state:
@@ -90,12 +96,23 @@ export function projectChatWork(
             /delegate_task/i.test(event.name)
         )
             continue;
+        // A sub agent of another provider's plugin (`codex:codex-rescue`) runs on that provider, whatever chat called it.
+        const type = /^(Agent|Task)$/.test(event.name)
+            ? subagentTypeOf(event.input)
+            : undefined;
+        const subagent = providerOfSubagent(type);
+        const foreign = subagent !== null && subagent !== event.agent;
+        const titled = event.taskLabel || workTitle(event.input) || event.name;
         work.push({
             id: `native:${event.key}`,
             sessionId: event.sessionId,
             callId: event.callId,
             activityKey: event.key,
-            title: event.taskLabel || workTitle(event.input) || event.name,
+            title:
+                foreign && !titled.includes(type!)
+                    ? `${type}: ${titled}`
+                    : titled,
+            ...(foreign ? { via: event.agent } : {}),
             state:
                 event.status === 'ok'
                     ? 'done'
@@ -104,8 +121,8 @@ export function projectChatWork(
                       : event.status === 'stopped'
                         ? 'stopped'
                         : 'running',
-            agent: event.agent,
-            model: event.model,
+            agent: foreign ? subagent : event.agent,
+            model: foreign ? undefined : event.model,
             kind:
                 event.nativeTaskId || /agent|task|spawn/i.test(event.name)
                     ? 'agent'

@@ -15,15 +15,9 @@ import {
     providerLogo,
 } from './brand-icons';
 import { connectors } from './connectors.svelte';
+import { BUILT_IN_AGENT_IDS } from './built-in-ids';
 
-export type BuiltInAgent =
-    | 'claude'
-    | 'codex'
-    | 'antigravity'
-    | 'opencode'
-    | 'workbuddy'
-    | 'copilot'
-    | 'command-code';
+export type BuiltInAgent = (typeof BUILT_IN_AGENT_IDS)[number];
 /** `icon` is an icon-set name; `mark`, when set, is the provider's own SVG and wins over `icon` everywhere. */
 export type AgentProfile = {
     id: BuiltInAgent;
