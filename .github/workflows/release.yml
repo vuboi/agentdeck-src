@@ -1,6 +1,6 @@
-# Build and publish AgentDeck for Windows, macOS (Apple silicon + Intel) and Linux.
-# Run: push a tag like v0.1.0 (or start the workflow by hand). The tag's number becomes the app version, and the
-# release carries latest.json, which installed apps read to offer the update.
+# Build AgentDeck for Windows, macOS (Apple silicon + Intel) and Linux in this private repo, then publish the
+# signed installers and latest.json to the public release repo vuboi/agentdeck. Installed apps read latest.json there.
+# Run: push a tag like v0.1.0 (or start the workflow by hand). The tag's number becomes the app version.
 name: release
 
 on:
@@ -11,9 +11,16 @@ on:
       version:
         description: 'Version to build, e.g. 0.1.0'
         required: true
+      draft:
+        description: 'Publish as a draft release (for a test run)'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  PUBLIC_REPO: vuboi/agentdeck
 
 jobs:
   build:
@@ -21,15 +28,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, args: '' }
-          - { os: macos-latest, args: '--target aarch64-apple-darwin' }
-          - { os: macos-15-intel, args: '--target x86_64-apple-darwin' }
-          - { os: ubuntu-22.04, args: '' }
+          - { os: windows-latest, args: '', name: windows, arch: x64 }
+          - { os: macos-latest, args: '--target aarch64-apple-darwin', name: mac-arm, arch: aarch64 }
+          - { os: macos-15-intel, args: '--target x86_64-apple-darwin', name: mac-intel, arch: x64 }
+          - { os: ubuntu-22.04, args: '', name: linux, arch: amd64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Version from tag
         shell: bash
@@ -38,21 +43,6 @@ jobs:
           VERSION="${VERSION#v}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           node scripts/set-version.mjs "$VERSION"
-
-      # The notes come from docs/release-notes/v<version>.md; without it, from the commit titles since the last tag.
-      - name: Release notes
-        id: notes
-        shell: bash
-        run: |
-          FILE="docs/release-notes/v${VERSION}.md"
-          if [ -f "$FILE" ]; then
-            cp "$FILE" notes.md
-          else
-            PREV=$(git describe --tags --abbrev=0 --exclude "v${VERSION}" 2>/dev/null || true)
-            RANGE="${PREV:+$PREV..}HEAD"
-            { echo "### What's changed"; echo; git log "$RANGE" --no-merges --format='- %s' | cut -c1-200; } > notes.md
-          fi
-          { echo 'body<<NOTES_EOF'; cat notes.md; echo NOTES_EOF; } >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
@@ -64,6 +54,8 @@ jobs:
         with:
           targets: ${{ contains(matrix.args, 'darwin') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
 
       - name: Set macOS deployment target
         if: runner.os == 'macOS'
@@ -79,19 +71,78 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build and sign
+        shell: bash
+        working-directory: apps/desktop
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6144
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build ${{ matrix.args }}
+
+      # Collect the installers and their .sig files into dist/. The macOS updater archive has no arch in its name,
+      # so it gets the arch suffix the release files have always used.
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p dist
+          find apps/desktop/src-tauri/target -path '*/release/bundle/*' -type f \
+            \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) \
+            -print0 | while IFS= read -r -d '' file; do
+              name=$(basename "$file")
+              [ "$name" = "AgentDeck.app.tar.gz" ] && name="AgentDeck_${{ matrix.arch }}.app.tar.gz"
+              cp "$file" "dist/$name"
+              [ -f "$file.sig" ] && cp "$file.sig" "dist/$name.sig"
+            done
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
         with:
-          projectPath: apps/desktop
-          tagName: v${{ env.VERSION }}
-          releaseName: AgentDeck v${{ env.VERSION }}
-          releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: false
-          prerelease: false
-          includeUpdaterJson: true
-          tauriScript: pnpm tauri
-          args: ${{ matrix.args }}
+          name: dist-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version from tag
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          echo "VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+
+      # The notes come from docs/release-notes/v<version>.md; without it, from the commit titles since the last tag.
+      - name: Release notes
+        shell: bash
+        run: |
+          FILE="docs/release-notes/v${VERSION}.md"
+          if [ -f "$FILE" ]; then
+            cp "$FILE" notes.md
+          else
+            PREV=$(git describe --tags --abbrev=0 --exclude "v${VERSION}" 2>/dev/null || true)
+            RANGE="${PREV:+$PREV..}HEAD"
+            { echo "### What's changed"; echo; git log "$RANGE" --no-merges --format='- %s' | cut -c1-200; } > notes.md
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write latest.json
+        run: node scripts/release-manifest.mjs "$VERSION" notes.md dist dist/latest.json
+
+      - name: Publish to the public release repo
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          DRAFT: ${{ github.event.inputs.draft == 'true' && '--draft' || '' }}
+        shell: bash
+        run: |
+          gh release create "v$VERSION" dist/* -R "$PUBLIC_REPO" \
+            --title "AgentDeck v$VERSION" --notes-file notes.md $DRAFT
