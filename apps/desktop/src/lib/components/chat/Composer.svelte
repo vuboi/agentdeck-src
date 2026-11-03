@@ -1382,26 +1382,30 @@
                                 >{shortCount(contextLimit)} tokens</span
                             >
                         </div>
-                        <ZSlider
-                            value={contextLimitIndex}
-                            zMin={0}
-                            zMax={CONTEXT_LIMITS.length - 1}
-                            zStep={1}
-                            zSize="sm"
-                            zType="dot"
-                            zMarks={CONTEXT_LIMITS.map((limit, index) => ({
-                                value: index,
-                                label: shortCount(limit),
-                            }))}
-                            zFormatter={(value) =>
-                                `${shortCount(CONTEXT_LIMITS[value] ?? contextLimit)} tokens`}
-                            zLabel="Auto-compress at"
-                            onValueChange={(value) =>
-                                setSessionContextLimit(
-                                    sessionId,
-                                    CONTEXT_LIMITS[value] ?? contextLimit,
-                                )}
-                        />
+                        <!-- A box of fixed height: the slider measures its label and readout after the popover is placed,
+                             and any size change then moves the popover (it reads as a jump on fullscreen). -->
+                        <div class="h-12 w-full">
+                            <ZSlider
+                                value={contextLimitIndex}
+                                zMin={0}
+                                zMax={CONTEXT_LIMITS.length - 1}
+                                zStep={1}
+                                zSize="sm"
+                                zType="dot"
+                                zMarks={CONTEXT_LIMITS.map((limit, index) => ({
+                                    value: index,
+                                    label: shortCount(limit),
+                                }))}
+                                zFormatter={(value) =>
+                                    `${shortCount(CONTEXT_LIMITS[value] ?? contextLimit)} tokens`}
+                                zLabel="Auto-compress at"
+                                onValueChange={(value) =>
+                                    setSessionContextLimit(
+                                        sessionId,
+                                        CONTEXT_LIMITS[value] ?? contextLimit,
+                                    )}
+                            />
+                        </div>
                     </div>
                     <p
                         class="text-[0.6875rem] leading-snug text-muted-foreground"
