@@ -523,6 +523,15 @@ export async function stopAgentTurn(
     await invoke('agent_stop', { session, turn: turn ?? null });
 }
 
+/** Sends a message to a chat that only waits for its own background work (see tail::deliver). False: not taken, queue it. */
+export async function sendWhileWaiting(
+    session: string,
+    text: string,
+): Promise<boolean> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('agent_send_while_waiting', { session, text });
+}
+
 /** Hands a message to the turn running in a chat (Claude only): the CLI reads it at its next step, in the same turn. False when it was not taken. */
 export async function injectAgentMessage(
     session: string,
