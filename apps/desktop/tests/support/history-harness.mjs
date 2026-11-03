@@ -126,6 +126,10 @@ export async function historyWith({
         placementOf: () => undefined,
         rememberParents() {},
         forgetSessionPlacement() {},
+        // The chat ledger (dual write): off in these tests, so nothing is sent.
+        ledgerOn: () => false,
+        ledger: { recordTurn() {}, bindNative() {}, remove() {} },
+        chatMetaOf: () => ({}),
         workspace,
         liveAsks: {},
         liveReplies: {},
