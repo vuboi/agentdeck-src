@@ -1388,6 +1388,7 @@
                             zMax={CONTEXT_LIMITS.length - 1}
                             zStep={1}
                             zSize="sm"
+                            zType="dot"
                             zMarks={CONTEXT_LIMITS.map((limit, index) => ({
                                 value: index,
                                 label: shortCount(limit),
