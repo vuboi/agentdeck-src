@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AgentDeck",
-  "version": "0.1.67",
+  "version": "0.1.68",
   "identifier": "dev.agentdeck.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
@@ -65,7 +65,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBRTFGRDY5Qjk3RjhBQjYKUldTMmluKzVhZjNoeW1JWFp5alpnVXExVDkwRGlMMEc1djRUaFpyNGZBMGtFN00vTzUvOUZCYUYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEwMUUwNEY3RjE0MzcwOTAKUldTUWNFUHg5d1FlRVB3OXRtZlhKRVdPM04ydmI1Rk5ZT3BwZ3djMjJVZVAxbDRqQTJUZk15bTUK",
       "endpoints": [
         "https://github.com/vuboi/agentdeck/releases/latest/download/latest.json"
       ],
