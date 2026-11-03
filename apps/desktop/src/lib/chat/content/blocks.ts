@@ -635,6 +635,50 @@ export function liveState(blocks: Block[]): {
     return { label: 'Thinking', spinner: LOADER.thinking };
 }
 
+/** The name a background task shows as: its sub agent type, then its description, then the tool's name. */
+export function backgroundTaskName(item: {
+    name: string;
+    input: string;
+}): string {
+    try {
+        const value = JSON.parse(item.input) as Record<string, unknown>;
+        for (const key of ['subagent_type', 'description']) {
+            if (typeof value?.[key] === 'string' && value[key])
+                return String(value[key]);
+        }
+    } catch {
+        /* Plain input: the tool's name is all there is. */
+    }
+    return item.name;
+}
+
+/** The live line while a reply only waits for background tasks of the provider, or null when it does something else
+ *  (streams, runs a command, waits for an approval). `open`: the tasks still running in the chat. */
+export function waitingLabel(
+    blocks: Block[],
+    open: { name: string }[],
+): string | null {
+    if (open.length === 0) return null;
+    if (
+        blocks.some(
+            (block) => block.kind === 'permission' && block.state === 'pending',
+        )
+    )
+        return null;
+    if (
+        blocks.some(
+            (block) => block.kind === 'command' && block.status === 'running',
+        )
+    )
+        return null;
+    const last = blocks.filter((block) => block.kind !== 'loading').at(-1);
+    if (last?.kind === 'thinking' && last.streaming) return null;
+    if (last?.kind === 'response' && last.streaming) return null;
+    if (open.length === 1)
+        return `Waiting for 1 background task · ${open[0].name}`;
+    return `Waiting for ${open.length} background tasks`;
+}
+
 /** `24s`, `1m 05s`. */
 export function elapsed(ms: number): string {
     const seconds = Math.max(0, Math.round(ms / 1000));
