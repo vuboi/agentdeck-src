@@ -57,6 +57,8 @@ export type DualWriteOptions = {
     enabled: () => boolean;
     /** A command failed. The queue goes on with the next command. */
     onError: (command: string, error: unknown, chatId?: string) => void;
+    /** The ledger and the app disagree about a chat's turns (see `shadowRead`). Only reported, never fixed here. */
+    onMismatch: (chatId: string, detail: string) => void;
     /** Milliseconds a chat's finished turns wait for more before they are appended together. */
     debounceMs?: number;
     /** Turns are copied for the ledger through this (for example, to drop command images). Identity by default. */
@@ -77,6 +79,11 @@ export type DualWriter = {
     ): void;
     /** The chat was deleted. Its waiting turns are written first, then the delete. */
     remove(chatId: string): void;
+    /**
+     * Counts the chat's turns in the ledger and compares them with `localCount` (the turns the app holds). A difference
+     * is reported through `onMismatch`. Nothing is shown from the ledger.
+     */
+    shadowRead(chatId: string, localCount: number): void;
     /** Sends every waiting turn now. */
     flush(): void;
     /** Resolves when every command queued so far has run. */
@@ -97,9 +104,14 @@ type ChatState = {
 };
 
 const DEFAULT_DEBOUNCE_MS = 500;
+/** Turns read per `chat_open` page when a chat is counted. */
+const COUNT_PAGE = 200;
+
+/** The part of a `chat_open` page the count needs. */
+type LedgerPage = { messages: { seq: number }[]; hasMore: boolean } | null;
 
 export function createDualWriter(options: DualWriteOptions): DualWriter {
-    const { invoke, enabled, onError } = options;
+    const { invoke, enabled, onError, onMismatch } = options;
     const debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     const prepare = options.prepare ?? ((messages: Message[]) => messages);
     const setTimer = options.setTimer ?? ((run, ms) => setTimeout(run, ms));
@@ -174,6 +186,23 @@ export function createDualWriter(options: DualWriteOptions): DualWriter {
         for (const chatId of [...chats.keys()]) flushChat(chatId);
     };
 
+    /** How many turns the ledger holds for a chat, or null when it has no such chat. Read page by page. */
+    const countLedger = async (chatId: string): Promise<number | null> => {
+        let total = 0;
+        let before: number | null = null;
+        for (;;) {
+            const page = (await invoke('chat_open', {
+                id: chatId,
+                beforeSeq: before,
+                limit: COUNT_PAGE,
+            })) as LedgerPage;
+            if (!page) return null;
+            total += page.messages.length;
+            if (!page.hasMore || !page.messages.length) return total;
+            before = page.messages[0].seq;
+        }
+    };
+
     return {
         recordTurn(chat, messages, outcome) {
             if (!enabled() || outcome !== 'done') return;
@@ -235,6 +264,28 @@ export function createDualWriter(options: DualWriteOptions): DualWriter {
             flushChat(chatId);
             chats.delete(chatId);
             send('chat_delete', { chatId }, chatId);
+        },
+
+        shadowRead(chatId, localCount) {
+            if (!enabled()) return;
+            // The turns still waiting are written first, so the count sees them.
+            flushChat(chatId);
+            void order('chat_open', chatId, async () => {
+                const ledgerCount = await countLedger(chatId);
+                if (ledgerCount === null) {
+                    if (localCount > 0)
+                        onMismatch(
+                            chatId,
+                            `chat missing in ledger, local ${localCount}`,
+                        );
+                    return;
+                }
+                if (ledgerCount !== localCount)
+                    onMismatch(
+                        chatId,
+                        `local ${localCount}, ledger ${ledgerCount}`,
+                    );
+            });
         },
 
         flush,

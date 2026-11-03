@@ -13,6 +13,9 @@ type Args = {
         blocks: { text: string }[];
     }[];
     binding?: { id: string; provider: string; nativeId: string; state: string };
+    id?: string;
+    beforeSeq?: number | null;
+    limit?: number;
 };
 type Call = { command: string; args: Args };
 
@@ -216,4 +219,101 @@ test('N5.1 a failed command is reported and the queue goes on', async () => {
     assert.deepEqual(names(calls), ['chat_save', 'chat_append', 'chat_delete']);
     assert.equal(errors.length, 1);
     assert.equal(errors[0].command, 'chat_append');
+});
+
+/** A `chat_open` page of the ledger holding turns with these seqs. */
+const page = (seqs: number[], hasMore: boolean) => ({
+    chat,
+    bindings: [],
+    messages: seqs.map((seq) => ({
+        seq,
+        role: 'user',
+        agent: null,
+        model: null,
+        bindingId: null,
+        time: '',
+        native: null,
+        blocks: [],
+    })),
+    hasMore,
+});
+
+test('N5.2 flag off: a shadow read sends nothing and logs nothing', async () => {
+    const { writer, calls, mismatches } = setup(false);
+    writer.shadowRead('chat-1', 3);
+    await writer.idle();
+    assert.deepEqual(calls, []);
+    assert.deepEqual(mismatches, []);
+});
+
+test('N5.2 a shadow read comes after the turns still waiting in their debounce window', async () => {
+    const { writer, calls, mismatches } = setup(true, (call) =>
+        call.command === 'chat_open' ? page([1, 2], false) : undefined,
+    );
+    writer.recordTurn(chat, [turn('u1', 'q'), turn('a1', 'a')], 'done');
+    writer.shadowRead('chat-1', 2);
+    await writer.idle();
+    assert.deepEqual(names(calls), ['chat_save', 'chat_append', 'chat_open']);
+    assert.deepEqual(mismatches, []);
+});
+
+test('N5.2 the ledger count is read page by page, from the newest page back', async () => {
+    const { writer, calls, mismatches } = setup(true, (call) => {
+        if (call.command !== 'chat_open') return undefined;
+        return call.args.beforeSeq == null
+            ? page([3, 4], true)
+            : page([1, 2], false);
+    });
+    writer.shadowRead('chat-1', 4);
+    await writer.idle();
+    assert.deepEqual(
+        calls.map((call) => call.args.beforeSeq ?? null),
+        [null, 3],
+    );
+    assert.deepEqual(mismatches, []);
+});
+
+test('N5.2 counts that differ are logged as a chat index mismatch', async () => {
+    const { writer, mismatches, errors } = setup(true, (call) =>
+        call.command === 'chat_open' ? page([1, 2], false) : undefined,
+    );
+    writer.shadowRead('chat-1', 3);
+    await writer.idle();
+    assert.deepEqual(mismatches, [
+        { chatId: 'chat-1', detail: 'local 3, ledger 2' },
+    ]);
+    assert.deepEqual(errors, []);
+});
+
+test('N5.2 equal counts log nothing', async () => {
+    const { writer, mismatches } = setup(true, (call) =>
+        call.command === 'chat_open' ? page([1, 2], false) : undefined,
+    );
+    writer.shadowRead('chat-1', 2);
+    await writer.idle();
+    assert.deepEqual(mismatches, []);
+});
+
+test('N5.2 a chat the ledger does not have is a mismatch only when the app has turns for it', async () => {
+    const { writer, mismatches } = setup(true, (call) =>
+        call.command === 'chat_open' ? null : undefined,
+    );
+    writer.shadowRead('chat-1', 2);
+    writer.shadowRead('chat-2', 0);
+    await writer.idle();
+    assert.deepEqual(mismatches, [
+        { chatId: 'chat-1', detail: 'chat missing in ledger, local 2' },
+    ]);
+});
+
+test('N5.2 a failed read is a command error, not a mismatch', async () => {
+    const { writer, mismatches, errors } = setup(true, (call) => {
+        if (call.command === 'chat_open') throw new Error('database is locked');
+        return undefined;
+    });
+    writer.shadowRead('chat-1', 2);
+    await writer.idle();
+    assert.deepEqual(mismatches, []);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].command, 'chat_open');
 });

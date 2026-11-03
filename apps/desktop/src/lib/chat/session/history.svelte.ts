@@ -1148,7 +1148,24 @@ export function openTranscript(
 ): Promise<void> {
     let finish = () => {};
     transcriptDone = new Promise<void>((resolve) => (finish = resolve));
-    return readTranscript(session).finally(finish);
+    return readTranscript(session)
+        .finally(finish)
+        .then(() => shadowReadOf(session));
+}
+
+/**
+ * Shadow read (dual write): once the open chat is shown whole, its turns are counted in the ledger and compared with
+ * the app's. Only a mismatch is logged; nothing is shown from the ledger.
+ */
+function shadowReadOf(session: SessionItem | undefined) {
+    if (!session || !ledgerOn()) return;
+    // `older` counts turns not loaded yet: the count is only whole when none are left.
+    if (session.id !== workspace.activeId || chat.older !== 0 || chat.loading)
+        return;
+    const list = messagesOf(session.id);
+    // A reply still being written is not in the ledger yet.
+    if (list.some((message) => message.live)) return;
+    ledger.shadowRead(session.id, list.length);
 }
 
 async function readTranscript(session: SessionItem | undefined) {

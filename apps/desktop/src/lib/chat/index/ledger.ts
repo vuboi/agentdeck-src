@@ -35,6 +35,8 @@ export const ledger = createDualWriter({
             `${command}: ${error instanceof Error ? error.message : String(error)}`,
             chatId ? { chat: chatId } : undefined,
         ),
+    onMismatch: (chatId, detail) =>
+        logError('app', 'chat index mismatch', detail, { chat: chatId }),
 });
 
 /** The chat as the ledger's `ChatMeta`. `cwd` is the project folder, if the chat has one. */
