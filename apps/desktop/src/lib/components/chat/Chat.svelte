@@ -378,7 +378,18 @@
     // read as well: the skeleton stays until then, so there is no blank in between, and the swap from the saved copy to
     // the fresh one keeps the same rows (they are keyed by message), so it does not flash either.
     $effect(() => {
-        if (!revealed && !chat.loading) untrack(() => void revealAtEnd());
+        if (!revealed && !chat.loading)
+            untrack(() =>
+                revealAtEnd().catch((error) => {
+                    // A failed reveal must not leave the chat hidden for good: show what is there.
+                    logError(
+                        'app',
+                        'chat failed to reveal',
+                        error instanceof Error ? error.message : String(error),
+                    );
+                    revealed = true;
+                }),
+            );
     });
 
     $effect(() => {
