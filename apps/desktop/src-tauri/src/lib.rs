@@ -9,6 +9,7 @@ mod awake;
 mod bridge;
 mod browser;
 mod browser_extensions;
+mod btw;
 mod caller;
 mod cdp;
 mod changes;
@@ -2825,6 +2826,8 @@ pub fn run() {
             image_history::image_history_list,
             detect::detect_run_targets,
             servers::servers_list,
+            btw::btw_ask,
+            btw::btw_stop,
             servers::server_stop,
             server_log,
             detect::run_target,

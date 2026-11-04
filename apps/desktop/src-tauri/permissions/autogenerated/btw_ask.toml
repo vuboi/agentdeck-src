@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-btw-ask"
+description = "Enables the btw_ask command without any pre-configured scope."
+commands.allow = ["btw_ask"]
+
+[[permission]]
+identifier = "deny-btw-ask"
+description = "Denies the btw_ask command without any pre-configured scope."
+commands.deny = ["btw_ask"]

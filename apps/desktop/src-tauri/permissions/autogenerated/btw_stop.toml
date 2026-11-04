@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-btw-stop"
+description = "Enables the btw_stop command without any pre-configured scope."
+commands.allow = ["btw_stop"]
+
+[[permission]]
+identifier = "deny-btw-stop"
+description = "Denies the btw_stop command without any pre-configured scope."
+commands.deny = ["btw_stop"]

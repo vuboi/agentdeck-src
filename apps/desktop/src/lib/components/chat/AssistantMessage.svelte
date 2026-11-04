@@ -2,8 +2,6 @@
     import {
         answerPermission,
         answerQuestions,
-        activeSession,
-        chat,
         forkSession,
         isRunning,
         projectOf,
@@ -14,6 +12,7 @@
     import { fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import { runPosition } from '../../chat/content/chat-dividers';
+    import { messagesView } from '../../chat/session/run.svelte';
     import { runUsage } from '../../chat/runs/run-usage';
     import {
         elapsed,
@@ -38,18 +37,32 @@
     import { LOADER } from '../../app/platform/loaders';
     import type { Message } from '../../chat/mock';
 
-    /** `index` is the message's place in chat.messages; `questionMessageId` the reply the open question card belongs to. */
+    /** `index` is the message's place in thread; `questionMessageId` the reply the open question card belongs to. */
     let {
         message,
         index,
         agent,
         questionMessageId,
+        sessionId,
+        detached = false,
     }: {
         message: Message;
         index: number;
         agent: string;
         questionMessageId: string | undefined;
+        /** The chat the message belongs to; the open chat when not given. A side question passes its own. */
+        sessionId?: string;
+        /** A side question: its messages belong to no chat, so the live state comes from the message itself. */
+        detached?: boolean;
     } = $props();
+    const sid = $derived(sessionId ?? workspace.activeId);
+    const session = $derived(
+        workspace.sessions.find((item) => item.id === sid),
+    );
+    const thread = $derived(messagesView(sid));
+    const runningHere = $derived(
+        detached ? Boolean(message.live) : isRunning(sid),
+    );
 
     // The segments of the last render, so the ones a streamed delta did not change are the same objects and their groups
     // do not render again (reuseSegments). Plain variable on purpose: it is a cache, not state.
@@ -60,21 +73,17 @@
     });
     // Replies of the same agent and model that follow one another share one name line, while each actual answer keeps
     // its own footer so copy, fork and read-aloud actions remain available for every completed reply.
-    const place = $derived(runPosition(chat.messages, index, agent));
+    const place = $derived(runPosition(thread, index, agent));
     const quiet = $derived(place.quiet);
     const grouped = $derived(place.grouped);
     // The numbers on the name line are the whole run's: the replies a newer message cut off are in them too.
     const usage = $derived(
-        grouped || quiet
-            ? undefined
-            : runUsage(chat.messages, index, estimateCost),
+        grouped || quiet ? undefined : runUsage(thread, index, estimateCost),
     );
     // Live only while the chat really runs: a reply left marked live (a lost "done") shows its footer.
-    const showLive = $derived(message.live && isRunning(workspace.activeId));
+    const showLive = $derived(message.live && runningHere);
     // The footer (copy, fork, time) waits until the text has been written out on screen, not only until the run ends.
-    const typing = $derived(
-        !showLive && replyRendering(workspace.activeId, message.id),
-    );
+    const typing = $derived(!showLive && replyRendering(sid, message.id));
     // Any provider: text that stops growing while the turn runs is no longer being written. The agent is deciding or
     // writing its next step (most CLIs report a tool only once its input is complete), so after a short pause the line
     // says "Thinking" again instead of leaving the reply looking frozen. Providers that report the start of a tool call
@@ -152,7 +161,7 @@
                     thoughts={segment.thoughts}
                     live={false}
                     working={Boolean(message.live) &&
-                        isRunning(workspace.activeId) &&
+                        runningHere &&
                         !parts
                             .slice(position + 1)
                             .some(
@@ -162,23 +171,23 @@
                             )}
                     status={position === liveGroup ? line : null}
                     startedAt={message.startedAt}
-                    stateKey="{workspace.activeId}:{message.id}:{position}"
+                    stateKey="{sid}:{message.id}:{position}"
                 />
             </div>
         {:else if segment.kind === 'plan'}
             <PlanCard items={segment.items} />
         {:else if segment.kind === 'proposal'}
-            <ProposalCard item={segment.item} sessionId={workspace.activeId} />
+            <ProposalCard item={segment.item} sessionId={sid} />
         {:else if segment.kind === 'tasks'}
             <TaskCards items={segment.items} />
         {:else if segment.kind === 'agent_activity'}
             <AgentActivityCards
                 items={segment.items}
                 agent={message.agent ??
-                    activeSession()?.source ??
-                    activeSession()?.agent ??
+                    session?.source ??
+                    session?.agent ??
                     'codex'}
-                sessionId={activeSession()?.id}
+                sessionId={session?.id}
             />
         {:else}
             <!-- The first text of a reply rises in as it appears; later streamed text only grows in place. -->
@@ -191,24 +200,20 @@
             >
                 <ChatBlock
                     block={segment.block}
-                    running={Boolean(message.live) &&
-                        isRunning(workspace.activeId)}
-                    flush={chat.messages.at(-1)?.id !== message.id}
-                    agent={message.agent ??
-                        activeSession()?.source ??
-                        activeSession()?.agent}
+                    running={Boolean(message.live) && runningHere}
+                    flush={thread.at(-1)?.id !== message.id}
+                    agent={message.agent ?? session?.source ?? session?.agent}
                     onanswer={(answer) =>
                         answerPermission(
                             message.id,
                             message.blocks.indexOf(segment.block),
                             answer,
                         )}
-                    onquestions={(text) =>
-                        answerQuestions(workspace.activeId, text)}
+                    onquestions={(text) => answerQuestions(sid, text)}
                     onrendered={segment.block.kind === 'response'
                         ? () =>
                               replyBlockRendered(
-                                  workspace.activeId,
+                                  sid,
                                   message.id,
                                   message.blocks.indexOf(segment.block),
                               )
@@ -221,13 +226,12 @@
     {/each}
     <TurnChanges
         blocks={message.blocks}
-        projectRoot={(activeSession() && projectOf(activeSession()!)?.path) ||
-            ''}
+        projectRoot={(session && projectOf(session!)?.path) || ''}
     />
     <ArtifactCards
         blocks={message.blocks}
-        root={(activeSession() && projectOf(activeSession()!)?.path) || null}
-        live={Boolean(message.live) && isRunning(workspace.activeId)}
+        root={(session && projectOf(session!)?.path) || null}
+        live={Boolean(message.live) && runningHere}
     />
     <!-- One status line for the whole reply: what the agent is doing now (thinking, running a command,
        editing…), as in Claude and Codex; the steps above stay plain, finished lines. -->
@@ -262,7 +266,7 @@
         {:else}
             <MessageFooter
                 {message}
-                onfork={() => forkSession(workspace.activeId, message.id)}
+                onfork={() => forkSession(sid, message.id)}
                 speak={spokenRun(index)}
             />
         {/if}

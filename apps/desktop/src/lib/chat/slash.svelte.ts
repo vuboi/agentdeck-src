@@ -1,4 +1,5 @@
 import { inTauri } from '../app/platform/history';
+import { BTW_ENABLED } from './session/btw-command';
 
 // The `/` palette. Two sources: AgentDeck's own commands (below), and the commands and skills the chat's agent
 // already has on disk (read by Rust, `slash_commands.rs`). Choosing one puts `/name ` in the message box; when the
@@ -51,6 +52,19 @@ const GUIDE_WORKFLOW = `HOW TO MAKE THE GUIDE (do every step yourself; never ask
 
 /** AgentDeck's own commands: a way of working, written once, usable with any agent. */
 export const BUILTIN: SlashItem[] = [
+    // `/btw` is off for now (see BTW_ENABLED in btw-command.ts): this entry comes back with the flag.
+    ...(BTW_ENABLED
+        ? [
+              {
+                  name: 'btw',
+                  description:
+                      'Ask a side question in its own panel; this chat is not changed',
+                  kind: 'builtin' as const,
+                  origin: 'AgentDeck',
+                  template: '/btw $ARGUMENTS',
+              },
+          ]
+        : []),
     {
         name: 'feature',
         description: 'Build a feature end to end, with tests',

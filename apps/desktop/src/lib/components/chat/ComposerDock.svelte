@@ -15,7 +15,6 @@
     import type { Block } from '../../chat/mock';
     import type { Question } from '../../chat/recovery/questions';
     import Composer from './Composer.svelte';
-    import BtwPanel from './BtwPanel.svelte';
     import { agentName } from './chat-helpers';
 
     type Approval = {
@@ -92,5 +91,4 @@
         >
     </div>
 {/each}
-<BtwPanel parentId={workspace.activeId} />
 <Composer />

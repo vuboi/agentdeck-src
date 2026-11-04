@@ -28,7 +28,15 @@
     } from './chat-edit.svelte';
     import type { Message } from '../../chat/mock';
 
-    let { message }: { message: Message } = $props();
+    let {
+        message,
+        sessionId,
+    }: {
+        message: Message;
+        /** The chat the message belongs to; the open chat when not given. */
+        sessionId?: string;
+    } = $props();
+    const sid = $derived(sessionId ?? workspace.activeId);
 
     // "Copy all" on a message with attachments: its text, pictures, notes and files go on the clipboard together, and
     // pasting into the message box restores them all (see attachments.ts).
@@ -203,7 +211,7 @@
     <MessageFooter
         {message}
         end={theme.chatLayout === 'split'}
-        onfork={() => forkSession(workspace.activeId, message.id)}
+        onfork={() => forkSession(sid, message.id)}
         onedit={() => startEdit(message)}
         oncopyall={pictures.length +
             documents.length +

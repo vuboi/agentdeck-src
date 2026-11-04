@@ -19,7 +19,6 @@
     import { LOADER, LOADER_SIZE } from '../../app/platform/loaders';
     import { rememberRowHeight, rowHeight } from '../../app/ui/row-size';
     import { setEagerColour, whenColoured } from '../../app/text/markdown';
-    import { openSelectionMenu } from '../../app/ui/selection-menu.svelte';
     import {
         activeSession,
         AGENTS,
@@ -36,12 +35,7 @@
     } from '../../chat/sessions.svelte';
     import { ticker } from '../../app/platform/clock.svelte';
     import { theme } from '../../app/ui/theme.svelte';
-    import {
-        hollow,
-        markerText,
-        neighbour,
-        turnDivider,
-    } from '../../chat/content/chat-dividers';
+    import { neighbour } from '../../chat/content/chat-dividers';
     import { focusMessage } from '../../chat/content/focus-message.svelte';
     import { askText } from '../../chat/session/run.svelte';
     import {
@@ -56,11 +50,10 @@
     import ChatHeader from './ChatHeader.svelte';
     import WorktreeBar from './WorktreeBar.svelte';
     import SubChatBar from './SubChatBar.svelte';
-    import DelegateList from '../tasks/DelegateList.svelte';
     import JumpButton from './JumpButton.svelte';
-    import UserMessage from './UserMessage.svelte';
-    import AssistantMessage from './AssistantMessage.svelte';
+    import MessageRow from './MessageRow.svelte';
     import ComposerDock from './ComposerDock.svelte';
+    import BtwPanel from './BtwPanel.svelte';
     import LedgerConflicts from './LedgerConflicts.svelte';
 
     // Opening a chat starts its agent's CLI in the background: the CLI's own start-up is the longest part of a first reply
@@ -774,327 +767,280 @@
     <ChatHeader />
     <WorktreeBar />
 
-    <!-- overflow-hidden: the turn ruler can never paint past the conversation area, down onto the composer. -->
-    <div class="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">
-        {#if contentTabs.active.startsWith('chat:') === false}
-            <!-- A file tab covers the conversation; no tabs at all shows an empty state. -->
-            {#each contentTabs.tabs.filter((tab) => tab.id === contentTabs.active && tab.kind === 'file') as tab (tab.id)}
-                {#if tab.kind === 'file'}
-                    <div class="absolute inset-0 z-30 bg-background">
-                        <FileView file={tab} />
-                    </div>
-                {/if}
-            {/each}
-            {#if contentTabs.tabs.length === 0 && !pendingProject()}
-                <div
-                    class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-background p-6 text-center text-muted-foreground"
-                >
-                    <ZIcon
-                        zType={'lucideMessagesSquare' as ZIconName}
-                        zSize="28"
-                        class="size-7 opacity-60"
-                    />
-                    <p class="m-0 text-sm">
-                        No open tabs. Start a chat from the sidebar.
-                    </p>
-                </div>
-            {/if}
-        {/if}
-        {#if contentTabs.active.startsWith('chat:') && parentOfActive}
-            <SubChatBar
-                {parentOfActive}
-                {taskOfActive}
-                {running}
-                onback={backToParent}
-            />
-        {/if}
-        <!-- Keyed by session so the ruler never carries scroll/hover state over from the previous chat. -->
-        {#key workspace.activeId}
-            <!-- Full-height strip, ruler centred in it: it always sits in the conversation area, never over the
-           header or the composer. Only the ruler itself takes pointer events. -->
+    <!-- The conversation column and, when a /btw side question is open, its panel beside it. -->
+    <div class="flex min-h-0 min-w-0 flex-1">
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+            <!-- overflow-hidden: the turn ruler can never paint past the conversation area, down onto the composer. -->
             <div
-                class="pointer-events-none absolute inset-y-0 left-1 z-20 flex items-center"
+                class="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden"
             >
-                <ZChatNavigator
-                    class="pointer-events-auto w-6"
-                    turns={navigatorTurns}
-                    activeIndex={activeTurn}
-                    onSelect={jumpToTurn}
-                />
-            </div>
-        {/key}
-
-        <!-- Only while scrolled up: at the bottom there is nothing to jump to, running or not. -->
-        <JumpButton
-            show={showJump}
-            {running}
-            onclick={() => ((following = true), $virtualizer.scrollToEnd())}
-        />
-
-        <!-- Same fade as ShowMore: messages dissolve into the page just above the composer instead of being cut. -->
-        <div
-            class="pointer-events-none absolute right-2.5 bottom-0 left-0 z-10 h-12"
-            style="background-image: linear-gradient(to top, var(--background) 0%, transparent 100%)"
-            aria-hidden="true"
-        ></div>
-
-        {#if chat.loadingOlder}
-            <!-- Fades in while a page of older messages loads: a spinner in a soft primary ring and shimmering text. -->
-            <div
-                class="pointer-events-none absolute top-3 left-1/2 z-40 -translate-x-1/2"
-                role="status"
-                aria-label="Loading earlier messages"
-                in:fade={{ duration: 150 }}
-                out:fade={{ duration: 160 }}
-            >
-                <div
-                    class="flex items-center gap-2.5 rounded-full border border-primary/25 bg-background/95 py-1.5 pr-4 pl-2 text-[0.8125rem] font-medium shadow-lg shadow-primary/10 backdrop-blur"
-                >
-                    <span
-                        class="grid size-6 place-items-center rounded-full bg-primary/12"
-                        ><ZLoading
-                            zLoading
-                            zSpinner={LOADER.fetch}
-                            zSize={LOADER_SIZE}
-                            zColor="primary"
-                        /></span
-                    >
-                    <ZShimmerText zText="Loading earlier messages…" />
-                </div>
-            </div>
-        {/if}
-
-        {#if chat.loading || (!revealed && chat.messages.length > 0)}
-            <!-- A thin bar along the top while the chat opens. It shows only if the wait is long (the delay is in the animation),
-           so a fast chat opens with nothing at all, and it never mimics the layout, so nothing can ghost over the text. -->
-            <div
-                class="chat-loading pointer-events-none absolute inset-x-0 top-0 z-20 h-[2px] overflow-hidden"
-                role="status"
-                aria-label="Loading conversation"
-                out:fade={{ duration: 120 }}
-            >
-                <div class="chat-loading-bar"></div>
-                <div class="chat-loading-bar chat-loading-bar-trail"></div>
-            </div>
-        {/if}
-
-        {#if chat.messages.length === 0 && !chat.loading}
-            <div
-                class="pointer-events-none absolute inset-0 z-10 grid place-items-center text-sm text-muted-foreground"
-            >
-                {#if chat.error}
-                    <span class="max-w-sm text-center text-destructive"
-                        >{chat.error}</span
-                    >
-                {:else}
-                    <div class="flex flex-col items-center gap-3">
-                        <ZIcon
-                            zType={'lucideMessagesSquare' as ZIconName}
-                            zSize="28"
-                            class="size-7 opacity-60"
-                        />
-                        <p class="m-0 text-sm">
-                            No messages yet. Say something to start.
-                        </p>
-                    </div>
-                {/if}
-            </div>
-        {/if}
-
-        <div
-            bind:this={viewportEl}
-            use:middlePan
-            bind:clientWidth={listWidth}
-            bind:clientHeight={viewportHeight}
-            onscroll={onViewportScroll}
-            onwheel={stopSticking}
-            ontouchmove={stopSticking}
-            onpointerdown={onViewportPointerDown}
-            onkeydown={stopSticking}
-            class="middle-pan-scroll min-h-0 flex-1 overflow-y-auto overflow-x-auto pl-2.5 [overflow-anchor:none] [scrollbar-gutter:stable] {chat.loading ||
-            !revealed
-                ? 'pointer-events-none opacity-0'
-                : 'motion-safe:transition-opacity motion-safe:duration-150 motion-safe:ease-out'}"
-            aria-hidden={chat.loading || !revealed}
-        >
-            <div
-                class="relative w-full"
-                style:height="{listHeight}px"
-                {@attach watchListHeight}
-                role="log"
-                aria-live="polite"
-                aria-label="Conversation"
-            >
-                <!-- A theme change repaints every row from scratch: a row kept from before can show the old theme's colours until the page is reloaded. -->
-                {#key theme.settledKey}
-                    {#each virtualRows as row (row.key)}
-                        {@const message = chat.messages[row.index + from]}
-                        {@const mine = message?.role === 'user'}
-                        {@const agent =
-                            message?.agent ??
-                            activeSession()?.source ??
-                            activeSession()?.agent ??
-                            'claude'}
-                        {#if message}
-                            <!-- One row that cannot be drawn must not blank the chat: it is reported (with its id) and the row says so. -->
-                            <svelte:boundary
-                                onerror={(error) =>
-                                    logError(
-                                        'app',
-                                        'chat row failed to draw',
-                                        error instanceof Error
-                                            ? `${error.name}: ${error.message}`
-                                            : String(error),
-                                        {
-                                            chat: workspace.activeId,
-                                            row: message.id,
-                                            // Full stack goes to ctx (not detail, which logError cuts at 1500 chars). No message content.
-                                            stack:
-                                                error instanceof Error
-                                                    ? (error.stack ?? '').slice(
-                                                          0,
-                                                          2048,
-                                                      )
-                                                    : '',
-                                            rowKinds: message.blocks
-                                                .map((block) => block.kind)
-                                                .join(',')
-                                                .slice(0, 200),
-                                            blockCount: message.blocks.length,
-                                            role: message.role,
-                                            messageCount: chat.messages.length,
-                                        },
-                                    )}
-                            >
-                                <div
-                                    class="absolute top-0 left-0 w-full"
-                                    data-index={row.index}
-                                    style:transform="translateY({row.start}px)"
-                                    {@attach measureRow}
-                                >
-                                    <!-- A session line (resumed, compacted, new) or, between two replies of the agent, a thin line. Read from the roles and
-                   the mark of the neighbours only, never the text, so a reply that is still streaming keeps one stable line. -->
-                                    {#if theme.turnDividers && message.mark}
-                                        <div
-                                            class="chat-mark mx-auto flex w-full max-w-[52rem] items-center gap-3 px-3 pt-3 min-[720px]:px-8"
-                                            role="separator"
-                                            aria-label={markerText(
-                                                message.mark,
-                                            )}
-                                        >
-                                            <span class="chat-rule"></span>
-                                            <span
-                                                class="shrink-0 text-[0.6875rem] text-muted-foreground"
-                                                >{markerText(
-                                                    message.mark,
-                                                )}</span
-                                            >
-                                            <span class="chat-rule"></span>
-                                        </div>
-                                    {:else if hollow(message, chat.messages.at(-1) !== message)}
-                                        <!-- Cut off before it wrote anything: nothing to draw. -->
-                                    {:else if turnDivider(neighbour(chat.messages, row.index + from, -1), message, theme.turnDividers)}
-                                        <div
-                                            class="mx-auto w-full max-w-[52rem] px-3 pt-1 min-[720px]:px-8"
-                                            role="separator"
-                                            aria-hidden="true"
-                                        >
-                                            <div class="chat-rule"></div>
-                                        </div>
-                                    {/if}
-                                    <!-- No avatars: your messages are a bubble (right side, or left in one-sided mode); the agent is just its coloured name. -->
-                                    {#if !hollow(message, chat.messages.at(-1) !== message)}
-                                        <article
-                                            oncontextmenu={(event) =>
-                                                openSelectionMenu(
-                                                    event,
-                                                    message.blocks
-                                                        .map((block) =>
-                                                            block.kind ===
-                                                            'response'
-                                                                ? block.text
-                                                                : '',
-                                                        )
-                                                        .filter(Boolean)
-                                                        .join('\n\n'),
-                                                )}
-                                            class="group/msg mx-auto flex w-full min-w-0 max-w-[52rem] flex-col break-words py-2.5 px-3 min-[720px]:px-8 {mine &&
-                                            theme.chatLayout === 'split'
-                                                ? 'items-end'
-                                                : 'items-start'}"
-                                        >
-                                            {#if mine}
-                                                <UserMessage {message} />
-                                            {:else}
-                                                <AssistantMessage
-                                                    {message}
-                                                    index={row.index + from}
-                                                    {agent}
-                                                    questionMessageId={pendingQuestion?.messageId}
-                                                />
-                                            {/if}
-                                        </article>
-                                        <!-- Delegated agents are shown as their own row, apart from
-                   the user's bubble, so hovering one does not light up the other. -->
-                                        {#if mine && message.blocks.some((block) => block.kind === 'delegate')}
-                                            {@const handed =
-                                                message.blocks.filter(
-                                                    (block) =>
-                                                        block.kind ===
-                                                        'delegate',
-                                                )}
-                                            <div
-                                                class="mx-auto flex w-full min-w-0 max-w-[52rem] flex-col items-start px-3 pb-2.5 min-[720px]:px-8"
-                                            >
-                                                <DelegateList blocks={handed} />
-                                            </div>
-                                        {/if}
-                                    {/if}
-                                </div>
-                                {#snippet failed()}
-                                    <div
-                                        class="absolute top-0 left-0 w-full"
-                                        data-index={row.index}
-                                        style:transform="translateY({row.start}px)"
-                                        {@attach measureRow}
-                                    >
-                                        <p
-                                            class="mx-auto my-2 w-full max-w-[52rem] px-3 text-sm text-muted-foreground min-[720px]:px-8"
-                                        >
-                                            This message could not be drawn. It
-                                            is saved; open the chat again to
-                                            retry.
-                                        </p>
-                                    </div>
-                                {/snippet}
-                            </svelte:boundary>
+                {#if contentTabs.active.startsWith('chat:') === false}
+                    <!-- A file tab covers the conversation; no tabs at all shows an empty state. -->
+                    {#each contentTabs.tabs.filter((tab) => tab.id === contentTabs.active && tab.kind === 'file') as tab (tab.id)}
+                        {#if tab.kind === 'file'}
+                            <div class="absolute inset-0 z-30 bg-background">
+                                <FileView file={tab} />
+                            </div>
                         {/if}
                     {/each}
+                    {#if contentTabs.tabs.length === 0 && !pendingProject()}
+                        <div
+                            class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-background p-6 text-center text-muted-foreground"
+                        >
+                            <ZIcon
+                                zType={'lucideMessagesSquare' as ZIconName}
+                                zSize="28"
+                                class="size-7 opacity-60"
+                            />
+                            <p class="m-0 text-sm">
+                                No open tabs. Start a chat from the sidebar.
+                            </p>
+                        </div>
+                    {/if}
+                {/if}
+                {#if contentTabs.active.startsWith('chat:') && parentOfActive}
+                    <SubChatBar
+                        {parentOfActive}
+                        {taskOfActive}
+                        {running}
+                        onback={backToParent}
+                    />
+                {/if}
+                <!-- Keyed by session so the ruler never carries scroll/hover state over from the previous chat. -->
+                {#key workspace.activeId}
+                    <!-- Full-height strip, ruler centred in it: it always sits in the conversation area, never over the
+           header or the composer. Only the ruler itself takes pointer events. -->
+                    <div
+                        class="pointer-events-none absolute inset-y-0 left-1 z-20 flex items-center"
+                    >
+                        <ZChatNavigator
+                            class="pointer-events-auto w-6"
+                            turns={navigatorTurns}
+                            activeIndex={activeTurn}
+                            onSelect={jumpToTurn}
+                        />
+                    </div>
                 {/key}
-            </div>
-        </div>
-    </div>
 
-    <!-- The composer sits on its own layer, above anything the conversation area paints at its edge. -->
-    <!-- Hidden while a file tab is on screen: the file gets the full height. -->
-    {#if !fileActive}
-        <div
-            class="relative z-30 shrink-0 bg-background px-2 pt-4 pb-2 min-[720px]:px-6"
-        >
-            <div
-                class="mx-auto w-full min-w-0 max-w-[52rem] px-3 min-[720px]:min-w-[440px] min-[720px]:px-8"
-            >
-                <!-- Writes that undid a newer request of the user, with a way back (plan 6.5). -->
-                <LedgerConflicts />
-                <!-- A pending approval sits right above the input, where the eye already is. -->
-                <ComposerDock
-                    {pendingApproval}
-                    {pendingQuestion}
-                    {agentApprovals}
+                <!-- Only while scrolled up: at the bottom there is nothing to jump to, running or not. -->
+                <JumpButton
+                    show={showJump}
+                    {running}
+                    onclick={() => (
+                        (following = true),
+                        $virtualizer.scrollToEnd()
+                    )}
                 />
+
+                <!-- Same fade as ShowMore: messages dissolve into the page just above the composer instead of being cut. -->
+                <div
+                    class="pointer-events-none absolute right-2.5 bottom-0 left-0 z-10 h-12"
+                    style="background-image: linear-gradient(to top, var(--background) 0%, transparent 100%)"
+                    aria-hidden="true"
+                ></div>
+
+                {#if chat.loadingOlder}
+                    <!-- Fades in while a page of older messages loads: a spinner in a soft primary ring and shimmering text. -->
+                    <div
+                        class="pointer-events-none absolute top-3 left-1/2 z-40 -translate-x-1/2"
+                        role="status"
+                        aria-label="Loading earlier messages"
+                        in:fade={{ duration: 150 }}
+                        out:fade={{ duration: 160 }}
+                    >
+                        <div
+                            class="flex items-center gap-2.5 rounded-full border border-primary/25 bg-background/95 py-1.5 pr-4 pl-2 text-[0.8125rem] font-medium shadow-lg shadow-primary/10 backdrop-blur"
+                        >
+                            <span
+                                class="grid size-6 place-items-center rounded-full bg-primary/12"
+                                ><ZLoading
+                                    zLoading
+                                    zSpinner={LOADER.fetch}
+                                    zSize={LOADER_SIZE}
+                                    zColor="primary"
+                                /></span
+                            >
+                            <ZShimmerText zText="Loading earlier messages…" />
+                        </div>
+                    </div>
+                {/if}
+
+                {#if chat.loading || (!revealed && chat.messages.length > 0)}
+                    <!-- A thin bar along the top while the chat opens. It shows only if the wait is long (the delay is in the animation),
+           so a fast chat opens with nothing at all, and it never mimics the layout, so nothing can ghost over the text. -->
+                    <div
+                        class="chat-loading pointer-events-none absolute inset-x-0 top-0 z-20 h-[2px] overflow-hidden"
+                        role="status"
+                        aria-label="Loading conversation"
+                        out:fade={{ duration: 120 }}
+                    >
+                        <div class="chat-loading-bar"></div>
+                        <div
+                            class="chat-loading-bar chat-loading-bar-trail"
+                        ></div>
+                    </div>
+                {/if}
+
+                {#if chat.messages.length === 0 && !chat.loading}
+                    <div
+                        class="pointer-events-none absolute inset-0 z-10 grid place-items-center text-sm text-muted-foreground"
+                    >
+                        {#if chat.error}
+                            <span class="max-w-sm text-center text-destructive"
+                                >{chat.error}</span
+                            >
+                        {:else}
+                            <div class="flex flex-col items-center gap-3">
+                                <ZIcon
+                                    zType={'lucideMessagesSquare' as ZIconName}
+                                    zSize="28"
+                                    class="size-7 opacity-60"
+                                />
+                                <p class="m-0 text-sm">
+                                    No messages yet. Say something to start.
+                                </p>
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
+
+                <div
+                    bind:this={viewportEl}
+                    use:middlePan
+                    bind:clientWidth={listWidth}
+                    bind:clientHeight={viewportHeight}
+                    onscroll={onViewportScroll}
+                    onwheel={stopSticking}
+                    ontouchmove={stopSticking}
+                    onpointerdown={onViewportPointerDown}
+                    onkeydown={stopSticking}
+                    class="middle-pan-scroll min-h-0 flex-1 overflow-y-auto overflow-x-auto pl-2.5 [overflow-anchor:none] [scrollbar-gutter:stable] {chat.loading ||
+                    !revealed
+                        ? 'pointer-events-none opacity-0'
+                        : 'motion-safe:transition-opacity motion-safe:duration-150 motion-safe:ease-out'}"
+                    aria-hidden={chat.loading || !revealed}
+                >
+                    <div
+                        class="relative w-full"
+                        style:height="{listHeight}px"
+                        {@attach watchListHeight}
+                        role="log"
+                        aria-live="polite"
+                        aria-label="Conversation"
+                    >
+                        <!-- A theme change repaints every row from scratch: a row kept from before can show the old theme's colours until the page is reloaded. -->
+                        {#key theme.settledKey}
+                            {#each virtualRows as row (row.key)}
+                                {@const message =
+                                    chat.messages[row.index + from]}
+                                {@const agent =
+                                    message?.agent ??
+                                    activeSession()?.source ??
+                                    activeSession()?.agent ??
+                                    'claude'}
+                                {#if message}
+                                    <!-- One row that cannot be drawn must not blank the chat: it is reported (with its id) and the row says so. -->
+                                    <svelte:boundary
+                                        onerror={(error) =>
+                                            logError(
+                                                'app',
+                                                'chat row failed to draw',
+                                                error instanceof Error
+                                                    ? `${error.name}: ${error.message}`
+                                                    : String(error),
+                                                {
+                                                    chat: workspace.activeId,
+                                                    row: message.id,
+                                                    // Full stack goes to ctx (not detail, which logError cuts at 1500 chars). No message content.
+                                                    stack:
+                                                        error instanceof Error
+                                                            ? (
+                                                                  error.stack ??
+                                                                  ''
+                                                              ).slice(0, 2048)
+                                                            : '',
+                                                    rowKinds: message.blocks
+                                                        .map(
+                                                            (block) =>
+                                                                block.kind,
+                                                        )
+                                                        .join(',')
+                                                        .slice(0, 200),
+                                                    blockCount:
+                                                        message.blocks.length,
+                                                    role: message.role,
+                                                    messageCount:
+                                                        chat.messages.length,
+                                                },
+                                            )}
+                                    >
+                                        <div
+                                            class="absolute top-0 left-0 w-full"
+                                            data-index={row.index}
+                                            style:transform="translateY({row.start}px)"
+                                            {@attach measureRow}
+                                        >
+                                            <MessageRow
+                                                {message}
+                                                index={row.index + from}
+                                                previous={neighbour(
+                                                    chat.messages,
+                                                    row.index + from,
+                                                    -1,
+                                                )}
+                                                last={chat.messages.at(-1) ===
+                                                    message}
+                                                {agent}
+                                                questionMessageId={pendingQuestion?.messageId}
+                                            />
+                                        </div>
+                                        {#snippet failed()}
+                                            <div
+                                                class="absolute top-0 left-0 w-full"
+                                                data-index={row.index}
+                                                style:transform="translateY({row.start}px)"
+                                                {@attach measureRow}
+                                            >
+                                                <p
+                                                    class="mx-auto my-2 w-full max-w-[52rem] px-3 text-sm text-muted-foreground min-[720px]:px-8"
+                                                >
+                                                    This message could not be
+                                                    drawn. It is saved; open the
+                                                    chat again to retry.
+                                                </p>
+                                            </div>
+                                        {/snippet}
+                                    </svelte:boundary>
+                                {/if}
+                            {/each}
+                        {/key}
+                    </div>
+                </div>
             </div>
+
+            <!-- The composer sits on its own layer, above anything the conversation area paints at its edge. -->
+            <!-- Hidden while a file tab is on screen: the file gets the full height. -->
+            {#if !fileActive}
+                <div
+                    class="relative z-30 shrink-0 bg-background px-2 pt-4 pb-2 min-[720px]:px-6"
+                >
+                    <div
+                        class="mx-auto w-full min-w-0 max-w-[52rem] px-3 min-[720px]:min-w-[440px] min-[720px]:px-8"
+                    >
+                        <!-- Writes that undid a newer request of the user, with a way back (plan 6.5). -->
+                        <LedgerConflicts />
+                        <!-- A pending approval sits right above the input, where the eye already is. -->
+                        <ComposerDock
+                            {pendingApproval}
+                            {pendingQuestion}
+                            {agentApprovals}
+                        />
+                    </div>
+                </div>
+            {/if}
         </div>
-    {/if}
+        <BtwPanel parentId={workspace.activeId} />
+    </div>
 </main>
 
 <ZGalleryPreview

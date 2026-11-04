@@ -647,6 +647,8 @@ const localReady = loadLocalState().then(
                 }),
             }));
         for (const savedItem of saved.sessions ?? []) {
+            // A /btw side question saved by an older build is not a chat: it is dropped (side questions live in memory now).
+            if (savedItem.side) continue;
             const item = {
                 ...renamedSession(savedItem),
                 status: 'idle' as const,

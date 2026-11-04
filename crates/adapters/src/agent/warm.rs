@@ -387,6 +387,73 @@ pub(super) async fn send(warm: &mut Warm, line: &str) -> std::io::Result<()> {
     warm.stdin.flush().await
 }
 
+/// A side question (`/btw`) asked of the chat's kept CLI: the CLI answers it without a turn, so the conversation is not
+/// changed. It waits for the chat's running turn, if any. `history` is the earlier side questions as (question, answer).
+/// Errors when the chat has no kept process: a message must have been sent in the chat first.
+pub async fn side_question(
+    chat: &str,
+    question: &str,
+    history: &[(String, String)],
+) -> Result<String, String> {
+    let lock = lock_of(chat);
+    let _turn = lock.lock().await;
+    let prefix = format!("{chat}{SEP}");
+    // The process leaves the pool while it answers, so no turn can take it in between.
+    let taken = {
+        let mut pool = pool();
+        let slot = pool.keys().find(|key| key.starts_with(&prefix)).cloned();
+        slot.and_then(|slot| pool.remove(&slot).map(|warm| (slot, warm)))
+    };
+    let Some((slot, mut warm)) = taken else {
+        return Err("no open conversation for this chat: send it a message first".to_owned());
+    };
+    let id = format!("btw-{}", SERIAL.fetch_add(1, Ordering::Relaxed));
+    let line = serde_json::json!({
+        "type": "control_request",
+        "request_id": id,
+        "request": {
+            "subtype": "side_question",
+            "question": question,
+            "history": history
+                .iter()
+                .map(|(question, response)| serde_json::json!({ "question": question, "response": response }))
+                .collect::<Vec<_>>(),
+        },
+    })
+    .to_string();
+    let answer = async {
+        send(&mut warm, &format!("{line}\n"))
+            .await
+            .map_err(|error| error.to_string())?;
+        let waited = tokio::time::timeout(Duration::from_secs(600), async {
+            while let Ok(Some(bytes)) = warm.lines.next_segment().await {
+                let text = String::from_utf8_lossy(&bytes);
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    continue;
+                };
+                if value["type"].as_str() != Some("side_question_result")
+                    || value["request_id"].as_str() != Some(id.as_str())
+                {
+                    continue;
+                }
+                if let Some(message) = value["error"]["message"].as_str() {
+                    return Err(message.to_owned());
+                }
+                return value["response"]["response"]["response"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "the answer had no text".to_owned());
+            }
+            Err("the conversation ended before the answer".to_owned())
+        })
+        .await;
+        waited.unwrap_or_else(|_| Err("the side question timed out".to_owned()))
+    }
+    .await;
+    pool().insert(slot, warm);
+    answer
+}
+
 /// How a turn on a kept process ended.
 enum Ending {
     /// The turn finished; the process can take the next one. Carries the conversation id it reported.
