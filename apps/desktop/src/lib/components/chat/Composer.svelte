@@ -2,8 +2,6 @@
     import RunActionButton from './RunActionButton.svelte';
     import ProjectBar from '../layout/ProjectBar.svelte';
     import { onMount, untrack } from 'svelte';
-    import { askBtw } from '../../chat/session/btw.svelte';
-    import { btwQuestionOf } from '../../chat/session/btw-command';
     import { getPref, setPref } from '../../app/platform/prefs';
     import {
         ZButton,
@@ -970,19 +968,6 @@
         if (target && (target.agent !== agent || target.model !== model))
             pendingSwitch[sessionId] = { agent, model };
         else delete pendingSwitch[sessionId];
-        // `/btw` asks a side question in its own chat: this chat's run and queue are not touched.
-        const question = btwQuestionOf(draft);
-        if (question !== null) {
-            if (question) {
-                const asked = askBtw(sessionId, question);
-                if (!asked.ok) toast.error(asked.error);
-            }
-            setDraft('', { sent: true });
-            setMentions([]);
-            setImages([]);
-            setFiles([]);
-            return;
-        }
         delete manuallyStopped[sessionId];
         sendMessage(draft, images, elements, mentions, whileRunning, attached);
         draftElements[sessionId] = [];

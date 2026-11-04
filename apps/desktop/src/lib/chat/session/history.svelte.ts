@@ -63,7 +63,6 @@ import {
     withLive,
 } from './run.svelte';
 import { hidden, signature } from './sending.svelte';
-import { btwIgnoredReady, dropSide, isBtwTranscript } from './btw.svelte';
 import {
     lastPrompt,
     queuePaused,
@@ -272,15 +271,13 @@ export async function importHistory({ refresh = false } = {}) {
         addedReady,
         sessionPlacementsReady,
         mixedReady,
-        btwIgnoredReady,
     ]);
     // Show the last known index at once, then refresh it: indexing every file takes a moment.
     if (!refresh) history.scanning = true;
     if (!refresh)
         try {
-            const cached = (
-                (await getPref<HistorySession[]>(HISTORY_INDEX)) ?? []
-            ).filter((item) => !isBtwTranscript(item.id));
+            const cached =
+                (await getPref<HistorySession[]>(HISTORY_INDEX)) ?? [];
             if (cached.length > 0) {
                 // A stale cache must not replace the restored active id with its first row. That used to make the
                 // subsequent full import preserve the wrong session even when it found the session the user had open.
@@ -301,10 +298,7 @@ export async function importHistory({ refresh = false } = {}) {
         }
     history.loading = true;
     try {
-        // The transcripts of closed /btw side chats are not chats: see btw.svelte.ts.
-        const found = (await listHistory()).filter(
-            (item) => !isBtwTranscript(item.id),
-        );
+        const found = await listHistory();
         const keep = workspace.activeId;
         const keepSession = workspace.sessions.find((item) => item.id === keep);
         const keepIsLocal = localSessions().some((item) => item.id === keep);
@@ -1451,8 +1445,6 @@ export async function releaseCli(id: string) {
 async function forgetSessions(removed: SessionItem[]) {
     if (!removed.length) return;
     const gone = new Set(removed.map((item) => item.id));
-    // A side chat of a removed chat stops with it: its answer has no chat to go to.
-    for (const id of gone) dropSide(id);
     // Forks of a removed chat move up to the nearest parent that stays.
     const survivingParent = (id: string | undefined): string | undefined => {
         let parent = id;

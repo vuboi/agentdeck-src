@@ -20,7 +20,6 @@ import { answerCopilotPermission } from '../agent';
 import { samePath } from '../../files/paths';
 import { listen } from '../../app/platform/tauri-event';
 import { lastChat } from './turns.svelte';
-import { dropSide } from './btw.svelte';
 import { prewarmChat } from './run.svelte';
 import { folderName } from './history.svelte';
 import {
@@ -921,9 +920,6 @@ export function moveDraftToProject(sessionId: string, projectId: string) {
             onDraftsDropped?.([other.id]);
         }
     }
-    // A /btw side chat of a dropped draft has no chat to go back to: it closes with the draft. After the loop, because
-    // dropSide replaces workspace.sessions.
-    for (const id of dropped) dropSide(id);
     item.projectId = projectId;
     item.gitBranch = undefined;
     rememberSessionPlacement(sessionId, projectId);
