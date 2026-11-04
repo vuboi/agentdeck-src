@@ -10,12 +10,22 @@ use serde_json::Value;
 
 use super::{
     allow_entry, summarize_tool_input, AgentEvent, PermissionRequest, Provider, TurnRequest,
+    SERVE_CONTEXT,
 };
 
 pub struct WorkBuddy;
 
 const LANGUAGE_CONTEXT: &str =
     "Reply in the same language as the user's latest message. If the user writes Vietnamese, reply in Vietnamese with proper diacritics.";
+/// `--mcp-config` with AgentDeck's browser bridge for this chat.
+fn bridge_args(bridge: &str, req: &TurnRequest) -> [String; 2] {
+    let url = super::mcp_url(bridge, req.owner.as_deref(), req.cwd.as_deref());
+    [
+        "--mcp-config".to_string(),
+        serde_json::json!({ "mcpServers": { "agentdeck": { "type": "http", "url": url } } })
+            .to_string(),
+    ]
+}
 
 impl Provider for WorkBuddy {
     fn id(&self) -> &'static str {
@@ -58,13 +68,17 @@ impl Provider for WorkBuddy {
             args.push("--permission-mode".to_string());
             args.push(mode.to_string());
         }
+        // The CLI takes MCP servers as a JSON string (`--mcp-config`, as Claude Code does): AgentDeck's browser bridge.
+        if let Ok(bridge) = std::env::var("AGENTDECK_BRIDGE") {
+            args.extend(bridge_args(&bridge, req));
+        }
         args.push(super::turn_prompt(self, req));
         args
     }
 
     fn opening_context(&self, _req: &TurnRequest) -> Option<String> {
         Some(format!(
-            "{LANGUAGE_CONTEXT}{}{}",
+            "{LANGUAGE_CONTEXT}{}{}{SERVE_CONTEXT}",
             super::claude::ASK_CONTEXT,
             super::claude::WORK_CONTEXT
         ))
@@ -200,6 +214,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_browser_bridge_is_passed_as_mcp_config() {
+        let request = TurnRequest {
+            prompt: "hello".into(),
+            session_id: None,
+            resume: false,
+            model: None,
+            permission_mode: None,
+            effort: None,
+            allowed_tools: Vec::new(),
+            cwd: None,
+            owner: Some("chat-1".into()),
+            api_key: None,
+        };
+        let [flag, json] = bridge_args("http://127.0.0.1:9/token", &request);
+        assert_eq!(flag, "--mcp-config");
+        let config: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(config["mcpServers"]["agentdeck"]["type"], "http");
+        assert!(config["mcpServers"]["agentdeck"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http://127.0.0.1:9/token/mcp?chat=chat-1"));
+    }
+
+    #[test]
     fn args_use_official_headless_flags_and_model_selection() {
         let request = TurnRequest {
             prompt: "hello".into(),
@@ -228,7 +266,7 @@ mod tests {
         .map(String::from)
         .collect::<Vec<_>>();
         expected.push(format!(
-            "{LANGUAGE_CONTEXT}{}{}\n\nhello",
+            "{LANGUAGE_CONTEXT}{}{}{SERVE_CONTEXT}\n\nhello",
             crate::agent::claude::ASK_CONTEXT,
             crate::agent::claude::WORK_CONTEXT
         ));

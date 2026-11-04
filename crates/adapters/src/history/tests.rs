@@ -712,3 +712,48 @@ fn antigravity_transcript_reads_finished_steps_only() {
     let usage = answer.usage.expect("usage is attached");
     assert_eq!((usage.input, usage.output), (22, 7));
 }
+
+#[test]
+fn an_unchanged_transcript_comes_from_the_index_and_a_changed_one_is_read_again() {
+    let home = Home::new("index-cache");
+    let roots = home.roots();
+    let path = home.write(
+        ".claude/projects/demo/aaaa.jsonl",
+        &[user(
+            "u1",
+            None,
+            json!("first prompt"),
+            "2026-01-01T00:00:00Z",
+        )],
+    );
+    assert_eq!(list_all(&roots)[0].title, "first prompt");
+    assert!(roots.index.join("claude.json").is_file());
+
+    // Same length and time: the saved entry answers, so a value changed in the index file shows.
+    let cache = fs::read_to_string(roots.index.join("claude.json")).unwrap();
+    fs::write(
+        roots.index.join("claude.json"),
+        cache.replace("first prompt", "from index"),
+    )
+    .unwrap();
+    assert_eq!(list_all(&roots)[0].title, "from index");
+
+    // A longer file is read again.
+    fs::write(
+        &path,
+        format!(
+            "{}\n{}",
+            user("u1", None, json!("first prompt"), "2026-01-01T00:00:00Z"),
+            user(
+                "u2",
+                Some("u1"),
+                json!("second prompt"),
+                "2026-01-01T00:01:00Z"
+            )
+        ),
+    )
+    .unwrap();
+    let sessions = list_all(&roots);
+    assert_eq!(sessions[0].title, "first prompt");
+    assert_eq!(sessions[0].message_count, 2);
+}

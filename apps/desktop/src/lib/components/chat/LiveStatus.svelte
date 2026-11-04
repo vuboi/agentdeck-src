@@ -18,7 +18,7 @@
 
 <!-- Same height and gaps as a step group's header (h-6, gap-2), so the line and the group that replaces it line up. -->
 <div
-    class="flex h-6 items-center gap-2 text-sm text-muted-foreground"
+    class="flex h-6 items-center gap-2 whitespace-nowrap text-sm text-muted-foreground"
     role="status"
     aria-live="off"
 >

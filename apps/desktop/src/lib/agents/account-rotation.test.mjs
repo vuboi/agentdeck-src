@@ -171,6 +171,7 @@ async function harness({
                     './connectors.svelte',
                     './credential-switch',
                     './credential-scope',
+                    './check-runs',
                 ].includes(specifier),
                 `Unexpected module: ${specifier}`,
             );

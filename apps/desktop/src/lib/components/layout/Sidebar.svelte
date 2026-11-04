@@ -1279,7 +1279,7 @@
         oncontextmenu={onTreeContextMenu}
     >
         {#if history.scanning}
-            <!-- Start-up: covers the list (cached or not) until the chats are read, so F5 always shows this loader. -->
+            <!-- Start-up with no cached list: covers the empty tree until the chats are read. A cached list is shown at once. -->
             <div
                 class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background px-6 text-center text-sm text-muted-foreground"
                 role="status"

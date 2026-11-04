@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use super::{
     allow_entry, summarize_tool_input, AgentEvent, FileSnapshot, PermissionRequest, Provider,
-    TurnRequest,
+    TurnRequest, SERVE_CONTEXT,
 };
 
 #[derive(Default)]
@@ -24,6 +24,34 @@ pub struct CommandCode {
 
 const LANGUAGE_CONTEXT: &str =
     "Reply in the same language as the user's latest message. If the user writes Vietnamese, reply in Vietnamese with proper diacritics.";
+
+/// Writes AgentDeck's bridge into `.mcp.json` as `mcpServers.agentdeck`. Other servers stay as they are.
+fn ensure_bridge_server(path: &std::path::Path, url: &str) -> std::io::Result<()> {
+    use std::io::{Error, ErrorKind};
+    let mut file: Value = match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map_err(|error| Error::new(ErrorKind::InvalidData, error))?,
+        Err(error) if error.kind() == ErrorKind::NotFound => Value::Object(Default::default()),
+        Err(error) => return Err(error),
+    };
+    let wanted = serde_json::json!({ "type": "http", "url": url });
+    let root = file
+        .as_object_mut()
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "mcp config is not an object"))?;
+    let servers = root
+        .entry("mcpServers")
+        .or_insert_with(|| Value::Object(Default::default()));
+    let servers = servers
+        .as_object_mut()
+        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "mcpServers is not an object"))?;
+    if servers.get("agentdeck") == Some(&wanted) {
+        return Ok(());
+    }
+    servers.insert("agentdeck".into(), wanted);
+    let text = serde_json::to_string_pretty(&file)
+        .map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+    std::fs::write(path, text + "\n")
+}
 
 impl Provider for CommandCode {
     fn id(&self) -> &'static str {
@@ -76,7 +104,7 @@ impl Provider for CommandCode {
 
     fn opening_context(&self, _req: &TurnRequest) -> Option<String> {
         Some(format!(
-            "{LANGUAGE_CONTEXT}{}{}",
+            "{LANGUAGE_CONTEXT}{}{}{SERVE_CONTEXT}",
             super::claude::ASK_CONTEXT,
             super::claude::WORK_CONTEXT
         ))
@@ -85,6 +113,13 @@ impl Provider for CommandCode {
     fn prepare(&self, req: &TurnRequest) -> Result<(), String> {
         if let Ok(mut root) = self.root.lock() {
             *root = req.cwd.clone();
+        }
+        // The CLI reads its MCP servers from the project's `.mcp.json`: AgentDeck's bridge goes there, beside the others.
+        if let (Ok(bridge), Some(folder)) = (std::env::var("AGENTDECK_BRIDGE"), req.cwd.as_deref())
+        {
+            let url = super::mcp_url(&bridge, None, Some(folder));
+            // A file that is not a JSON object is the user's: it is left as it is.
+            let _ = ensure_bridge_server(&folder.join(".mcp.json"), &url);
         }
         if let Ok(mut snapshots) = self.file_snapshots.lock() {
             snapshots.clear();
@@ -173,7 +208,8 @@ impl CommandCode {
             id,
             name,
             change,
-            background: false,
+            // A shell call the agent started with `run_in_background` keeps running after its call returns.
+            background: input["run_in_background"].as_bool().unwrap_or(false),
         }]
     }
 
@@ -423,5 +459,44 @@ mod tests {
                     && requests[0].tool == "Bash"
                     && requests[0].allow == "Bash(git push)"
         ));
+    }
+}
+
+#[cfg(test)]
+mod bridge_config_tests {
+    use super::ensure_bridge_server;
+
+    fn folder(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ag-cc-mcp-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn bridge_is_added_and_other_servers_stay() {
+        let dir = folder("merge");
+        let path = dir.join(".mcp.json");
+        std::fs::write(&path, r#"{"mcpServers":{"serena":{"command":"serena"}}}"#).unwrap();
+        ensure_bridge_server(&path, "http://127.0.0.1:9/mcp?root=x").unwrap();
+        let file: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(file["mcpServers"]["serena"]["command"], "serena");
+        assert_eq!(file["mcpServers"]["agentdeck"]["type"], "http");
+        assert_eq!(
+            file["mcpServers"]["agentdeck"]["url"],
+            "http://127.0.0.1:9/mcp?root=x"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_that_is_not_json_is_left_alone() {
+        let dir = folder("broken");
+        let path = dir.join(".mcp.json");
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(ensure_bridge_server(&path, "http://x/mcp").is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

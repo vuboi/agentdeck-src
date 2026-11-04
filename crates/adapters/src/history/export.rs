@@ -574,7 +574,7 @@ mod tests {
             Some(roots.claude.join(claude_folder(&cwd)).as_path())
         );
 
-        let sessions = claude::list(&roots.claude);
+        let sessions = claude::list(&roots.claude, &roots.index.join("claude.json"));
         let session = sessions
             .iter()
             .find(|session| session.id == format!("claude:{}", result.native_id))
@@ -688,7 +688,11 @@ mod tests {
         );
         assert!(!fs::read_to_string(&path).unwrap().contains("function_call"));
 
-        let sessions = codex::list(&roots.codex, &roots.codex_index);
+        let sessions = codex::list(
+            &roots.codex,
+            &roots.codex_index,
+            &roots.index.join("codex.json"),
+        );
         let session = sessions
             .iter()
             .find(|session| session.id == format!("codex:{}", result.native_id))

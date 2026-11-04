@@ -36,7 +36,7 @@
 <div class="flex flex-col text-sm">
     <button
         type="button"
-        class="flex w-fit max-w-full cursor-pointer items-center gap-2 rounded-md py-0.5 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+        class="flex w-fit max-w-full cursor-pointer items-center gap-2 whitespace-nowrap rounded-md py-0.5 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
         aria-expanded={open}
         onclick={ontoggle}
     >

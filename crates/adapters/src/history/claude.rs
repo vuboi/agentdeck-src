@@ -9,8 +9,10 @@ use std::{
     path::Path,
 };
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::index_cache::IndexCache;
 use super::util::{
     describe_tool, jsonl_files, read_lines, result_text, strip_agentdeck_lead, strip_ansi,
     strip_reminders, truncate,
@@ -33,12 +35,15 @@ fn noisy(line: &str) -> bool {
     .any(|marker| line.contains(marker))
 }
 
+#[derive(Clone, Serialize, Deserialize)]
 struct Indexed {
     session: HistorySession,
     first_uuids: Vec<String>,
 }
 
-pub(super) fn list(root: &Path) -> Vec<HistorySession> {
+/// `cache` is the saved index of these files; a transcript that has not changed since is not read again.
+pub(super) fn list(root: &Path, cache: &Path) -> Vec<HistorySession> {
+    let mut index = IndexCache::open(cache);
     let mut indexed: Vec<Indexed> = jsonl_files(root)
         .into_iter()
         .filter(|path| {
@@ -46,8 +51,9 @@ pub(super) fn list(root: &Path) -> Vec<HistorySession> {
                 .file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with("agent-"))
         })
-        .filter_map(|path| index_file(&path))
+        .filter_map(|path| index.get_or_index(&path, || index_file(&path)))
         .collect();
+    index.save();
     link_forks(&mut indexed);
     indexed.into_iter().map(|item| item.session).collect()
 }

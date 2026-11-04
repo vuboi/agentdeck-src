@@ -292,6 +292,8 @@ export async function importHistory({ refresh = false } = {}) {
                 if (!activeId || hasActive || hasLocalActive) {
                     applyHistory(cached);
                     history.imported = true;
+                    // The cached list is on screen: the loader is only for a start with no list to show.
+                    history.scanning = false;
                 }
             }
         } catch {

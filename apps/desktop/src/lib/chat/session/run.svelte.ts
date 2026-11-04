@@ -1384,8 +1384,16 @@ export function updateLane(sessionId: string, lane: RunLane) {
     }
 }
 
+/** Only Claude takes a message between two answers (its warm process, see adapters `tail`). Any other CLI would start
+ *  a new turn for it and stop the one running, so its messages wait in the queue until the turn ends. */
 export function canListenToSession(sessionId: string): boolean {
-    return deliveryFor(sessionLanes[sessionId] ?? []) === 'listener';
+    const agent = workspace.sessions.find(
+        (item) => item.id === sessionId,
+    )?.agent;
+    return (
+        agent === 'claude' &&
+        deliveryFor(sessionLanes[sessionId] ?? []) === 'listener'
+    );
 }
 /** Groups a live reply with follow-ups sent before the whole queue goes idle. */
 export function continueCurrentRun(sessionId: string): string {

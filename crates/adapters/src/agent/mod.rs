@@ -168,6 +168,10 @@ pub fn mcp_url(bridge: &str, owner: Option<&str>, cwd: Option<&std::path::Path>)
     }
 }
 
+/// Dev servers go through AgentDeck's `browser_serve`: it keeps the process and reports the start in the chat. A shell
+/// wait on a server never ends and holds the whole turn.
+pub const SERVE_CONTEXT: &str = " To run a dev server, call the browser_serve tool, not shell_command or shell_output with wait. Report its start result (ok, or the error and log) in your reply.";
+
 /// One user message to send to an agent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TurnRequest {

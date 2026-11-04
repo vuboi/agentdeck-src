@@ -180,6 +180,8 @@
         if (!dirty || disk === null) return void drafts.delete(file.id);
         const draft = drafts.get(file.id) ?? { disk, text: '' };
         draft.disk = disk;
+        // Kept on every change: onDestroy runs after the editor is gone, so the text must already be here.
+        draft.text = editor?.getText() ?? draft.text;
         draft.read = () => editor?.getText() ?? draft.text;
         draft.saved = (raw) => {
             disk = raw;

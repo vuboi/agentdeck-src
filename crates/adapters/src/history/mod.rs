@@ -7,6 +7,7 @@ mod claude;
 mod codex;
 mod copilot;
 mod export;
+mod index_cache;
 mod manage;
 mod util;
 
@@ -32,7 +33,7 @@ pub enum Source {
 }
 
 /// One session found on disk, enough to draw a row in the sidebar tree.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistorySession {
     /// `claude:<uuid>` or `codex:<uuid>`, unique across sources.
     pub id: String,
@@ -138,6 +139,8 @@ pub struct Roots {
     pub gemini: PathBuf,
     /// Deleted sessions are moved here, never destroyed.
     pub trash: PathBuf,
+    /// `~/.agentdeck/history-index`: what was read from each Claude and Codex transcript last time.
+    pub index: PathBuf,
 }
 
 impl Roots {
@@ -150,6 +153,7 @@ impl Roots {
             copilot: home.join(".copilot").join("session-state"),
             gemini: home.join(".gemini"),
             trash: home.join(".agentdeck").join("trash"),
+            index: home.join(".agentdeck").join("history-index"),
         }
     }
 }
@@ -159,8 +163,15 @@ impl Roots {
 /// Ids are unique: resuming a Codex thread writes a second rollout file whose `session_meta` keeps the
 /// original id, and two sessions with one id break keyed lists in the UI. The newest file wins.
 pub fn list_all(roots: &Roots) -> Vec<HistorySession> {
-    let mut sessions = claude::list(&roots.claude);
-    sessions.extend(codex::list(&roots.codex, &roots.codex_index));
+    // One scan at a time: two running scans would write the same index file.
+    static SCAN: Mutex<()> = Mutex::new(());
+    let _scan = SCAN.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut sessions = claude::list(&roots.claude, &roots.index.join("claude.json"));
+    sessions.extend(codex::list(
+        &roots.codex,
+        &roots.codex_index,
+        &roots.index.join("codex.json"),
+    ));
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     let mut seen = std::collections::HashSet::new();
     sessions.retain(|session| seen.insert(session.id.clone()));
@@ -177,8 +188,12 @@ pub fn list_all(roots: &Roots) -> Vec<HistorySession> {
 /// Sessions of one provider. The sidebar still reads `list_all` (Claude and Codex): the UI cannot show the others yet.
 pub fn list_native(roots: &Roots, source: Source) -> Vec<HistorySession> {
     match source {
-        Source::Claude => claude::list(&roots.claude),
-        Source::Codex => codex::list(&roots.codex, &roots.codex_index),
+        Source::Claude => claude::list(&roots.claude, &roots.index.join("claude.json")),
+        Source::Codex => codex::list(
+            &roots.codex,
+            &roots.codex_index,
+            &roots.index.join("codex.json"),
+        ),
         Source::Copilot => copilot::list(&roots.copilot),
         Source::Antigravity => antigravity::list(&roots.gemini),
     }

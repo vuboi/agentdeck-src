@@ -8,6 +8,7 @@ use std::{collections::HashMap, path::Path};
 
 use serde_json::Value;
 
+use super::index_cache::IndexCache;
 use super::util::{
     describe_tool, jsonl_files, read_lines, strip_agentdeck_lead, strip_ansi, truncate,
 };
@@ -23,11 +24,13 @@ fn wanted(line: &str) -> bool {
         || line.contains("\"type\":\"turn_context\"")
 }
 
-pub(super) fn list(root: &Path, index: &Path) -> Vec<HistorySession> {
+/// `cache` is the saved index of these files; a rollout that has not changed since is not read again.
+pub(super) fn list(root: &Path, index: &Path, cache: &Path) -> Vec<HistorySession> {
     let names = thread_names(index);
-    jsonl_files(root)
+    let mut saved = IndexCache::open(cache);
+    let sessions: Vec<HistorySession> = jsonl_files(root)
         .iter()
-        .filter_map(|path| index_file(path))
+        .filter_map(|path| saved.get_or_index(path, || index_file(path)))
         .map(|mut session| {
             // A name given in Codex (or by AgentDeck's rename) wins over the first prompt.
             let id = session.id.strip_prefix("codex:").unwrap_or_default();
@@ -36,7 +39,9 @@ pub(super) fn list(root: &Path, index: &Path) -> Vec<HistorySession> {
             }
             session
         })
-        .collect()
+        .collect();
+    saved.save();
+    sessions
 }
 
 /// `session_index.jsonl` is append-only; the last line for an id is its current name.
