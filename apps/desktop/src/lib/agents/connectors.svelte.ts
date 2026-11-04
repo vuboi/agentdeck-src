@@ -9,6 +9,7 @@ import {
     type CredentialAttempt,
 } from './credential-switch';
 import { customScope } from './credential-scope';
+import { joinRun } from './check-runs';
 import { inTauri } from '../app/platform/history';
 import { loadAgentStatus } from './agent-status.svelte';
 import { getPref, setPref } from '../app/platform/prefs';
@@ -699,29 +700,36 @@ function mergeDetected(id: ConnectorId, next: Detected) {
 const detectedFor = new SvelteSet<ConnectorId>();
 let detectedAll = false;
 
-export async function refreshDetect(only?: ConnectorId) {
-    if (!inTauri()) return;
+/** Checks already running, by key: a repeat call joins the running check instead of failing. */
+const detectRuns = new Map<string, Promise<void>>();
+
+export function refreshDetect(only?: ConnectorId): Promise<void> {
+    if (!inTauri()) return Promise.resolve();
     void loadAgentStatus();
     void listenToLogs();
     const key = only ? `detect:${only}` : 'detect';
-    const ok = await task(key, 'Checking', async () => {
-        const next = await callWithTimeout<Detected>(
-            'connectors_detect',
-            only ? { only } : undefined,
-            30_000,
-        );
-        if (only) {
-            mergeDetected(only, next);
-            detectedFor.add(only);
-        } else {
-            connectors.detected = next;
-            detectedAll = true;
-        }
+    const running = detectRuns.get(key);
+    if (running) return running;
+    return joinRun(detectRuns, key, async () => {
+        const ok = await task(key, 'Checking', async () => {
+            const next = await callWithTimeout<Detected>(
+                'connectors_detect',
+                only ? { only } : undefined,
+                30_000,
+            );
+            if (only) {
+                mergeDetected(only, next);
+                detectedFor.add(only);
+            } else {
+                connectors.detected = next;
+                detectedAll = true;
+            }
+        });
+        if (ok) delete connectors.errors.detect;
+        else if (only && connectors.errors[key])
+            connectors.errors.detect = connectors.errors[key];
+        if (ok && !only) void checkLatestVersions();
     });
-    if (!ok && only)
-        connectors.errors.detect =
-            connectors.errors[key] ?? 'Could not check the selected connector';
-    if (ok && !only) void checkLatestVersions();
 }
 
 const LATEST_TTL_MS = 60 * 60_000;

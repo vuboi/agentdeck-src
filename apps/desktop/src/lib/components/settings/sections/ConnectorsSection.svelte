@@ -175,7 +175,7 @@
             brand: 'lucideBot',
             image: MUSE_LOGO,
             tone: 'bg-violet-500/12 text-violet-600 dark:text-violet-400',
-            note: 'Muse Code subscription. Sign-in uses Meta’s device flow and mints a native inference key.',
+            note: 'Muse Code subscription. Sign-in uses Meta’s device flow and mints a native inference key. A Muse API key added under Providers shows in the same Muse Code row.',
         },
         {
             id: 'command-code',
@@ -184,7 +184,7 @@
             brand: 'lucideTerminal',
             svg: COMMAND_CODE_SVG,
             tone: 'bg-foreground/10 text-foreground',
-            note: 'Command Code coding agent through its own CLI. Sign-in runs in the CLI, so chats use your CLI account, not an API key.',
+            note: 'Command Code coding agent through its own CLI. Sign-in runs in the CLI. An API key added under Providers shows in the same Command Code row; the model you pick decides which one is used.',
         },
     ];
 

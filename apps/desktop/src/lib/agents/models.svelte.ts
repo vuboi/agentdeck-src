@@ -6,6 +6,7 @@ import { CREDIT_PREFIX, creditModel } from './credit-model';
 import { agentProfile } from './provider-registry';
 import { isConfigured } from './agent-status.svelte';
 import { providerLogo } from './brand-icons';
+import { vendorOf, type VendorId } from './vendor-rows';
 
 // Model catalogue for the picker, per provider. It starts from a small built-in list and is replaced at start-up
 // by what each CLI keeps on disk (Rust `models_list`): Codex's cached catalogue with each model's reasoning
@@ -197,8 +198,15 @@ $effect.root(() => {
     });
 });
 
-/** The custom provider the Command Code API key is saved as (`connectors.svelte.ts`): its models sit in the Command Code row. */
-export const COMMANDCODE_API = 'connector-commandcode';
+const vendorProviders = (vendor: VendorId) =>
+    chattable().filter((provider) => vendorOf(provider) === vendor);
+/** The models of a vendor's custom providers (API key and login), as `<provider id>::<model>` entries. */
+const vendorModels = (vendor: VendorId) => {
+    const ids = new Set(vendorProviders(vendor).map((provider) => provider.id));
+    return catalog.custom.filter((item) =>
+        ids.has(parseCustomModel(item.value)?.providerId ?? ''),
+    );
+};
 /** The agent a row's model runs on: an API-key model of a custom provider runs as `custom`, any other as its row's agent. */
 export const runsAs = (source: ModelSource, value: string): ProviderId =>
     parseCustomModel(value) ? 'custom' : source.provider;
@@ -257,24 +265,31 @@ const builtIn: ModelSource[] = [
         // The CLI's models (subscription) and the API key's models, in one row as Claude's account and credit models.
         models: () => [
             ...catalog['command-code'],
-            ...catalog.custom.filter(
-                (item) =>
-                    parseCustomModel(item.value)?.providerId ===
-                    COMMANDCODE_API,
-            ),
+            ...vendorModels('command-code'),
         ],
     },
 ];
 
 /** The rows of the model picker: the three CLIs, then one per enabled custom provider. Reactive. */
 export function modelSources(): ModelSource[] {
+    const museProviders = vendorProviders('muse-code');
+    const museAnchor =
+        museProviders.find(
+            (provider) =>
+                provider.id === 'muse-code' ||
+                provider.nativeAuth === 'muse-code',
+        ) ?? museProviders[0];
     return [
-        ...builtIn.filter((row) => isConfigured(row.provider)),
+        ...builtIn.filter((row) =>
+            row.key === 'command-code'
+                ? isConfigured(row.provider) ||
+                  vendorProviders('command-code').length > 0
+                : isConfigured(row.provider),
+        ),
         ...chattable()
             .filter(
                 (provider) =>
-                    provider.id !== 'workbuddy' &&
-                    provider.id !== COMMANDCODE_API,
+                    provider.id !== 'workbuddy' && !vendorOf(provider),
             )
             .map((provider) => ({
                 // Keep custom provider rows in their own namespace: a saved provider may use a
@@ -291,6 +306,19 @@ export function modelSources(): ModelSource[] {
                             provider.id,
                     ),
             })),
+        // Muse Code's login and Muse's API key share one row, as Command Code's do.
+        ...(museAnchor
+            ? [
+                  {
+                      key: 'custom:muse-code',
+                      provider: 'custom' as const,
+                      label: museAnchor.name,
+                      icon: 'lucideServer' as ZIconName,
+                      logo: providerLogo(museAnchor),
+                      models: () => vendorModels('muse-code'),
+                  },
+              ]
+            : []),
     ];
 }
 
