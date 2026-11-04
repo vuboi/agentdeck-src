@@ -1285,7 +1285,7 @@
                 role="status"
                 aria-label="Loading chats"
             >
-                {#each [0.45, 0.7, 0.55, 0.8, 0.6] as width, index (index)}
+                {#each [0.45, 0.7, 0.55, 0.8, 0.6, 0.5, 0.75, 0.65, 0.5] as width, index (index)}
                     <div
                         class="flex shrink-0 animate-pulse flex-col gap-1.5 rounded-md px-2 py-2"
                         style:animation-delay="{index * 120}ms"

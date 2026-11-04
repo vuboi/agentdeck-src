@@ -49,6 +49,7 @@
         chatTurnOptions,
         pendingSwitch,
         applyPendingSwitch,
+        owesTurn,
         workspace,
         type Agent,
         type Effort,
@@ -77,10 +78,6 @@
     import { toast } from '../../app/platform/toast';
     import ModelPicker from './ModelPicker.svelte';
     import ComposerQueue from './ComposerQueue.svelte';
-    import {
-        loadImagePrompts,
-        type ImagePrompt,
-    } from '../../files/image-prompt-library.svelte';
     import BackgroundTasks from './BackgroundTasks.svelte';
     import { chatWork } from '../../chat/session/work.svelte';
     import { hasTurnWork } from '../../chat/session/turns.svelte';
@@ -176,36 +173,6 @@
     );
     let contextOpen = $state(false);
     let contextAnchor: HTMLElement | null = $state(null);
-    let promptHistoryOpen = $state(false);
-    let promptHistoryAnchor: HTMLElement | null = $state(null);
-    let promptHistory = $state<ImagePrompt[]>([]);
-    let promptHistoryVersion = $state(0);
-    const promptHistoryItems = $derived<PickerItem<ImagePrompt>[]>(
-        promptHistory.map((item) => ({
-            id: item.id,
-            label: item.prompt,
-            hint: `Prompt · ${new Date(item.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}`,
-            icon: 'lucideHistory',
-            selected: item.prompt === draft,
-            data: item,
-        })),
-    );
-    async function refreshPromptHistory() {
-        promptHistory = await loadImagePrompts();
-    }
-    $effect(() => {
-        void promptHistoryVersion;
-        if (promptHistoryOpen) void refreshPromptHistory();
-    });
-    function choosePromptHistory(item: PickerItem<ImagePrompt>) {
-        setDraft(item.data.prompt);
-        promptHistoryOpen = false;
-        requestAnimationFrame(() => {
-            area?.focus();
-            if (area) setEditorSelection(area, item.data.prompt.length);
-            resize();
-        });
-    }
     const contextTone = $derived(
         contextPercent >= 90
             ? 'text-destructive'
@@ -402,6 +369,8 @@
         effort: Effort;
         fast: boolean;
         permission: Permission;
+        /** The pick was made while a reply ran and has not applied to the chat yet. */
+        awaiting?: boolean;
     };
     let pickers: Record<string, Picker> = {};
     let pickersLoaded = false;
@@ -414,7 +383,18 @@
             const current = workspace.sessions.find(
                 (item) => item.id === sessionId,
             );
-            const waiting = pendingSwitch[sessionId];
+            let waiting = pendingSwitch[sessionId];
+            // A pick that waited for a reply when the app closed is still the user's: it applies again now (the pending
+            // list itself is not saved). Set only for that pick, so a switch made by a recovery is not undone.
+            if (
+                !waiting &&
+                saved.awaiting &&
+                current &&
+                (current.agent !== saved.agent || current.model !== saved.model)
+            ) {
+                waiting = { agent: saved.agent, model: saved.model };
+                pendingSwitch[sessionId] = waiting;
+            }
             agent = waiting?.agent ?? current?.agent ?? saved.agent;
             model = waiting?.model ?? current?.model ?? saved.model;
             effort = saved.effort;
@@ -520,9 +500,10 @@
             const session = workspace.sessions.find((item) => item.id === id);
             // A chat whose turn runs keeps the route of that turn: a new agent or model waits for the turn to end (D3).
             // The picker keeps the pick and shows that it applies after this turn (see ModelPicker).
+            // Only a reply in flight (or a turn owed after a failure) makes the pick wait: a stale running flag does not.
             const waits =
                 Boolean(session) &&
-                isRunning(id) &&
+                (Boolean(replies[id]) || owesTurn(id)) &&
                 (session?.agent !== current.agent ||
                     session?.model !== current.model);
             if (waits && session) {
@@ -530,11 +511,8 @@
                     agent: current.agent,
                     model: current.model,
                 };
-                pickers[id] = {
-                    ...current,
-                    agent: session.agent,
-                    model: session.model,
-                };
+                // Saved as the user's pick, marked as waiting, so it survives a reload (see applyPickerFor).
+                pickers[id] = { ...current, awaiting: true };
                 setPref('composer.pickers', pickers);
                 return;
             }
@@ -986,6 +964,12 @@
 
     function submit(whileRunning: 'queue' | 'next' | 'interrupt' = 'queue') {
         if (!hasInput) return;
+        // The message goes to the agent and model shown in the picker. A pick still waiting from earlier is replaced by
+        // what the picker shows now (or dropped when it matches the chat): an old pending pick must not win later.
+        const target = workspace.sessions.find((item) => item.id === sessionId);
+        if (target && (target.agent !== agent || target.model !== model))
+            pendingSwitch[sessionId] = { agent, model };
+        else delete pendingSwitch[sessionId];
         // `/btw` asks a side question in its own chat: this chat's run and queue are not touched.
         const question = btwQuestionOf(draft);
         if (question !== null) {
@@ -1224,35 +1208,6 @@
             >
                 <ZIcon zType="lucidePaperclip" class="size-3.5" />
             </ZButton>
-            <ZButton
-                bind:ref={promptHistoryAnchor}
-                zWave={false}
-                zType="ghost"
-                zSize="sm"
-                class="size-7! !bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary {promptHistoryOpen
-                    ? `${TRIGGER_ON} !bg-primary/15 !text-primary`
-                    : ''}"
-                aria-label="Show prompt history"
-                title={promptHistory.length
-                    ? `Prompt history (${promptHistory.length})`
-                    : 'Prompt history'}
-                aria-haspopup="listbox"
-                aria-expanded={promptHistoryOpen}
-                onclick={() => {
-                    promptHistoryVersion++;
-                    promptHistoryOpen = !promptHistoryOpen;
-                }}
-            >
-                <ZIcon zType="lucideHistory" class="size-3.5" />
-                {#if promptHistory.length > 0}
-                    <span
-                        class="pointer-events-none absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-primary px-1 text-center text-[8px] leading-3.5 text-primary-foreground"
-                        >{promptHistory.length > 99
-                            ? '99+'
-                            : promptHistory.length}</span
-                    >
-                {/if}
-            </ZButton>
             <input
                 bind:this={fileInput}
                 type="file"
@@ -1269,21 +1224,6 @@
                 bind:effort
                 bind:fast
                 bind:permission
-            />
-            <PickerPopover
-                anchor={promptHistoryAnchor}
-                bind:open={promptHistoryOpen}
-                items={promptHistoryItems}
-                search
-                local
-                fitContent
-                headings={false}
-                size="sm"
-                width={360}
-                label="Prompt history"
-                placeholder="Search prompt history…"
-                empty="No saved prompts"
-                onpick={choosePromptHistory}
             />
         </div>
         <!-- Composer and workers share a control whose icons never enter the flex layout. -->

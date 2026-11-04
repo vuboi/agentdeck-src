@@ -1,3 +1,4 @@
+import { BTW_ENABLED } from './btw-command';
 import { SvelteSet } from 'svelte/reactivity';
 import { workspace, localMessages, type SessionItem } from './state.svelte';
 import { send } from './sending.svelte';
@@ -84,6 +85,8 @@ export function askBtw(
     parentId: string,
     question: string,
 ): { ok: true; side: SessionItem } | { ok: false; error: string } {
+    if (!BTW_ENABLED)
+        return { ok: false, error: '/btw is turned off for now.' };
     const parent = workspace.sessions.find((item) => item.id === parentId);
     if (!parent) return { ok: false, error: 'This chat is no longer open.' };
     if (parent.agent !== 'claude')

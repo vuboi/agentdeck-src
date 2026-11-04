@@ -77,6 +77,8 @@ import {
     resumeSince,
     resumes,
     supersedeOwedTurn,
+    applyPendingSwitch,
+    owesTurn,
 } from './events.svelte';
 import {
     beginWorkflowIntegration,
@@ -185,6 +187,10 @@ export function sendMessage(
     if (selectedFlow && !text.replace(`/w ${selectedFlow.label}`, '').trim())
         return;
     images = [...images, ...elementPictures(elements)];
+    // A picker change that waited for a reply applies now when no reply is in flight: the message goes to the agent
+    // that was picked, not to the one of the chat before.
+    if (session && !replies[session.id] && !owesTurn(session.id))
+        applyPendingSwitch(session.id);
     if (
         !session ||
         (!text.trim() &&
