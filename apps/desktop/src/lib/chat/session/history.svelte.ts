@@ -1170,7 +1170,9 @@ export async function loadOlder(
         chat.error = String(error);
         return 0;
     } finally {
-        chat.loadingOlder = false;
+        // Held until the new rows are laid out and the view is back in place: a scroll event before that (still at the top)
+        // would read the next page, and the next, until the whole chat was in.
+        setTimeout(() => (chat.loadingOlder = false), 50);
     }
 }
 

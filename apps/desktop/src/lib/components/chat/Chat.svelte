@@ -323,7 +323,7 @@
         // message is in the list again. Without it the chat opened at its end instead of where it was left.
         for (
             let page = 0;
-            page < 60 &&
+            page < 400 &&
             target &&
             find() < 0 &&
             chat.older > 0 &&
@@ -335,9 +335,9 @@
                 target.fileIndex === undefined
                     ? 0
                     : Math.max(0, chat.older - target.fileIndex);
-            // 0 added: another read is in flight (wait a frame for it) or the file gave nothing more.
+            // 0 added: the previous read is still settling (see loadOlder) or the file gave nothing more.
             if ((await loadOlder(activeSession(), reach)) === 0)
-                await new Promise((resolve) => requestAnimationFrame(resolve));
+                await new Promise((resolve) => setTimeout(resolve, 60));
         }
         if (workspace.activeId !== sessionId) return;
         const at = find();
@@ -669,7 +669,9 @@
         // Upward only: a page put in front pushes scrollTop down, which never reads another one.
         const up = top < lastTop;
         lastTop = top;
-        if (up && !draggingBar && top < nearTop()) revealOlder();
+        // Only once the chat is shown: while a saved place is being restored, the place is reached by revealAtEnd, which
+        // reads the pages it needs. Scroll events during the restore must not read more pages on their own.
+        if (up && revealed && !draggingBar && top < nearTop()) revealOlder();
         noteReading();
     }
     // The place is noted while the reader scrolls, not when the chat is left: by then the list already holds the next
