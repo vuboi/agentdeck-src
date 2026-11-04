@@ -149,12 +149,13 @@ test('a bare "làm"/"sửa" still counts as work', () => {
         assert.equal(looksNontrivial(text), true, text);
 });
 
-test('continue replaces agent; empty agent without continue is refused', () => {
+test('a missing agent is parsed as empty: the calling chat agent fills it in', () => {
     const ok = parseDelegateArgs({ continue: ' t-ab12cd ', task: 'fix it' });
     assert.ok(
         ok.ok && ok.args.continueId === 't-ab12cd' && ok.args.agent === '',
     );
-    assert.equal(parseDelegateArgs({ task: 'x' }).ok, false);
+    const bare = parseDelegateArgs({ task: 'x' });
+    assert.ok(bare.ok && bare.args.agent === '');
     assert.equal(parseDelegateArgs({ continue: 't-ab12cd' }).ok, false);
 });
 

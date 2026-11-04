@@ -396,8 +396,10 @@ async fn install_catalog_skill(
     let scanned = folder.clone();
     let verdict = blocking(move || Ok(scan::scan_folder(&scanned).verdict)).await?;
     scan::gate(verdict, acknowledged, &name)?;
+    let installed = crate::agents::installed_ids();
     let agents: Vec<String> = SKILL_AGENTS
         .iter()
+        .filter(|agent| installed.contains(*agent))
         .map(|agent| (*agent).to_owned())
         .collect();
     library::add(

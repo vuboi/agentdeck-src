@@ -8,6 +8,7 @@
         ZSwitch,
         ZTabs,
         ZTextMorph,
+        zModalService,
     } from '@shival99/z-ui-svelte';
     import type { ZIconName, ZTab } from '@shival99/z-ui-svelte';
     import { toast } from '../../../app/platform/toast';
@@ -30,6 +31,7 @@
         cancelAccountAdd,
         cancelLogin,
         connectors,
+        consumeCodexResetCredit,
         install,
         installed,
         login,
@@ -58,15 +60,22 @@
         type UsageWindow,
     } from '../../../agents/connectors.svelte';
 
-    /** The connector tab shown and the account whose "reset limit" confirmation is open: both kept by the modal shell. */
-    /* eslint-disable no-useless-assignment -- `$bindable()` marks resetAsk as bindable; the parent always binds it, so the fallback is never read. */
-    let {
-        connectorTab = $bindable(''),
-        resetAsk = $bindable(),
-    }: { connectorTab: string; resetAsk?: string } = $props();
-    /* eslint-enable no-useless-assignment */
+    /** The connector tab shown, kept by the modal shell. */
+    let { connectorTab = $bindable('') }: { connectorTab: string } = $props();
 
     const icon = (name: string) => name as ZIconName;
+
+    /** Redeeming a reset credit cannot be undone, so it asks first (zModalService, as the other destructive confirms). */
+    const confirmResetCredit = (email: string) =>
+        zModalService.danger({
+            zTitle: 'Reset Codex limits',
+            zContent: `This will redeem one available reset credit for ${email} and refresh its Codex limits. The credit is consumed immediately.`,
+            zOkText: 'Use one reset',
+            zCancelText: 'Cancel',
+            zConfirmStyle: 'dialog',
+            onOk: () => void consumeCodexResetCredit(email),
+        });
+
     const CLAUDE_SDK_VERSION =
         desktopPackage.dependencies['@anthropic-ai/claude-agent-sdk'];
 
@@ -2007,8 +2016,9 @@
                                                                                 1 ||
                                                                             resetBusy}
                                                                         onclick={() =>
-                                                                            (resetAsk =
-                                                                                account.email)}
+                                                                            confirmResetCredit(
+                                                                                account.email,
+                                                                            )}
                                                                     >
                                                                         {#if resetBusy}<ZIcon
                                                                                 zType={icon(

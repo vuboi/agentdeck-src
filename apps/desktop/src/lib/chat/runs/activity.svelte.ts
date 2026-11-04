@@ -482,8 +482,7 @@ export function trackActivity(
         });
     } else if (event.kind === 'tool_call') {
         const serving = SERVE_TOOL.test(event.name);
-        const promoted =
-            !event.background && isLongRunningWork(event.name, event.input);
+        const promoted = !event.background && isLongRunningWork(event.name);
         const serve = serving ? serveArgs(event.input) : null;
         const item: Activity = {
             key: `${sessionId}:${event.id}:${++calls}`,
@@ -1097,4 +1096,18 @@ export function clearAudit() {
     auditPaging.hasMore = false;
     auditPaging.loading = false;
     if (inTauri()) void tauriCall('audit_clear').catch(() => {});
+}
+
+/** A shell call that outlived SHELL_WAIT_MS moves to the Work tray as background work (plan 6.4). */
+export function promoteShellCall(sessionId: string, callId: string): void {
+    const item = activity.findLast(
+        (entry) =>
+            entry.sessionId === sessionId &&
+            entry.callId === callId &&
+            entry.status === 'running',
+    );
+    if (!item) return;
+    item.background = true;
+    item.promotedToBackground = true;
+    item.status = 'background';
 }

@@ -32,6 +32,7 @@
         freeFirst,
         modelSources,
         modelsReady,
+        runsAs,
     } from '../../agents/models.svelte';
     import { CREDIT_PREFIX } from '../../agents/credit-model';
     import {
@@ -130,10 +131,14 @@
     const subList = $derived.by(() => freeFirst(modelsOf(subProvider)));
     // The row the chosen model belongs to: a custom provider has its own, the CLIs are found by agent.
     const currentSource = $derived(
-        sources.find(
-            (source) =>
-                source.provider === agent &&
-                source.models().some((item) => item.value === model),
+        sources.find((source) =>
+            source
+                .models()
+                .some(
+                    (item) =>
+                        item.value === model &&
+                        runsAs(source, item.value) === agent,
+                ),
         ) ??
             sources.find((source) => source.provider === agent) ??
             sources[0],
@@ -391,13 +396,15 @@
                     <SectionTitle label="MODEL" />
                     <div class="flex flex-col gap-[3.5px]" {@attach glide()}>
                         {#each sources as source (source.key)}
-                            {@const current =
-                                agent === source.provider &&
-                                source
-                                    .models()
-                                    .some((item) => item.value === model)
-                                    ? modelName(agent, model)
-                                    : ''}
+                            {@const current = source
+                                .models()
+                                .some(
+                                    (item) =>
+                                        item.value === model &&
+                                        runsAs(source, item.value) === agent,
+                                )
+                                ? modelName(agent, model)
+                                : ''}
                             <button
                                 type="button"
                                 role="menuitem"
@@ -767,7 +774,7 @@
         >
             {#each subList.items as item, index (item.value)}
                 {@const selected =
-                    agent === sourceOf(subProvider).provider &&
+                    agent === runsAs(sourceOf(subProvider), item.value) &&
                     model === item.value}
                 {#each subList.dividers.filter((divider) => divider.at === index) as divider (divider.label)}<div
                         class="mr-1 mt-1 flex shrink-0 items-center gap-2 px-2 text-[10px] font-medium tracking-wide text-primary uppercase"
@@ -798,7 +805,10 @@
                         offset: 6,
                     })}
                     onclick={() => {
-                        pickModel(sourceOf(subProvider).provider, item.value);
+                        pickModel(
+                            runsAs(sourceOf(subProvider), item.value),
+                            item.value,
+                        );
                         subOpen = false;
                     }}
                 >

@@ -93,12 +93,17 @@ export function parseDelegateArgs(
         };
     if (dependsOn.length > 8)
         return { ok: false, error: 'depends_on accepts at most 8 task ids' };
-    const agent = text(input.agent) ?? (continueId || role ? '' : undefined);
-    if (agent === undefined)
+    // No agent given: the calling chat's agent is used (delegate-plan.ts), so an empty agent is valid here.
+    if (
+        input.agent !== undefined &&
+        input.agent !== null &&
+        typeof input.agent !== 'string'
+    )
         return {
             ok: false,
-            error: 'agent is required (unless continue or role is given): claude, codex, antigravity or an id from list_agents',
+            error: 'agent must be the name of an agent: claude, codex, antigravity or an id from list_agents',
         };
+    const agent = text(input.agent) ?? '';
     const task = text(input.task);
     if (!task)
         return {

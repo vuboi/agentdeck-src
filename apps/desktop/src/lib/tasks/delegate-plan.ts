@@ -171,11 +171,11 @@ export function planTask(input: PlanInput, state: PlanState): PlanResult {
     const oldRowId = old?.record?.agentId ?? old?.session.agent;
     const row = findAgent(
         rows,
-        routed?.agent ?? (args.agent || oldRowId || ''),
+        routed?.agent ?? (args.agent || oldRowId || caller.agent),
     );
     if (!row)
         return refuse(
-            `No agent "${args.agent || oldRowId}" is available. ${formatAgents(rows)}`,
+            `No agent "${args.agent || oldRowId || caller.agent}" is available. ${formatAgents(rows)}`,
         );
     const inheritedModel =
         row.id === caller.agent &&

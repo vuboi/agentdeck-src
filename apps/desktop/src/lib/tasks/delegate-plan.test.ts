@@ -202,3 +202,12 @@ test('N2.1 refusal: a free-tier agent is sent private content', () => {
     });
     assert.match(error, /Not sent: Free Tier is a free tier/);
 });
+
+test("W1: without agent the calling chat's agent does the work", () => {
+    const result = planTask(
+        { call: { args: { task: 'check the page' } }, caller },
+        state(),
+    );
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.plan.agent, 'claude');
+});

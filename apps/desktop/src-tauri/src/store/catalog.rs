@@ -585,7 +585,7 @@ mod tests {
         assert_eq!(item.name, "claude-design");
         assert_eq!(
             item.agents,
-            super::library::SKILL_AGENTS
+            super::super::library::SKILL_AGENTS
                 .iter()
                 .map(|agent| (*agent).to_owned())
                 .collect::<Vec<_>>()

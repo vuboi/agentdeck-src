@@ -4,7 +4,13 @@
 // streaming answer is not parsed for questions, and a merged reasoning entry keeps its object while its text grows.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { reuseSegments, segments, type Segment } from './blocks.ts';
+import {
+    reuseSegments,
+    segments,
+    thinkingPreview,
+    thinkingTitle,
+    type Segment,
+} from './blocks.ts';
 import { askAsStep } from '../recovery/questions.ts';
 import type { Block } from '../mock.ts';
 
@@ -179,4 +185,24 @@ test('an unchanged proposal keeps its segment when a delta arrives', () => {
     const first = segments([cmd('a'), card]);
     const next = reuseSegments(first, segments([cmd('a'), card, cmd('b')]));
     assert.equal(next[1], first[1]);
+});
+
+test('thinking title is one word while it streams, then the time it took', () => {
+    assert.equal(thinkingTitle(true, { startedAt: 0 }), 'Thinking');
+    assert.equal(
+        thinkingTitle(false, { startedAt: 1000, endedAt: 9000 }),
+        'Thought for 8s',
+    );
+    assert.equal(thinkingTitle(false), 'Thought');
+});
+
+test('thinking preview takes the newest bold title, without the markers', () => {
+    assert.equal(
+        thinkingPreview(
+            '**Exploring repo**\nreading files\n**Planning fix**\nmore words',
+        ),
+        'Planning fix',
+    );
+    assert.equal(thinkingPreview('plain one\nplain two'), 'plain two');
+    assert.equal(thinkingPreview(''), 'Thinking');
 });

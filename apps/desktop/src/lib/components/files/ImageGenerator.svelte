@@ -353,7 +353,9 @@
         ),
     );
     const promptProvider = $derived(
-        (promptSource?.agent ?? 'codex') as ProviderId,
+        (parseCustomModel(promptModel)
+            ? 'custom'
+            : (promptSource?.agent ?? 'codex')) as ProviderId,
     );
     const effortTabs = $derived.by(() => {
         const levels: string[] = findModel(promptProvider, promptModel)

@@ -290,12 +290,13 @@ pub async fn mcp_list() -> McpOverview {
         if let Some(url) = bridge_url() {
             // Claude, Codex and OpenCode get it with every turn; custom providers call it directly (free tiers never:
             // custom_chat.rs). Antigravity once it is linked.
-            let mut agents = vec![
-                "claude".to_owned(),
-                "codex".to_owned(),
-                "opencode".to_owned(),
-                "copilot".to_owned(),
-            ];
+            // Only the CLIs installed here: a missing one has no config to write to.
+            let installed = crate::agents::installed_ids();
+            let mut agents: Vec<String> = ["claude", "codex", "opencode", "copilot"]
+                .into_iter()
+                .filter(|id| installed.contains(id))
+                .map(str::to_owned)
+                .collect();
             if agy_link.is_some() {
                 agents.push("antigravity".to_owned());
             }

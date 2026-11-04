@@ -117,7 +117,7 @@ pub fn tool_defs() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "agent": { "type": "string", "description": "claude, codex, antigravity, or the id of a local model provider as listed by list_agents" },
+                    "agent": { "type": "string", "description": "claude, codex, antigravity, or the id of a local model provider as listed by list_agents. Left out: the agent of the calling chat" },
                     "continue": { "type": "string", "description": "a task_id (e.g. t-ab12cd) or worker chat id of a worker that already answered and is idle: its chat is reused and `task` is sent to it as a follow-up. agent and model may then be left out" },
                     "model": { "type": "string", "description": "a model of that agent as listed by list_agents (a part of its name is enough); left out: the agent's usual one" },
                     "role": { "type": "string", "description": "the kind of work, as set in Settings > Tasks: read, research, plan, review, security, refactor, coding, test, write, text or logic. AgentDeck then sends the work to the first agent set for that role, so agent and model can be left out" },
@@ -248,10 +248,11 @@ pub fn parse_delegate(args: &Value) -> Result<DelegateArgs, String> {
     if depends_on.len() > 8 {
         return Err("depends_on accepts at most 8 task ids".into());
     }
-    let agent = match text_of(&args["agent"]) {
-        Some(agent) => agent,
-        None if continue_id.is_some() || role.is_some() => String::new(),
-        None => return Err("agent is required (unless continue or role is given): claude, codex, antigravity or an id from list_agents".into()),
+    // No agent: the calling chat's agent does the work (see planTask in delegate-plan.ts).
+    let agent = match &args["agent"] {
+        Value::Null => String::new(),
+        Value::String(agent) => agent.trim().to_owned(),
+        _ => return Err("agent must be the name of an agent: claude, codex, antigravity or an id from list_agents".into()),
     };
     let task = text_of(&args["task"])
         .ok_or("task is required: say what the worker must do and report back")?;
@@ -704,7 +705,8 @@ mod tests {
 
     #[test]
     fn missing_or_empty_agent_and_task_are_refused() {
-        assert!(parse_delegate(&json!({ "task": "x" })).is_err());
+        // Without an agent the calling chat's agent is used, so only the task is required.
+        assert_eq!(parse_delegate(&json!({ "task": "x" })).unwrap().agent, "");
         assert!(parse_delegate(&json!({ "agent": "codex" })).is_err());
         assert!(parse_delegate(&json!({ "agent": "codex", "task": "   " })).is_err());
         assert!(parse_delegate(&json!({ "agent": 3, "task": "x" })).is_err());

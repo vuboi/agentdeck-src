@@ -186,6 +186,8 @@ export async function conversationForExport(
 export const history = $state({
     imported: fakeData,
     loading: inTauri() && !fakeData,
+    /** The start-up import is running: Recents shows its loader, and the cached list waits for it. */
+    scanning: inTauri() && !fakeData,
 });
 
 // Older indexes treated every cwd as a project; never paint those classifications during startup.
@@ -273,6 +275,7 @@ export async function importHistory({ refresh = false } = {}) {
         btwIgnoredReady,
     ]);
     // Show the last known index at once, then refresh it: indexing every file takes a moment.
+    if (!refresh) history.scanning = true;
     if (!refresh)
         try {
             const cached = (
@@ -340,6 +343,7 @@ export async function importHistory({ refresh = false } = {}) {
         chat.error = String(error);
     } finally {
         history.loading = false;
+        if (!refresh) history.scanning = false;
     }
 }
 
@@ -903,9 +907,18 @@ const isWorkMessage = (message: Message) =>
                 )),
     );
 
-function mergeWorkMessages(messages: Message[], extras: Message[]): Message[] {
+// TEMP work-restore debug (remove after the check): logs what the archive overlay matched and dropped.
+function mergeWorkMessages(
+    messages: Message[],
+    extras: Message[],
+    debug?: string,
+): Message[] {
     const restored = [...messages];
-    for (const extra of extras.filter(isWorkMessage)) {
+    const work = extras.filter(isWorkMessage);
+    let matched = 0;
+    let autoPushed = 0;
+    const dropped: Record<string, unknown>[] = [];
+    for (const extra of work) {
         const text = responseText(extra);
         const index = restored.findIndex(
             (message) =>
@@ -920,9 +933,51 @@ function mergeWorkMessages(messages: Message[], extras: Message[]): Message[] {
                         ) <
                             10 * 60_000)),
         );
-        if (index >= 0) restored[index] = { ...restored[index], ...extra };
-        else if (extra.autoTurn) restored.push(extra);
+        if (index >= 0) {
+            restored[index] = { ...restored[index], ...extra };
+            matched++;
+        } else if (extra.autoTurn) {
+            restored.push(extra);
+            autoPushed++;
+        } else {
+            dropped.push({
+                id: extra.id,
+                at: extra.at,
+                textLen: text.length,
+                blocks: extra.blocks.map((block) =>
+                    block.kind === 'command'
+                        ? `cmd:${block.command.split(/\s+/, 1)[0]}`
+                        : block.kind,
+                ),
+                candidates: restored
+                    .filter((message) => message.role === extra.role)
+                    .slice(-6)
+                    .map((message) => ({
+                        id: message.id,
+                        at: message.at,
+                        textLen: responseText(message).length,
+                        sameText: responseText(message) === text,
+                        minFromSnapshot:
+                            message.at && extra.at
+                                ? Math.round(
+                                      (Date.parse(message.at) -
+                                          Date.parse(extra.at)) /
+                                          60_000,
+                                  )
+                                : null,
+                    })),
+            });
+        }
     }
+    if (debug && work.length)
+        console.debug('[work-restore]', debug, {
+            snapshots: extras.length,
+            work: work.length,
+            matched,
+            autoPushed,
+            dropped: dropped.length,
+            droppedDetail: dropped,
+        });
     return restored.sort(byInstant);
 }
 
@@ -944,9 +999,18 @@ async function restoreArchivedWork(
     messages: Message[],
 ): Promise<Message[]> {
     const records = await archivedMessages(session.id);
+    // TEMP work-restore debug (remove after the check)
+    console.debug('[work-restore] archive', session.id, {
+        records: records.length,
+        transcriptMessages: messages.length,
+        transcriptAssistant: messages.filter(
+            (message) => message.role === 'assistant',
+        ).length,
+    });
     const restored = mergeWorkMessages(
         messages,
         records.flatMap((record) => (record.snapshot ? [record.snapshot] : [])),
+        session.id,
     );
     for (const record of records) {
         if (record.context == null) continue;

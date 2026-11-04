@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 mod agent_runs;
+mod agents;
 mod answers;
 mod awake;
 mod bridge;
@@ -2639,6 +2640,7 @@ pub fn run() {
             changes::git_branches,
             changes::git_switch,
             connectors::connectors_detect,
+            agents::agents_status,
             connectors::connectors_latest_versions,
             connectors::connector_install,
             connectors::connector_update_idle,
@@ -2798,6 +2800,7 @@ pub fn run() {
             agent_runs::agent_stop,
             agent_runs::agent_stop_all,
             agent_runs::agent_inject,
+            agent_runs::agent_notify,
             agent_runs::agent_send_while_waiting,
             caller::worker_descendant_activity,
             delegate::delegate_reply,

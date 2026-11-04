@@ -691,9 +691,12 @@ const activeReady = getPref<string>('workspace.activeId').then(
     () => '',
 );
 // Set the open session only after its local messages are back, so the chat opens with them.
+/** False from start-up until the open chat is known again (after F5): the chat pane shows a spinner, not an empty chat. */
+export const boot = $state({ restored: false });
 export const restored = Promise.all([localReady, activeReady]).then(
     ([, id]) => {
         if (id && !workspace.activeId) workspace.activeId = id;
+        boot.restored = true;
     },
 );
 $effect.root(() => {

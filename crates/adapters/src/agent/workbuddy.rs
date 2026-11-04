@@ -94,6 +94,13 @@ fn parse_value(value: &Value) -> Vec<AgentEvent> {
         "assistant" | "message" => content_events(&value["message"]["content"])
             .or_else(|| content_events(&value["content"]))
             .unwrap_or_default(),
+        // A tool call starts (Claude-style stream): the text before it is done while its input streams.
+        "stream_event"
+            if value["event"]["type"] == "content_block_start"
+                && value["event"]["content_block"]["type"] == "tool_use" =>
+        {
+            vec![AgentEvent::TextEnd]
+        }
         "stream_event" => {
             let delta = &value["event"]["delta"];
             match delta["type"].as_str() {

@@ -407,12 +407,12 @@ export function mentionContext(mentions: Mention[]): string {
                 (item) => item.id === provider,
             );
             agents.push(
-                `- @${mention.label}: provider=${provider}; model=${model}${custom ? `; provider_name=${custom.name}` : ''}.`,
+                `- @${mention.label}: agent="${provider}", model="${model}"${custom ? ` (${custom.name})` : ''}.`,
             );
         }
     }
     const instructions = agents.length
-        ? `The user included these inline sub-agent requests in their prompt:\n${agents.join('\n')}\nUse AgentDeck MCP tools to fulfill them: call list_agents to confirm availability, then delegate_task with the requested provider and exact model (including when it matches your provider). Keep ownership of integration and the final response. Start independent requests together with wait=false; use wait=true when a later task depends on an earlier result. If a requested model/provider is unavailable or the task fails because of quota/server errors, try available fallback agents from list_agents. If no agent can take the work, handle it yourself and say so. Do not silently skip a mention.`
+        ? `The user included these inline sub-agent requests in their prompt:\n${agents.join('\n')}\nUse AgentDeck MCP tools to fulfill them: call delegate_task with exactly the agent and model given for each request, copied as written. Another agent that offers a model with the same name is a different provider and must not be used instead. If the call fails, read its error and retry with the id it lists; do not switch to another provider on your own. Keep ownership of integration and the final response. Start independent requests together with wait=false; use wait=true when a later task depends on an earlier result. If a requested model/provider is unavailable or the task fails because of quota/server errors, try available fallback agents from list_agents. If no agent can take the work, handle it yourself and say so. Do not silently skip a mention.`
         : '';
     const context = parts.length
         ? `The user included this chat/project context inline:\n\n${parts.join('\n\n')}\n\n---\n`

@@ -9,6 +9,8 @@ import type { AgentEvent } from './agent';
 
 export type ReplyUpdate = {
     blocks: Block[];
+    /** A provider notice to show on the live line, set by a `notice` event and cleared by any other event. */
+    notice?: string;
     /** The turn is over (done or error): stop waiting, clear the live reply. */
     finished: boolean;
     /** The CLI's conversation id, when the turn reports one. */
@@ -22,6 +24,8 @@ function close(
     endStatus: 'ok' | 'fail' = 'ok',
 ) {
     for (const block of blocks) {
+        if (block.kind === 'thinking' && block.streaming)
+            block.endedAt = Date.now();
         if (block.kind === 'thinking' || block.kind === 'response')
             block.streaming = false;
         if (endTurn && block.kind === 'command' && block.status === 'running')
@@ -225,10 +229,17 @@ export function applyAgentEvent(
                     kind: 'thinking',
                     text: event.text,
                     streaming: true,
+                    startedAt: Date.now(),
                 });
             }
             return { blocks, finished: false };
         }
+        case 'notice':
+            return { blocks, finished: false, notice: event.text };
+        case 'text_end':
+            // The text is done, the call it leads to is still being written: the live line goes back to "Thinking".
+            close(blocks, false);
+            return { blocks, finished: false };
         case 'tool_call': {
             close(blocks, false);
             const call: CommandBlock = {

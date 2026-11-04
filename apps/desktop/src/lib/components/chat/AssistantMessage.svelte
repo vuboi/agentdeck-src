@@ -35,6 +35,7 @@
     import ReplyHeader from './ReplyHeader.svelte';
     import { afterSteps, spokenRun } from './chat-helpers';
     import { isWriting, liveLine } from '../../chat/runs/live-line.svelte';
+    import { LOADER } from '../../app/platform/loaders';
     import type { Message } from '../../chat/mock';
 
     /** `index` is the message's place in chat.messages; `questionMessageId` the reply the open question card belongs to. */
@@ -74,11 +75,32 @@
     const typing = $derived(
         !showLive && replyRendering(workspace.activeId, message.id),
     );
-    // Text pauses do not end a response stream; the next provider event changes the live state.
+    // Any provider: text that stops growing while the turn runs is no longer being written. The agent is deciding or
+    // writing its next step (most CLIs report a tool only once its input is complete), so after a short pause the line
+    // says "Thinking" again instead of leaving the reply looking frozen. Providers that report the start of a tool call
+    // (`text_end`) end the text at once and need no wait.
+    const WRITING_PAUSE_MS = 800;
+    const writtenLength = $derived.by(() => {
+        const last = message.blocks.findLast(
+            (block) => block.kind !== 'loading',
+        );
+        return last?.kind === 'response' && last.streaming
+            ? last.text.length
+            : -1;
+    });
+    let paused = $state(false);
+    $effect(() => {
+        paused = false;
+        // Restarts with every chunk of text.
+        if (!showLive || writtenLength < 0) return;
+        const timer = setTimeout(() => (paused = true), WRITING_PAUSE_MS);
+        return () => clearTimeout(timer);
+    });
     const line = $derived.by(() => {
         if (!showLive) return null;
         const now = liveLine(message);
-        return isWriting(now) ? null : now;
+        if (!isWriting(now)) return now;
+        return paused ? { label: 'Thinking', spinner: LOADER.thinking } : null;
     });
     // The newest group carries the line when nothing but text being written comes after it, so the line stays above
     // that text; its running step and the line take turns in the group's header.
@@ -96,8 +118,18 @@
             ? last
             : -1;
     });
+    // Reasoning that streams on its own (before any step) already shows "Thinking" in its own title: the slot stays empty,
+    // so the same status is not drawn twice.
+    const tailThinking = $derived.by(() => {
+        const last = parts.at(-1);
+        return (
+            last?.kind === 'block' &&
+            last.block.kind === 'thinking' &&
+            Boolean(last.block.streaming)
+        );
+    });
     // Otherwise the line has its own row in the slot under the reply.
-    const slotLine = $derived(liveGroup === -1 ? line : null);
+    const slotLine = $derived(liveGroup === -1 && !tailThinking ? line : null);
 </script>
 
 {#if !quiet && !grouped}

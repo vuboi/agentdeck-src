@@ -611,8 +611,8 @@ impl Provider for Codex {
                 if is_retry_notice(message) {
                     // Codex is retrying the request itself ("Reconnecting... 2/5"): the turn is still running and
                     // usually finishes. Ending it here would leave the reply stuck while Codex goes on.
-                    events.push(AgentEvent::Thinking {
-                        text: format!("{message}\n"),
+                    events.push(AgentEvent::Notice {
+                        text: message.to_string(),
                     });
                 } else {
                     events.push(AgentEvent::Error {
@@ -812,7 +812,7 @@ mod tests {
                 .to_string(),
         );
         assert!(
-            matches!(&notice[..], [AgentEvent::Thinking { text }] if text.starts_with("Reconnecting... 2/5"))
+            matches!(&notice[..], [AgentEvent::Notice { text }] if text.starts_with("Reconnecting... 2/5"))
         );
         // A real failure that mentions reconnecting is still a failure.
         let failed = codex.parse_line(

@@ -21,7 +21,26 @@ pub struct Change {
     pub removed: u32,
 }
 
+/// The PATH a git command runs with in `dir`: the folder's own `node_modules/.bin` first, so a repository hook (Husky,
+/// lint-staged) finds the tools its project installed. None when the folder has no such bin folder.
+pub(crate) fn hook_path(dir: &Path) -> Option<std::ffi::OsString> {
+    // `dir` may be a folder inside the project: the nearest folder above it with a bin folder is the project's.
+    let bin = dir
+        .ancestors()
+        .map(|folder| folder.join("node_modules").join(".bin"))
+        .find(|bin| bin.is_dir())?;
+    let mut paths = vec![bin];
+    if let Some(current) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&current));
+    }
+    std::env::join_paths(paths).ok()
+}
+
 /// Runs git in `dir` without a console window; `(success, stdout, stderr)`.
+///
+/// A commit runs the repository's hooks. When AgentDeck was started by `pnpm dev`, the `npm_*` variables of that pnpm run
+/// are in this process, and the hook's npm reads them as its own config (`Unknown env config "global-bin-dir"`), so they
+/// are not passed on. The project's own `node_modules/.bin` goes first on PATH (see `hook_path`).
 pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<(bool, Vec<u8>, String), String> {
     let mut command = Command::new("git");
     command
@@ -33,6 +52,18 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<(bool, Vec<u8>, String), 
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for (key, _) in std::env::vars_os() {
+        if key
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .starts_with("npm_")
+        {
+            command.env_remove(&key);
+        }
+    }
+    if let Some(path) = hook_path(dir) {
+        command.env("PATH", path);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -411,5 +442,31 @@ mod tests {
         std::fs::write(&file, "a\nb\nc").expect("write");
         assert_eq!(count_lines(&file), 3);
         let _ = std::fs::remove_file(file);
+    }
+}
+
+#[cfg(test)]
+mod hook_path_tests {
+    use super::hook_path;
+    use std::path::PathBuf;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("agentdeck-hook-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_project_bin_folder_goes_first_even_from_a_subfolder() {
+        let root = scratch("bin");
+        let bin = root.join("node_modules").join(".bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let sub = root.join("apps").join("web");
+        std::fs::create_dir_all(&sub).unwrap();
+        let path = hook_path(&sub).expect("the project's bin folder is found");
+        let first = std::env::split_paths(&path).next().unwrap();
+        assert_eq!(first, bin);
     }
 }

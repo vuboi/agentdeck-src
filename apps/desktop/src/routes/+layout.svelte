@@ -4,6 +4,7 @@
     import '../lib/app/ui/theme.svelte';
 
     import { onMount } from 'svelte';
+    import { loadAgentStatus } from '../lib/agents/agent-status.svelte';
     import { invoke } from '@tauri-apps/api/core';
     import {
         fakeData,
@@ -19,6 +20,16 @@
 
     // In the desktop app, replace the mock workspace with the Claude Code / Codex history on this machine.
     onMount(() => {
+        void loadAgentStatus();
+        // The start-up splash (app.html) goes once the open chat is read again, or after a few seconds at most.
+        const splash = document.getElementById('boot-splash');
+        if (splash)
+            void Promise.race([
+                import('../lib/chat/session/state.svelte').then(
+                    ({ restored }) => restored,
+                ),
+                new Promise((resolve) => setTimeout(resolve, 5000)),
+            ]).finally(() => splash.remove());
         // The Preview's copy of this app starts nothing: no history import, no page listeners, no shortcuts. Two copies
         // doing that at once fought over the same chats and froze both.
         if (isTrayMenu || isPreviewCopy()) return;

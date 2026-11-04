@@ -371,7 +371,7 @@ async fn run_logged_with_idle_timeout(
 }
 
 /// Reads provider auth status without loading usage data, for noticing OAuth success while its CLI is still waiting.
-async fn login_status(provider: &str) -> Login {
+pub(crate) async fn login_status(provider: &str) -> Login {
     match provider {
         "claude" => match which("claude") {
             Some(claude) => {
@@ -413,7 +413,7 @@ pub struct Tool {
 #[derive(Clone, Serialize, Default)]
 pub struct Login {
     /// `None` when AgentDeck cannot tell (Antigravity has no status command).
-    logged_in: Option<bool>,
+    pub(crate) logged_in: Option<bool>,
     email: Option<String>,
     plan: Option<String>,
     detail: Option<String>,

@@ -16,7 +16,7 @@ use super::{
 pub struct Claude;
 
 /// Working rules added to every agent's system prompt: keep the change to what was asked.
-pub const WORK_CONTEXT: &str = r#" Work rules: do only what the user asked, and every changed line must trace to the request. Do not refactor, rename or "improve" nearby code; mention unrelated problems in your reply instead of changing them. For a clear request, pick the most likely reading, state it in one line and proceed; ask only when the answer changes the result (wrong target, destructive action, missing access). Choose the simplest change that works: no speculative options, flags or single-use abstractions. Before editing, name the check that proves the change (test, command or screenshot), run it and report the real result. Remove only the imports, variables or functions your own change made unused."#;
+pub const WORK_CONTEXT: &str = r#" Work rules: do only what the user asked, and every changed line must trace to the request. Do not refactor, rename or "improve" nearby code; mention unrelated problems in your reply instead of changing them. For a clear request, pick the most likely reading, state it in one line and proceed; ask only when the answer changes the result (wrong target, destructive action, missing access). Choose the simplest change that works: no speculative options, flags or single-use abstractions. Before editing, name the check that proves the change (test, command or screenshot), run it and report the real result. Remove only the imports, variables or functions your own change made unused. A casual message (a greeting, thanks, a short chat) needs no tool calls, skill checks or commands: answer it directly. When the user sets a rule for this conversation, keep following it, including for small messages; do not drop it on your own, and ask the user first if you think it should not apply."#;
 
 /// Added to the CLI's system prompt on every turn.
 /// How an agent asks the user multiple-choice questions in AgentDeck (rendered as a question card).
@@ -278,6 +278,13 @@ impl Claude {
                         vec![AgentEvent::Thinking {
                             text: delta["thinking"].as_str().unwrap_or_default().to_string(),
                         }]
+                    }
+                    // A tool call starts: its input streams now, and the full call only comes with the
+                    // `assistant` message. The text before it is done.
+                    (Some("content_block_start"), _)
+                        if value["event"]["content_block"]["type"] == "tool_use" =>
+                    {
+                        vec![AgentEvent::TextEnd]
                     }
                     // A model call starts: its input (and cache use) is known now.
                     (Some("message_start"), _) => {
@@ -544,6 +551,14 @@ mod tests {
             Claude.parse_line(line),
             vec![AgentEvent::Delta { text: "po".into() }]
         );
+    }
+
+    #[test]
+    fn a_tool_use_block_start_ends_the_text() {
+        let tool = r#"{"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"Bash","input":{}}}}"#;
+        assert_eq!(Claude.parse_line(tool), vec![AgentEvent::TextEnd]);
+        let text = r#"{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}"#;
+        assert!(Claude.parse_line(text).is_empty());
     }
 
     #[test]

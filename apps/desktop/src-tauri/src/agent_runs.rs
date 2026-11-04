@@ -554,6 +554,19 @@ pub(crate) fn agent_inject(session: String, text: String) -> bool {
     can_inject && ag_adapters::agent::warm::inject(&session, &text)
 }
 
+/// Hands a provider notice to the one turn running in a chat (another run changed a file it works on). A notice is not
+/// a message of the user and has no reply of its own, so a merged steer is allowed here, unlike `agent_inject`. False:
+/// nothing was sent, and the caller keeps the notice for the chat's next turn.
+#[tauri::command]
+pub(crate) fn agent_notify(session: String, text: String) -> bool {
+    let single_run = {
+        let running = running();
+        let mut session_runs = running.iter().filter(|((chat, _), _)| chat == &session);
+        matches!((session_runs.next(), session_runs.next()), (Some(_), None))
+    };
+    single_run && ag_adapters::agent::warm::inject(&session, &text)
+}
+
 /// Sends a message to a chat that only waits for background work of its own: its kept process reads it between two
 /// answers (see `tail::deliver`). True only when the CLI took it; the caller then shows the message as a reply of its own.
 /// False: nothing was sent, and the caller queues the message as it does for any other turn. A chat with a running turn

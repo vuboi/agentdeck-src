@@ -4,6 +4,7 @@ import { inTauri } from '../app/platform/history';
 import { claudeCreditOn, connectors } from './connectors.svelte';
 import { CREDIT_PREFIX, creditModel } from './credit-model';
 import { agentProfile } from './provider-registry';
+import { isConfigured } from './agent-status.svelte';
 import { providerLogo } from './brand-icons';
 
 // Model catalogue for the picker, per provider. It starts from a small built-in list and is replaced at start-up
@@ -196,6 +197,12 @@ $effect.root(() => {
     });
 });
 
+/** The custom provider the Command Code API key is saved as (`connectors.svelte.ts`): its models sit in the Command Code row. */
+export const COMMANDCODE_API = 'connector-commandcode';
+/** The agent a row's model runs on: an API-key model of a custom provider runs as `custom`, any other as its row's agent. */
+export const runsAs = (source: ModelSource, value: string): ProviderId =>
+    parseCustomModel(value) ? 'custom' : source.provider;
+
 // The provider icons come from the registry, the same as every other surface.
 const iconOf = (id: string) =>
     (agentProfile(id)?.icon ?? 'lucideServer') as ZIconName;
@@ -247,16 +254,28 @@ const builtIn: ModelSource[] = [
         provider: 'command-code',
         label: 'Command Code',
         icon: iconOf('command-code'),
-        models: () => catalog['command-code'],
+        // The CLI's models (subscription) and the API key's models, in one row as Claude's account and credit models.
+        models: () => [
+            ...catalog['command-code'],
+            ...catalog.custom.filter(
+                (item) =>
+                    parseCustomModel(item.value)?.providerId ===
+                    COMMANDCODE_API,
+            ),
+        ],
     },
 ];
 
 /** The rows of the model picker: the three CLIs, then one per enabled custom provider. Reactive. */
 export function modelSources(): ModelSource[] {
     return [
-        ...builtIn,
+        ...builtIn.filter((row) => isConfigured(row.provider)),
         ...chattable()
-            .filter((provider) => provider.id !== 'workbuddy')
+            .filter(
+                (provider) =>
+                    provider.id !== 'workbuddy' &&
+                    provider.id !== COMMANDCODE_API,
+            )
             .map((provider) => ({
                 // Keep custom provider rows in their own namespace: a saved provider may use a
                 // built-in id such as `workbuddy`, which must not collide with the CLI row key.
