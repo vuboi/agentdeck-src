@@ -314,6 +314,8 @@ fn describe(event: &AgentEvent) -> (&'static str, String) {
     match event {
         AgentEvent::Delta { .. } => ("delta", String::new()),
         AgentEvent::Thinking { .. } => ("thinking", String::new()),
+        AgentEvent::Notice { text } => ("notice", clip(text, 300)),
+        AgentEvent::TextEnd => ("text_end", String::new()),
         AgentEvent::ToolCall {
             id,
             name,

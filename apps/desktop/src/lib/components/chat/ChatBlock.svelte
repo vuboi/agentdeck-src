@@ -3,7 +3,6 @@
         ZIcon,
         ZLoading,
         ZPopover,
-        ZShimmerText,
         ZShowMore,
     } from '@shival99/z-ui-svelte';
     import ElementCard from '../browser/ElementCard.svelte';
@@ -14,6 +13,7 @@
     import Markdown from '../ui/Markdown.svelte';
     import PermissionCard from './PermissionCard.svelte';
     import ActivityIndicator from '../ui/ActivityIndicator.svelte';
+    import ThinkingView from './ThinkingView.svelte';
     import QuestionCard from './QuestionCard.svelte';
     import {
         parseQuestions,
@@ -121,54 +121,16 @@
 </script>
 
 {#if block.kind === 'thinking' && block.text.trim()}
-    <!-- One quiet line like the tool steps ("Used 2 tools ⌄"), no box: "Thinking" shimmers while it streams, "Thought"
-       once done. Opened, the reasoning sits under it beside a thin rule, in the muted colour, as in Claude and ChatGPT. -->
-    {@const thinkingNow = block.streaming && running}
-    <div class="block-in flex flex-col text-sm">
-        <button
-            type="button"
-            class="flex w-fit max-w-full cursor-pointer items-center gap-2 rounded-md py-0.5 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
-            aria-expanded={thinkingOpen}
-            onclick={() => (thinkingOpen = !thinkingOpen)}
-        >
-            <ZIcon zType="lucideLightbulb" class="size-3 shrink-0" />
-            {#if thinkingNow}<ZShimmerText
-                    class="font-medium"
-                    zText="Thinking"
-                />{:else}<span class="font-medium">Thought</span>{/if}
-            <ZIcon
-                zType="lucideChevronDown"
-                class="size-3 shrink-0 transition-transform duration-300 {thinkingOpen
-                    ? 'rotate-180'
-                    : ''}"
-            />
-        </button>
-        <div
-            class="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none {thinkingOpen
-                ? 'grid-rows-[1fr]'
-                : 'grid-rows-[0fr]'}"
-        >
-            <div class="min-h-0 overflow-hidden">
-                <div
-                    class="mt-1.5 ml-[5px] border-l-2 border-border py-0.5 pl-3 text-[0.8125rem] leading-relaxed text-muted-foreground"
-                >
-                    <!-- Short reasoning is shown as is: the show-more box keeps room for its button even when it has none. -->
-                    {#if thinkingText.length > 600}
-                        <ZShowMore
-                            zMaxHeight={160}
-                            zButtonSize="sm"
-                            zBlurColor="var(--background)"
-                            moreLabel="Show more"
-                            lessLabel="Show less"
-                        >
-                            <Markdown text={thinkingText} />
-                        </ZShowMore>
-                    {:else}
-                        <Markdown text={thinkingText} />
-                    {/if}
-                </div>
-            </div>
-        </div>
+    <!-- Reasoning: one quiet line, shared with the step groups (ThinkingView). -->
+    <div class="block-in">
+        <ThinkingView
+            text={thinkingText}
+            streaming={block.streaming && running}
+            startedAt={block.startedAt}
+            endedAt={block.endedAt}
+            open={thinkingOpen}
+            ontoggle={() => (thinkingOpen = !thinkingOpen)}
+        />
     </div>
 {:else if block.kind === 'response' && fade === undefined}
     <!-- An agent's answer: rendered as markdown, full length. -->

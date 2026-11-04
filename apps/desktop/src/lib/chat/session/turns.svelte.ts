@@ -80,6 +80,12 @@ export const NO_DELEGATE_HINT =
     'Auto-orchestration is off in AgentDeck: do the work yourself. Call delegate_task only when the user asks you to hand work to another agent.';
 /** These CLIs already own and invoke their native sub-agent orchestration; AgentDeck only adds its handoff hint to other providers. */
 export const NATIVE_DELEGATION = new SvelteSet<Agent>(['claude', 'codex']);
+/** Agents whose CLI is not given AgentDeck's MCP bridge (crates/adapters: claude, codex, opencode write it): delegate_task and
+ *  list_agents do not exist for them, so the delegation notes and task routing are not sent to them at all. */
+export const NO_DELEGATE_TOOLS = new SvelteSet<Agent>([
+    'command-code',
+    'workbuddy',
+]);
 export const NATIVE_DELEGATION_HINT =
     'Use your native CLI sub-agent tools for internal parallel work when useful. AgentDeck delegate_task is for handing work across providers; do not replace native sub-agents with it. Do not wait for the user to ask: for a nontrivial request, use delegate_task (wait:false) on your own when another provider clearly adds value, such as a clean-context review or security check of your diff, research, or a role routed below, and keep integration and the final answer here.';
 export const delegateHinted = new SvelteSet<string>();

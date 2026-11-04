@@ -45,6 +45,7 @@ import { routesOf, taskRoleHint } from '../../agents/task-roles';
 import { taskRoles } from '../../agents/task-roles.svelte';
 import { agentDisplayName } from '../../agents/provider-registry';
 import { customProviderOf } from '../../agents/provider-registry';
+import { mcp } from '../../agents/mcp.svelte';
 import { automation } from '../../app/platform/automation.svelte';
 import { logError } from '../../app/platform/error-log.svelte';
 import {
@@ -65,6 +66,8 @@ import {
 import { logRequest } from '../runs/activity.svelte';
 import { setPref } from '../../app/platform/prefs';
 import { type RunLane, deliveryFor } from '../runs/run-lanes';
+import { userAskedMeanwhileNotice } from '../runs/notices';
+import { notifyRun, takeNoticeBlock } from '../runs/notices.svelte';
 import { parseQuestions, type Question } from '../recovery/questions';
 import { dequeue, enqueueNext } from '../runs/queue';
 import {
@@ -95,6 +98,7 @@ import {
     NATIVE_DELEGATION,
     NATIVE_DELEGATION_HINT,
     NO_DELEGATE_HINT,
+    NO_DELEGATE_TOOLS,
     OPEN_WORDS,
     PERMISSION_MODE,
     agentLabel,
@@ -689,6 +693,13 @@ export function startTurn(
         previous.live = false;
         if (previous.startedAt) previous.ms = Date.now() - previous.startedAt;
     }
+    // Plan 6.3, trigger 1: a message sent to the side run while the chat's main run works is told to that run first.
+    if (listener && text.trim() && text !== COMPACT_COMMAND)
+        void notifyRun(
+            session.id,
+            userAskedMeanwhileNotice(text),
+            'user-meanwhile',
+        );
     const turn = nextId();
     if (!listener) turns[session.id] = turn;
     logFlow(
@@ -1004,25 +1015,33 @@ export function startTurn(
         // Auto-orchestrate (model popover): when it is off, the agent is told once not to hand work out by itself; when it
         // is switched on again, the delegation note is given again.
         const told = orchestrateTold.get(hintKey);
-        const orchestrate = automation.orchestrate;
+        // No AgentDeck bridge in this chat's CLI: antigravity until its link is set, and the agents in NO_DELEGATE_TOOLS.
+        // (Custom providers returned above and never reach this point.)
+        const noBridge =
+            session.agent === 'antigravity' && !mcp.overview?.agy_link;
+        const delegatable = !NO_DELEGATE_TOOLS.has(session.agent) && !noBridge;
+        const orchestrate = automation.orchestrate && delegatable;
         const nativeDelegation = NATIVE_DELEGATION.has(session.agent);
         // Claude and Codex get their own note (native sub-agents first, AgentDeck for other providers) when the
         // conversation starts, so they also hand work across providers without being asked.
-        const delegateHint = isWorkerChat(session.id)
-            ? ''
-            : orchestrate
-              ? nativeDelegation
-                  ? !resume ||
-                    !nativeDelegationHinted.has(hintKey) ||
-                    told === false
-                      ? NATIVE_DELEGATION_HINT
-                      : ''
-                  : !resume || !delegateHinted.has(hintKey) || told === false
-                    ? DELEGATE_HINT
-                    : ''
-              : told !== false
-                ? NO_DELEGATE_HINT
-                : '';
+        const delegateHint =
+            isWorkerChat(session.id) || !delegatable
+                ? ''
+                : orchestrate
+                  ? nativeDelegation
+                      ? !resume ||
+                        !nativeDelegationHinted.has(hintKey) ||
+                        told === false
+                          ? NATIVE_DELEGATION_HINT
+                          : ''
+                      : !resume ||
+                          !delegateHinted.has(hintKey) ||
+                          told === false
+                        ? DELEGATE_HINT
+                        : ''
+                  : told !== false
+                    ? NO_DELEGATE_HINT
+                    : '';
         // Task routing (Settings > Task roles) hands work to other agents, so it follows auto-orchestrate: off, nothing is routed.
         const routing =
             !isWorkerChat(session.id) && orchestrate
@@ -1107,11 +1126,14 @@ export function startTurn(
             (files.length
                 ? `${dispatchPaths.length ? '\n\n' : ''}Attached file${files.length > 1 ? 's' : ''} (open with the Read tool or a shell command):\n${files.map((file) => `- ${file.path}${file.note ? ` (${file.note})` : ''}`).join('\n')}`
                 : '');
+        // Notices from other runs (a file they changed, a worker's changes) come first, once, as the chat's next prompt (plan 6.2).
+        const notices = listener ? '' : takeNoticeBlock(session.id);
         // `/compact` (auto-compress) goes as it is: anything before it would make it a plain message.
         const prompt =
             text === COMPACT_COMMAND
                 ? text
-                : hint +
+                : notices +
+                  hint +
                   context +
                   (attached
                       ? `${

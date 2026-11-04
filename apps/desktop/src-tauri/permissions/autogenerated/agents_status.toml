@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agents-status"
+description = "Enables the agents_status command without any pre-configured scope."
+commands.allow = ["agents_status"]
+
+[[permission]]
+identifier = "deny-agents-status"
+description = "Denies the agents_status command without any pre-configured scope."
+commands.deny = ["agents_status"]

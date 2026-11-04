@@ -31,7 +31,31 @@ import { type AgentEvent, listenAgentEvents } from '../agent';
 import { logError } from '../../app/platform/error-log.svelte';
 import { chatMetaOf, ledger } from '../index/ledger';
 import { hangTraceOn, logFlow, markStep } from '../../tasks/flow-log';
-import { activity, trackActivity } from '../runs/activity.svelte';
+import {
+    pathKey,
+    pathsWrittenBy,
+    readPathOf,
+    type RunRef,
+} from '../runs/change-ledger';
+import {
+    ledgerReads,
+    ledgerWrites,
+    noteLedgerRead,
+    noteLedgerWrite,
+    onUserFileSave,
+} from '../runs/change-ledger.svelte';
+import {
+    userEditNotice,
+    workerChangesNotice,
+    writeNotice,
+} from '../runs/notices';
+import { notifyRun, queueNotice } from '../runs/notices.svelte';
+import { projectOf } from './state.svelte';
+import {
+    activity,
+    promoteShellCall,
+    trackActivity,
+} from '../runs/activity.svelte';
 import { recordProjectActivity } from '../runs/project-activity.svelte';
 import { guide } from '../../app/ui/guide.svelte';
 import { releaseBrowserChat } from '../../browser/browser.svelte';
@@ -115,7 +139,12 @@ import { finishWorkflowIntegration } from './delegation.svelte';
 import { importHistory, keepOtherTurn, rememberMixed } from './history.svelte';
 import type { CredentialAttempt } from '../../agents/credential-switch';
 import { credentialScope } from '../../agents/credential-scope';
-import { isBackgroundWait, isLongRunningWork } from '../runs/run-lanes';
+import {
+    isBackgroundWait,
+    isLongRunningWork,
+    isShellCall,
+    SHELL_WAIT_MS,
+} from '../runs/run-lanes';
 
 const credentialAttempts = new SvelteMap<
     string,
@@ -132,6 +161,196 @@ export const manuallyStopped = $state<Record<string, boolean>>({});
 
 /** When the user last pressed Stop in a chat: a report the CLI sends right after that is a leftover of the stop, not news. */
 export const userStoppedAt: Record<string, number> = {};
+/** Shell calls still running after SHELL_WAIT_MS, keyed by turn and call: their timers release the chat (see applyEvent). */
+const shellWaits = new SvelteMap<string, ReturnType<typeof setTimeout>>();
+function armShellWait(
+    turn: string | undefined,
+    callId: string,
+    onLong: () => void,
+) {
+    const key = `${turn ?? '-'}:${callId}`;
+    clearShellWait(turn, callId);
+    shellWaits.set(
+        key,
+        setTimeout(() => {
+            shellWaits.delete(key);
+            onLong();
+        }, SHELL_WAIT_MS),
+    );
+}
+function clearShellWait(turn: string | undefined, callId: string) {
+    const key = `${turn ?? '-'}:${callId}`;
+    const timer = shellWaits.get(key);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    shellWaits.delete(key);
+}
+
+/** The request a run works on: the text of the newest user message sent at or before the run started. */
+function requestOf(sessionId: string, startedAt: number): string {
+    const list = messagesOf(sessionId);
+    for (let index = list.length - 1; index >= 0; index--) {
+        const message = list[index];
+        if (message.role !== 'user') continue;
+        const at = message.at ? Date.parse(message.at) : 0;
+        if (at > startedAt) continue;
+        return message.blocks
+            .map((block) => (block.kind === 'response' ? block.text : ''))
+            .join(' ')
+            .trim();
+    }
+    return '';
+}
+
+function rootOfChat(sessionId: string): string | undefined {
+    const session = workspace.sessions.find((item) => item.id === sessionId);
+    return session ? projectOf(session)?.path : undefined;
+}
+
+/** Who a notice names as the writer: the side run, or the sub-agent of a run. */
+const labelOf = (run: RunRef) =>
+    run.subId !== undefined ? `sub-agent ${run.subId}` : run.lane;
+
+/** Tells every run that is still working and has read or written `path` (in the same project) about the change
+ *  (plan 6.3, trigger 2). */
+function tellRunsOnFile(
+    root: string,
+    path: string,
+    writer: RunRef,
+    after: string,
+) {
+    const key = pathKey(path);
+    const intent = requestOf(writer.sessionId, writer.intentAt);
+    for (const [sessionId, lanes] of Object.entries(sessionLanes)) {
+        for (const lane of lanes) {
+            if (lane.state !== 'running' && lane.state !== 'waiting') continue;
+            if (sessionId === writer.sessionId && lane.id === writer.turn)
+                continue;
+            const touched =
+                ledgerReads.some(
+                    (read) =>
+                        read.root === root &&
+                        read.run.sessionId === sessionId &&
+                        read.run.turn === lane.id &&
+                        pathKey(read.path) === key,
+                ) ||
+                ledgerWrites.some(
+                    (write) =>
+                        write.root === root &&
+                        write.run.sessionId === sessionId &&
+                        write.run.turn === lane.id &&
+                        pathKey(write.path) === key,
+                );
+            if (!touched) continue;
+            void notifyRun(
+                sessionId,
+                writer.lane === 'user'
+                    ? userEditNotice({ path, after })
+                    : writeNotice({
+                          path,
+                          byLabel: labelOf(writer),
+                          intent,
+                          after,
+                      }),
+                'file-changed',
+            );
+        }
+    }
+}
+
+// The user saved a file in the editor: a write of its own in the ledger, newest of all intents, and the runs are told.
+onUserFileSave((root, path, before, after) => {
+    const run: RunRef = {
+        sessionId: 'user',
+        turn: `save-${Date.now()}`,
+        lane: 'user',
+        intentAt: Date.now(),
+    };
+    noteLedgerWrite({ root, path, run, callId: run.turn, before, after });
+    tellRunsOnFile(root, path, run, after);
+});
+
+/** Puts what one run did to files into the ledger (plan 6.1): its writes, its reads, and a sub-agent's writes under
+ *  the run's own turn. A write over a newer request is a conflict (6.5): the writer is told, and the conflict is kept. */
+function noteRunFiles(
+    sessionId: string,
+    turn: string | undefined,
+    owner: { reply: Message; listener: boolean },
+    event: AgentEvent,
+) {
+    if (!turn) return;
+    const root = rootOfChat(sessionId);
+    if (!root) return;
+    const subId = event.kind === 'scoped' ? event.parent : undefined;
+    const inner = event.kind === 'scoped' ? event.event : event;
+    const run: RunRef = {
+        sessionId,
+        turn,
+        lane:
+            subId !== undefined
+                ? 'subagent'
+                : owner.listener
+                  ? 'listener'
+                  : 'primary',
+        intentAt: owner.reply.startedAt ?? Date.now(),
+        ...(subId !== undefined ? { subId } : {}),
+    };
+    if (
+        (inner.kind === 'tool_call' || inner.kind === 'tool_result') &&
+        inner.change
+    ) {
+        const change = inner.change;
+        const conflict = noteLedgerWrite({
+            root,
+            path: change.path,
+            run,
+            callId: inner.id,
+            before: change.before,
+            after: change.after,
+        });
+        // undefined: the same write was already in the ledger; nothing new to tell.
+        if (conflict === undefined) return;
+        logFlow(
+            sessionId,
+            'ledger write',
+            `path=${change.path} run=${turn} lane=${run.lane}${subId !== undefined ? ` sub=${subId}` : ''} intent=${run.intentAt}`,
+        );
+        tellRunsOnFile(root, change.path, run, change.after);
+        if (conflict) {
+            logFlow(
+                sessionId,
+                'conflict',
+                `path=${change.path} writer=${turn} over=${conflict.over.run.turn} kind=${conflict.kind}`,
+            );
+            void notifyRun(
+                sessionId,
+                `[AgentDeck] Your write to ${change.path} replaced a change the user asked for later. Do not undo it. If it must change, ask the user first.`,
+                'conflict',
+            );
+        }
+    } else if (inner.kind === 'tool_call') {
+        const path = readPathOf(inner.name, inner.input);
+        if (path) noteLedgerRead({ root, path, run, at: Date.now() });
+    }
+}
+
+/** A worker chat that finished: its parent gets the files it changed, from the ledger (plan 6.3, trigger 3). */
+function queueWorkerChanges(sessionId: string, turn: string) {
+    const session = workspace.sessions.find((item) => item.id === sessionId);
+    if (!session?.parentId) return;
+    const paths = pathsWrittenBy(ledgerWrites, { sessionId, turn });
+    if (paths.length === 0) return;
+    queueNotice(
+        session.parentId,
+        workerChangesNotice(session.title || sessionId, paths),
+    );
+    logFlow(
+        session.parentId,
+        'notify',
+        `via=queued reason=worker-done worker=${sessionId} files=${paths.length}`,
+    );
+}
+
 const STOP_REPORT_GRACE_MS = 30_000;
 
 /** Stops the active turn and exposes the composer's one-click continuation action. */
@@ -1406,9 +1625,40 @@ function handleEventNow(
         return;
     }
     if (ownedRun) {
+        // A shell command that outlives SHELL_WAIT_MS releases the chat (see the timer below); one that finishes cancels it.
+        if (event.kind === 'tool_result') clearShellWait(turn, event.id);
+        noteRunFiles(sessionId, turn, ownedRun, event);
         const longRunningTool =
+            event.kind === 'tool_call' && isLongRunningWork(event.name);
+        if (
             event.kind === 'tool_call' &&
-            isLongRunningWork(event.name, event.input);
+            !event.background &&
+            isShellCall(event.name)
+        ) {
+            const owner = ownedRun;
+            const callId = event.id;
+            armShellWait(turn, callId, () => {
+                if (
+                    sessionLanes[sessionId]?.find((lane) => lane.id === turn)
+                        ?.state !== 'running'
+                )
+                    return;
+                owner.backgroundTools.add(callId);
+                promoteShellCall(sessionId, callId);
+                updateLane(sessionId, {
+                    id: turn!,
+                    role: owner.listener ? 'listener' : 'primary',
+                    state: 'waiting',
+                    backgroundWork: true,
+                });
+                sendNextQueued(sessionId);
+                logFlow(
+                    sessionId,
+                    'deliver',
+                    `turn=${turn} reason=shell>${SHELL_WAIT_MS / 1000}s call=${callId}`,
+                );
+            });
+        }
         if (
             event.kind === 'tool_call' &&
             (event.background || longRunningTool)
@@ -1589,6 +1839,8 @@ function handleEventNow(
         reply.compacting = false;
     const update = applyAgentEvent(reply.blocks, event);
     reply.blocks = update.blocks;
+    reply.notice = update.notice;
+    if (update.finished && turn) queueWorkerChanges(sessionId, turn);
     if (ownedRun?.listener) {
         if (!update.finished) return;
         reply.live = false;
@@ -1684,19 +1936,23 @@ function handleEventNow(
     } else {
         const existing = session.agentIds?.[agent];
         const id = update.agentSession ?? existing?.id;
-        if (id)
-            (session.agentIds ??= {})[agent] = {
+        if (id) {
+            session.agentIds ??= {};
+            session.agentIds[agent] = {
                 ...existing,
                 id,
                 started: confirmsConversation || existing?.started === true,
             };
+        }
     }
     // Persist the provider id as soon as the CLI confirms it. A new model/account/edit can replace the current id,
     // but every old and new transcript still belongs to this AgentDeck chat and must alias back to the same owner.
     if (update.agentSession) rememberMixed(session);
     // A finished turn: this conversation has now seen every turn of the chat, its own reply included (see binding.ts).
-    if (update.finished && event.kind !== 'error' && !ownedRun?.listener)
-        (session.syncedSeq ??= {})[agent] = messagesOf(sessionId).length;
+    if (update.finished && event.kind !== 'error' && !ownedRun?.listener) {
+        session.syncedSeq ??= {};
+        session.syncedSeq[agent] = messagesOf(sessionId).length;
+    }
     // A failed turn that can be carried on (retry, another account, the next agent) does not end the work: the chat
     // gets a line saying what happens, and the steps below that close the work (failure, reports) are skipped.
     const failureKind =

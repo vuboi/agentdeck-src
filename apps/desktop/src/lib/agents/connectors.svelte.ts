@@ -10,6 +10,7 @@ import {
 } from './credential-switch';
 import { customScope } from './credential-scope';
 import { inTauri } from '../app/platform/history';
+import { loadAgentStatus } from './agent-status.svelte';
 import { getPref, setPref } from '../app/platform/prefs';
 import { loadSecret, saveSecret } from '../app/platform/secrets';
 import { toast } from '../app/platform/toast';
@@ -700,6 +701,7 @@ let detectedAll = false;
 
 export async function refreshDetect(only?: ConnectorId) {
     if (!inTauri()) return;
+    void loadAgentStatus();
     void listenToLogs();
     const key = only ? `detect:${only}` : 'detect';
     const ok = await task(key, 'Checking', async () => {

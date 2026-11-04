@@ -1,13 +1,12 @@
 <script lang="ts">
     import { onMount, tick, untrack } from 'svelte';
     import { fade, scale } from 'svelte/transition';
-    import { ZButton, ZIcon, ZModal, ZTabs } from '@shival99/z-ui-svelte';
+    import { ZButton, ZIcon, ZTabs } from '@shival99/z-ui-svelte';
     import type { ZIconName, ZTab } from '@shival99/z-ui-svelte';
     import { ticker } from '../../app/platform/clock.svelte';
     import { inTauri, isPreviewCopy } from '../../app/platform/history';
     import { getPref } from '../../app/platform/prefs';
     import {
-        consumeCodexResetCredit,
         pendingUpdates,
         refreshConnector,
         scanLocal,
@@ -93,8 +92,6 @@
     // Kept here so they survive a visit to another section.
     let memoryProjectId = $state('');
     let connectorTab = $state('');
-    /** Account whose "reset limit" confirmation modal is open. */
-    let resetAsk = $state('');
     const providerForm = new ProviderForm();
 
     let computerUseEnabled = $state(true);
@@ -310,10 +307,7 @@
                                 not the browser preview.
                             </p>
                         {:else if settings.section === 'connectors'}
-                            <ConnectorsSection
-                                bind:connectorTab
-                                bind:resetAsk
-                            />
+                            <ConnectorsSection bind:connectorTab />
                         {:else if settings.section === 'providers'}
                             <ProvidersSection form={providerForm} />
                         {:else if settings.section === 'debug'}
@@ -344,26 +338,5 @@
         </div>
     </div>
 {/if}
-
-<ZModal
-    open={resetAsk !== ''}
-    zTitle="Reset Codex limits"
-    zWidth="460px"
-    zBodyClass="min-h-0! py-3"
-    zOkText="Use one reset"
-    zCancelText="Cancel"
-    onOk={() => {
-        const email = resetAsk;
-        resetAsk = '';
-        void consumeCodexResetCredit(email);
-    }}
-    onCancel={() => (resetAsk = '')}
->
-    <p class="text-[0.75rem] text-muted-foreground">
-        This will redeem one available reset credit for <b
-            class="text-foreground">{resetAsk}</b
-        > and refresh its Codex limits. The credit is consumed immediately.
-    </p>
-</ZModal>
 
 <ProviderModals form={providerForm} />

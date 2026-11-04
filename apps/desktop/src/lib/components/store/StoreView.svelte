@@ -52,6 +52,7 @@
         providerSources,
         SKILL_PROVIDER_IDS,
     } from '../../agents/models.svelte';
+    import { isInstalled } from '../../agents/agent-status.svelte';
     import SkillProviders from '../settings/SkillProviders.svelte';
     import StoreCategoryFilter from './StoreCategoryFilter.svelte';
     import { matchesStoreCategory } from '../../store/store-categories.svelte';
@@ -207,7 +208,7 @@
             (acknowledged) =>
                 sharePlugin(
                     plugin,
-                    providerSources(SKILL_PROVIDER_IDS).map(
+                    providerSources(SKILL_PROVIDER_IDS.filter(isInstalled)).map(
                         (source) => source.provider,
                     ),
                     acknowledged,

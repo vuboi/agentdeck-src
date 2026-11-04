@@ -32,6 +32,13 @@ pub enum AgentEvent {
     Delta { text: String },
     /// Reasoning text, as it streams.
     Thinking { text: String },
+    /// A provider status that is not reasoning or answer text, such as a retry of its own request ("Reconnecting... 2/5").
+    /// Shown on the live line of the reply.
+    Notice { text: String },
+    /// The text streamed so far is complete: the model has started a tool call and is writing its input. Providers emit it
+    /// where their stream says so (Claude's `content_block_start` of a `tool_use`), so the chat shows "Thinking" during the
+    /// gap instead of leaving the finished text marked as still being written.
+    TextEnd,
     /// A tool the agent started. `id` links it to its [`AgentEvent::ToolResult`]; `input` is a one-line
     /// summary of what it was asked to do (the command, the file, the pattern).
     ToolCall {

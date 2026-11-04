@@ -107,6 +107,12 @@ function mergedThinking(parts: ThinkingBlock[]): ThinkingBlock {
         get streaming() {
             return list.some((thought) => thought.streaming);
         },
+        get startedAt() {
+            return list[0].startedAt;
+        },
+        get endedAt() {
+            return list.at(-1)?.endedAt;
+        },
     };
     mergedThinks.set(list[0], { parts: list, block });
     return block;
@@ -628,7 +634,7 @@ export function liveState(blocks: Block[]): {
     if (running) return activityOf(running);
     const last = blocks.filter((block) => block.kind !== 'loading').at(-1);
     if (last?.kind === 'thinking' && last.streaming)
-        return { label: 'Reasoning', spinner: LOADER.reasoning };
+        return { label: 'Thinking', spinner: LOADER.reasoning };
     if (last?.kind === 'response' && last.streaming)
         return { label: 'Writing reply', spinner: LOADER.writing };
     // Between steps, or before the first token: the model is deciding what to do next.
@@ -684,6 +690,32 @@ export function elapsed(ms: number): string {
     const seconds = Math.max(0, Math.round(ms / 1000));
     if (seconds < 60) return `${seconds}s`;
     return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
+/** The title of a reasoning block: "Thinking" while it streams, then "Thought for 8s" (or "Thought" without times). */
+export function thinkingTitle(
+    streaming: boolean,
+    span: { startedAt?: number; endedAt?: number } = {},
+): string {
+    if (streaming) return 'Thinking';
+    if (span.startedAt === undefined || span.endedAt === undefined)
+        return 'Thought';
+    return `Thought for ${elapsed(span.endedAt - span.startedAt)}`;
+}
+
+/** One line for a reasoning text: its newest `**Title**` line when there is one (Codex sends its steps that way), else
+ *  its last line. Markdown marks are dropped here; the body keeps its bold. */
+export function thinkingPreview(text: string): string {
+    const lines = text
+        .split('\n')
+        .map((part) => part.trim())
+        .filter(Boolean);
+    const title = lines.findLast((line) => /^\*\*[^*]+\*\*$/.test(line));
+    const line = (title ?? lines.at(-1) ?? '')
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/[`*_#>]/g, '')
+        .trim();
+    return line.length > 90 ? `${line.slice(0, 89)}…` : line || 'Thinking';
 }
 
 /** The text of the answer, for the copy button. */

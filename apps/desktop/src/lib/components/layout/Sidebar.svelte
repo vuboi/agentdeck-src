@@ -1278,10 +1278,10 @@
         class="relative min-h-0 flex-1"
         oncontextmenu={onTreeContextMenu}
     >
-        {#if history.loading && workspace.sessions.length === 0}
-            <!-- First load: centred in the list, where the chats will appear. -->
+        {#if history.scanning}
+            <!-- Start-up: covers the list (cached or not) until the chats are read, so F5 always shows this loader. -->
             <div
-                class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 px-6 text-center text-sm text-muted-foreground"
+                class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background px-6 text-center text-sm text-muted-foreground"
                 role="status"
             >
                 <ZIcon

@@ -3,6 +3,7 @@ import { LOADER } from '../../app/platform/loaders';
 import { backgroundTaskName, liveState, waitingLabel } from '../content/blocks';
 import { activity } from './activity.svelte';
 import { workspace } from '../sessions.svelte';
+import { sessionLanes } from '../session/run.svelte';
 import { agentDisplayName } from '../../agents/provider-registry';
 import { modelLabel } from '../../agents/models.svelte';
 import type { Message } from '../mock';
@@ -38,6 +39,9 @@ export function liveLine(message: Message): LiveLine {
     // The CLI compacts its context: the model is blocked until it is done, so nothing else runs meanwhile.
     if (message.compacting)
         return { label: 'Compressing context', spinner: LOADER.thinking };
+    // The provider is retrying its request: the live line says so, the reasoning above is left alone.
+    if (message.notice)
+        return { label: message.notice, spinner: LOADER.thinking };
     // The provider's background tasks still running in this chat (a sub agent, a shell): while the reply only waits for
     // them, the line says so instead of "Thinking".
     const open = activity
@@ -50,7 +54,24 @@ export function liveLine(message: Message): LiveLine {
         .map((item) => ({ name: backgroundTaskName(item) }));
     const waiting = waitingLabel(message.blocks, open);
     if (waiting !== null) return { label: waiting, spinner: LOADER.background };
-    return liveState(message.blocks);
+    const state = liveState(message.blocks);
+    // The main run waits while a side run works for the user (plan 6.6): it says so, rather than "Thinking".
+    if (state.label === 'Thinking' && sideRunWorking(workspace.activeId))
+        return { label: 'Waiting for progress', spinner: LOADER.background };
+    return state;
+}
+
+/** A side run (listener) of the chat works while its main run waits for the turn to end. */
+function sideRunWorking(sessionId: string): boolean {
+    const lanes = sessionLanes[sessionId] ?? [];
+    const active = (state: string) =>
+        state === 'running' || state === 'waiting';
+    return (
+        lanes.some(
+            (lane) => lane.role === 'primary' && lane.state === 'waiting',
+        ) &&
+        lanes.some((lane) => lane.role === 'listener' && active(lane.state))
+    );
 }
 
 /** The text being written is its own progress: no label is shown over it. */

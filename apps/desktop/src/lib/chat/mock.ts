@@ -39,7 +39,14 @@ export type TaskRecord = {
 };
 
 export type Block =
-    | { kind: 'thinking'; text: string; streaming?: boolean }
+    | {
+          kind: 'thinking';
+          text: string;
+          streaming?: boolean;
+          /** When the reasoning first streamed, and when it was done (ms). */
+          startedAt?: number;
+          endedAt?: number;
+      }
     | { kind: 'response'; text: string; streaming?: boolean }
     | {
           kind: 'command';
@@ -115,6 +122,8 @@ export type Message = {
     at?: string;
     /** Reply still being written by an agent. */
     live?: boolean;
+    /** A provider notice (a retry) for the live line, while the reply has one. */
+    notice?: string;
     /** Handed to its agent but no event has come back yet. Cleared by the first event. */
     dispatching?: boolean;
     /** The reply is a task another agent handed to this one (a worker chat): its wait reads "Sending task to <agent · model>". */

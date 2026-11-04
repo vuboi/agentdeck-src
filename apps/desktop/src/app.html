@@ -11,6 +11,37 @@
         data-sveltekit-preload-data="hover"
         class="bg-background text-foreground"
     >
+        <!-- Shown from the first paint until the app has read the open chat (+layout.svelte removes it): before the
+             JavaScript loads the window would otherwise stay blank. -->
+        <div
+            id="boot-splash"
+            style="
+                position: fixed;
+                inset: 0;
+                display: grid;
+                place-items: center;
+                background: var(--background);
+                z-index: 9999;
+            "
+        >
+            <div
+                style="
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 9999px;
+                    border: 2px solid var(--muted);
+                    border-top-color: var(--primary);
+                    animation: boot-spin 0.8s linear infinite;
+                "
+            ></div>
+        </div>
+        <style>
+            @keyframes boot-spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+        </style>
         <div style="display: contents">%sveltekit.body%</div>
     </body>
 </html>

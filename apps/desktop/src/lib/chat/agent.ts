@@ -10,6 +10,10 @@ export const IMAGE_NOT_FOUND_SRC = '/assets/image-not-found.png';
 export type AgentEvent =
     | { kind: 'delta'; text: string }
     | { kind: 'thinking'; text: string }
+    /** A provider status that is not reasoning or answer text (a retry): shown on the live line, not in the reasoning. */
+    | { kind: 'notice'; text: string }
+    /** The streamed text is complete: a tool call has started and its input is being written. */
+    | { kind: 'text_end' }
     | {
           kind: 'tool_call';
           id: string;

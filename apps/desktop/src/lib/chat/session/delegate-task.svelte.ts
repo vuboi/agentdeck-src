@@ -116,6 +116,8 @@ import {
     owesTurn,
 } from './events.svelte';
 import { activity } from '../runs/activity.svelte';
+import { pathsWrittenInChat } from '../runs/change-ledger';
+import { ledgerWrites } from '../runs/change-ledger.svelte';
 import { continuePrompt } from '../recovery/turn-failure';
 import {
     canonicalRole,
@@ -347,7 +349,8 @@ function agentRows(): AgentRow[] {
         ['antigravity', 'agy'],
         ['opencode', 'opencode'],
         ['workbuddy', 'codebuddy'],
-        ['copilot', 'gh'],
+        // The run starts the Copilot CLI itself (copilot.rs start_client), so that binary decides; `gh` is only its sign-in.
+        ['copilot', 'copilot'],
         ['command-code', 'command-code'],
     ] as const) {
         const models = (MODELS[id] ?? []).map((item) => ({
@@ -360,8 +363,13 @@ function agentRows(): AgentRow[] {
         const label = `${agentLabel(id)}${room ? `, ${room}` : ''}${agentHasRoom(id) ? '' : ', AT ITS LIMIT: do not use'}`;
         if (models.length && installed(tool)) rows.push({ id, label, models });
     }
+    // `workbuddy` as a custom provider is the same chat as the WorkBuddy CLI row (agentKindOf maps the id to the CLI), so it is
+    // not a second row: modelSources (the picker) leaves it out too.
     for (const provider of connectors.custom.filter(
-        (item) => item.enabled && item.kind !== 'anthropic',
+        (item) =>
+            item.enabled &&
+            item.kind !== 'anthropic' &&
+            item.id !== 'workbuddy',
     )) {
         const names = provider.models.length
             ? provider.models
@@ -828,9 +836,24 @@ function startTask(
                         `### ${dependency.label}\n${shorten(dependency.digest ?? dependency.note ?? 'No report was saved.', 6000)}`,
                 )
                 .join('\n\n');
-            const prompt = dependencyReports
-                ? `${workerTask}\n\nAgentDeck dependency reports (use these as input, then verify what matters):\n${dependencyReports}`
-                : workerTask;
+            // Plan 6.3, trigger 4: the files the dependencies changed come from the ledger, not from their reports.
+            const changed = [
+                ...new Set(
+                    (record.dependsOn ?? []).flatMap((dependencyId) => {
+                        const childId = delegateTasks[dependencyId]?.childId;
+                        return childId
+                            ? pathsWrittenInChat(ledgerWrites, childId)
+                            : [];
+                    }),
+                ),
+            ];
+            const changedBlock = changed.length
+                ? `\n\nFiles the dependencies changed (AgentDeck's change ledger; re-read them before you rely on them):\n${changed.map((path) => `- ${path}`).join('\n')}`
+                : '';
+            const prompt =
+                (dependencyReports
+                    ? `${workerTask}\n\nAgentDeck dependency reports (use these as input, then verify what matters):\n${dependencyReports}`
+                    : workerTask) + changedBlock;
             send(id, prompt, [], [], [], { preface: `${brief}\n\n` });
         }
         run.started = true;

@@ -92,7 +92,7 @@ export function projectChatWork(
         if (
             (!event.background &&
                 event.name !== 'Run project' &&
-                !isLongRunningWork(event.name, event.input)) ||
+                !isLongRunningWork(event.name)) ||
             /delegate_task/i.test(event.name)
         )
             continue;

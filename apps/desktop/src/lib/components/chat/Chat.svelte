@@ -1,7 +1,7 @@
 <script lang="ts">
     import { SvelteMap } from 'svelte/reactivity';
     import { untrack, onMount, tick } from 'svelte';
-    import { fade, fly } from 'svelte/transition';
+    import { fade } from 'svelte/transition';
     import {
         ZChatNavigator,
         ZGalleryPreview,
@@ -61,6 +61,7 @@
     import UserMessage from './UserMessage.svelte';
     import AssistantMessage from './AssistantMessage.svelte';
     import ComposerDock from './ComposerDock.svelte';
+    import LedgerConflicts from './LedgerConflicts.svelte';
 
     // Opening a chat starts its agent's CLI in the background: the CLI's own start-up is the longest part of a first reply
     // (about 4 s on a good day, sometimes up to a minute for Antigravity). A message typed later finds it ready.
@@ -838,12 +839,12 @@
         ></div>
 
         {#if chat.loadingOlder}
-            <!-- Drops in from the top while a page of older messages loads: a spinner in a soft primary ring and shimmering text. -->
+            <!-- Fades in while a page of older messages loads: a spinner in a soft primary ring and shimmering text. -->
             <div
                 class="pointer-events-none absolute top-3 left-1/2 z-40 -translate-x-1/2"
                 role="status"
                 aria-label="Loading earlier messages"
-                in:fly={{ y: -12, duration: 220 }}
+                in:fade={{ duration: 150 }}
                 out:fade={{ duration: 160 }}
             >
                 <div
@@ -1083,6 +1084,8 @@
             <div
                 class="mx-auto w-full min-w-0 max-w-[52rem] px-3 min-[720px]:min-w-[440px] min-[720px]:px-8"
             >
+                <!-- Writes that undid a newer request of the user, with a way back (plan 6.5). -->
+                <LedgerConflicts />
                 <!-- A pending approval sits right above the input, where the eye already is. -->
                 <ComposerDock
                     {pendingApproval}

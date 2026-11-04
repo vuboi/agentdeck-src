@@ -3,7 +3,6 @@
     import { cubicOut } from 'svelte/easing';
     import {
         ZIcon,
-        ZShowMore,
         ZShimmerText,
         ZTabs,
         zModalService,
@@ -13,7 +12,7 @@
     import { parseDiff, type DiffRow } from '../../files/diff';
     import { fileWrites } from '../../chat/runs/activity.svelte';
     import { ticker } from '../../app/platform/clock.svelte';
-    import { LOADER, LOADER_SIZE } from '../../app/platform/loaders';
+    import { LOADER_SIZE } from '../../app/platform/loaders';
     import ActivityIndicator from '../ui/ActivityIndicator.svelte';
     import SwapLine from '../ui/SwapLine.svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
@@ -55,19 +54,9 @@
     } from '../../chat/sessions.svelte';
     import { toast } from '../../app/platform/toast';
     import Markdown from '../ui/Markdown.svelte';
+    import ThinkingView from './ThinkingView.svelte';
     import CodeView from '../files/CodeView.svelte';
     import { languageOf } from '../../files/files';
-
-    // The last non-empty line of a reasoning text, cut for the row.
-    const lastLine = (text: string) => {
-        const line =
-            text
-                .split('\n')
-                .map((part) => part.trim())
-                .filter(Boolean)
-                .at(-1) ?? '';
-        return line.length > 90 ? `${line.slice(0, 89)}…` : line || 'Thinking';
-    };
 
     // A screenshot step: click its picture to see it large.
     const showShot = (event: Event, src: string) => {
@@ -165,10 +154,6 @@
         thoughts.map((thought) => thought.text.trim()).join('\n\n'),
     );
     const thinkingNow = $derived(thoughts.some((thought) => thought.streaming));
-    // The newest line of the reasoning being streamed: shown in the Thinking row like the step a command runs.
-    const thinkingLine = $derived(
-        lastLine(thoughts.findLast((thought) => thought.streaming)?.text ?? ''),
-    );
 
     const current = $derived(liveState(items));
     // Some CLIs only report that a web search ran; they expose neither the result nor useful search detail. Keep those
@@ -559,79 +544,16 @@
                     class="mt-1.5 divide-y divide-border overflow-hidden rounded-xl border border-border"
                 >
                     {#if thoughts.length > 0}
-                        <div>
-                            <button
-                                type="button"
-                                class="flex h-9 w-full cursor-pointer items-center gap-2 px-3 text-left outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
-                                aria-expanded={view.thinking}
-                                onclick={toggleThinking}
-                            >
-                                <ZIcon
-                                    zType="lucideLightbulb"
-                                    class="size-3.5 shrink-0 text-muted-foreground"
-                                />
-                                <span
-                                    class="text-sm font-medium text-foreground"
-                                    >Thinking</span
-                                >
-                                <span class="text-muted-foreground"
-                                    >{thoughts.length === 1
-                                        ? ''
-                                        : `${thoughts.length} times`}</span
-                                >
-                                {#if thinkingNow}
-                                    <ActivityIndicator
-                                        spinner={LOADER.reasoning}
-                                        size={LOADER_SIZE}
-                                        color="primary"
-                                    />
-                                    <SwapLine
-                                        text={thinkingLine}
-                                        shimmer
-                                        hold={900}
-                                        class="font-medium"
-                                    />
-                                    <span
-                                        class="stream-label inline-block min-w-[3ch] tabular-nums"
-                                        >{seconds}</span
-                                    >
-                                {/if}
-                                <ZIcon
-                                    zType="lucideChevronRight"
-                                    class="ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform duration-300 {view.thinking
-                                        ? 'rotate-90'
-                                        : ''}"
-                                />
-                            </button>
-                            <div
-                                class="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none {view.thinking
-                                    ? 'grid-rows-[1fr]'
-                                    : 'grid-rows-[0fr]'}"
-                            >
-                                <div class="min-h-0 overflow-hidden">
-                                    {#if view.thinking || built.thinking}
-                                        <div
-                                            class="stream-label px-3 pt-1 pb-3 text-muted-foreground"
-                                        >
-                                            {#if thinkingText.length > 600}
-                                                <ZShowMore
-                                                    zMaxHeight={160}
-                                                    zButtonSize="sm"
-                                                    zBlurColor="var(--background)"
-                                                    moreLabel="Show more"
-                                                    lessLabel="Show less"
-                                                >
-                                                    <Markdown
-                                                        text={thinkingText}
-                                                    />
-                                                </ZShowMore>
-                                            {:else}
-                                                <Markdown text={thinkingText} />
-                                            {/if}
-                                        </div>
-                                    {/if}
-                                </div>
-                            </div>
+                        <div class="px-3 py-2">
+                            <ThinkingView
+                                text={thinkingText}
+                                streaming={thinkingNow}
+                                startedAt={thoughts[0].startedAt}
+                                endedAt={thoughts.at(-1)?.endedAt}
+                                open={view.thinking}
+                                ontoggle={toggleThinking}
+                                mounted={view.thinking || built.thinking}
+                            />
                         </div>
                     {/if}
                     <!-- The position is part of the key: two steps can carry one tool id (a call replayed, a hand-back that continues a reply). -->

@@ -22,6 +22,8 @@ pub(crate) struct Call {
 pub(crate) struct Step {
     /// Why the model stopped: `stop`, `tool_calls`, `length`…
     pub(crate) finish: String,
+    /// `<think>` tags in the content of a chat-completions stream, read as they arrive.
+    pub(crate) think: ThinkTags,
     pub(crate) text: String,
     /// Reasoning content that strict OpenAI-compatible providers require on the next tool turn.
     pub(crate) reasoning: String,
@@ -49,16 +51,21 @@ pub(crate) fn read_chunk(data: &str, step: &mut Step, emit: &mut impl FnMut(Agen
         }
     }
     if let Some(part) = delta["content"].as_str().filter(|part| !part.is_empty()) {
-        step.text.push_str(part);
-        emit(AgentEvent::Delta {
-            text: part.to_owned(),
+        let mut think = std::mem::take(&mut step.think);
+        think.feed(part, &mut |reasoning, text| {
+            emit_split(step, reasoning, text, &mut *emit)
         });
+        step.think = think;
     }
     if let Some(finish) = json["choices"][0]["finish_reason"].as_str() {
         step.finish = finish.to_owned();
     }
     for piece in delta["tool_calls"].as_array().into_iter().flatten() {
         let index = piece["index"].as_u64().unwrap_or(0) as usize;
+        // The first piece of the step's first call: the text before it is done while the call's arguments stream.
+        if step.calls.is_empty() {
+            emit(AgentEvent::TextEnd);
+        }
         while step.calls.len() <= index {
             step.calls.push(Call::default());
         }
@@ -354,6 +361,8 @@ pub(crate) fn read_messages_chunk(data: &str, step: &mut Step, emit: &mut impl F
     };
     match json["type"].as_str().unwrap_or_default() {
         "content_block_start" if json["content_block"]["type"].as_str() == Some("tool_use") => {
+            // The text before the call is done while the call's input streams.
+            emit(AgentEvent::TextEnd);
             step.calls.push(Call {
                 id: json["content_block"]["id"]
                     .as_str()
@@ -549,6 +558,8 @@ pub(crate) fn read_responses_chunk(data: &str, step: &mut Step, emit: &mut impl 
         "response.output_item.added" => {
             let item = &json["item"];
             if item["type"].as_str() == Some("function_call") {
+                // The text before the call is done while the call's arguments stream.
+                emit(AgentEvent::TextEnd);
                 let mut call = Call {
                     id: item["call_id"].as_str().unwrap_or_default().to_owned(),
                     name: item["name"].as_str().unwrap_or_default().to_owned(),
@@ -845,6 +856,8 @@ pub(crate) async fn model_call(
             Err(error) => return Err(error.to_string()),
         }
     }
+    let mut think = std::mem::take(&mut step.think);
+    think.finish(&mut |reasoning, text| emit_split(&mut step, reasoning, text, &mut *emit));
     Ok(step)
 }
 
@@ -870,4 +883,103 @@ pub(crate) fn take_line(pending: &mut Vec<u8>) -> Option<String> {
     let end = pending.iter().position(|byte| *byte == b'\n')?;
     let line: Vec<u8> = pending.drain(..=end).collect();
     Some(String::from_utf8_lossy(&line).into_owned())
+}
+
+/// Splits a content stream on `<think>…</think>`: the text inside is reasoning, not the answer. A tag cut by a network
+/// chunk is held back until the next chunk shows what it was.
+#[derive(Default)]
+pub(crate) struct ThinkTags {
+    inside: bool,
+    held: String,
+}
+
+impl ThinkTags {
+    /// Feeds one piece of content; `emit(reasoning, text)` gets each settled part, in order.
+    pub(crate) fn feed(&mut self, piece: &str, emit: &mut impl FnMut(bool, String)) {
+        let mut rest = format!("{}{piece}", std::mem::take(&mut self.held));
+        loop {
+            let tag = if self.inside { "</think>" } else { "<think>" };
+            if let Some(at) = rest.find(tag) {
+                if at > 0 {
+                    emit(self.inside, rest[..at].to_owned());
+                }
+                self.inside = !self.inside;
+                rest = rest[at + tag.len()..].to_owned();
+                continue;
+            }
+            // A tail that could be the start of the tag waits for the next chunk.
+            let keep = (1..tag.len())
+                .rev()
+                .find(|&n| rest.ends_with(&tag[..n]))
+                .unwrap_or(0);
+            let cut = rest.len() - keep;
+            if cut > 0 {
+                emit(self.inside, rest[..cut].to_owned());
+            }
+            self.held = rest[cut..].to_owned();
+            return;
+        }
+    }
+
+    /// The stream ended: what is still held back is text of the part it was in.
+    pub(crate) fn finish(&mut self, emit: &mut impl FnMut(bool, String)) {
+        if !self.held.is_empty() {
+            emit(self.inside, std::mem::take(&mut self.held));
+        }
+    }
+}
+
+/// Records one settled part of a chat-completions answer: reasoning goes to the reasoning, text to the answer.
+fn emit_split(step: &mut Step, reasoning: bool, text: String, emit: &mut impl FnMut(AgentEvent)) {
+    if reasoning {
+        step.reasoning.push_str(&text);
+        emit(AgentEvent::Thinking { text });
+    } else {
+        step.text.push_str(&text);
+        emit(AgentEvent::Delta { text });
+    }
+}
+
+#[cfg(test)]
+mod think_tag_tests {
+    use super::ThinkTags;
+
+    fn run(pieces: &[&str]) -> Vec<(bool, String)> {
+        let mut tags = ThinkTags::default();
+        let mut out = Vec::new();
+        for piece in pieces {
+            tags.feed(piece, &mut |reasoning, text| out.push((reasoning, text)));
+        }
+        tags.finish(&mut |reasoning, text| out.push((reasoning, text)));
+        out
+    }
+
+    #[test]
+    fn splits_reasoning_from_answer_in_one_piece() {
+        assert_eq!(
+            run(&["<think>plan</think>answer"]),
+            vec![(true, "plan".into()), (false, "answer".into())]
+        );
+    }
+
+    #[test]
+    fn a_tag_cut_across_pieces_is_still_read() {
+        assert_eq!(
+            run(&["<th", "ink>x</thi", "nk>y"]),
+            vec![(true, "x".into()), (false, "y".into())]
+        );
+    }
+
+    #[test]
+    fn an_unclosed_think_tag_keeps_the_rest_as_reasoning() {
+        assert_eq!(run(&["<think>z"]), vec![(true, "z".into())]);
+    }
+
+    #[test]
+    fn text_without_tags_is_unchanged() {
+        assert_eq!(
+            run(&["a <b", "> c"]),
+            vec![(false, "a <b".into()), (false, "> c".into())]
+        );
+    }
 }

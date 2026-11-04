@@ -1545,7 +1545,9 @@ mod tests {
             events,
             [
                 AgentEvent::Thinking { text: "hm".into() },
-                AgentEvent::Delta { text: "hi".into() }
+                AgentEvent::Delta { text: "hi".into() },
+                // Once, on the first piece of the first call.
+                AgentEvent::TextEnd
             ]
         );
         assert_eq!(

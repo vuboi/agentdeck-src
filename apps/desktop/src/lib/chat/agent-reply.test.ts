@@ -24,6 +24,16 @@ const spawn: AgentEvent = {
     background: true,
 };
 
+test('text_end closes the streamed text before the tool call arrives', () => {
+    const blocks = run([
+        { kind: 'delta', text: 'Let me check.' },
+        { kind: 'text_end' },
+    ]);
+    assert.deepEqual(blocks, [
+        { kind: 'response', text: 'Let me check.', streaming: false },
+    ]);
+});
+
 test("a sub-agent's steps and words stay under its call and never join the main answer", () => {
     const blocks = run([
         spawn,
@@ -296,4 +306,27 @@ test('a sub-agent event that comes before its call waits for the call and never 
             : undefined,
         'early',
     );
+});
+
+test('a retry notice goes to the live line, not into the reasoning', () => {
+    const update = applyAgentEvent([], {
+        kind: 'notice',
+        text: 'Reconnecting... 2/5',
+    });
+    assert.equal(update.notice, 'Reconnecting... 2/5');
+    assert.deepEqual(update.blocks, []);
+});
+
+test('reasoning records when it started and when the answer took over', () => {
+    let blocks: Block[] = [];
+    blocks = applyAgentEvent(blocks, { kind: 'thinking', text: 'hm' }).blocks;
+    const thinking = blocks[0];
+    assert.equal(thinking.kind, 'thinking');
+    assert.equal(
+        typeof (thinking as { startedAt?: number }).startedAt,
+        'number',
+    );
+    assert.equal((thinking as { endedAt?: number }).endedAt, undefined);
+    blocks = applyAgentEvent(blocks, { kind: 'delta', text: 'answer' }).blocks;
+    assert.equal(typeof (blocks[0] as { endedAt?: number }).endedAt, 'number');
 });

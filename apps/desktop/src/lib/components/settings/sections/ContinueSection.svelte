@@ -49,10 +49,7 @@
                     item.value.startsWith('credit:')
                 )
                     return [];
-                const custom =
-                    source.provider === 'custom'
-                        ? parseCustomModel(item.value)
-                        : null;
+                const custom = parseCustomModel(item.value);
                 const routeAgent = custom?.providerId ?? source.provider;
                 const routeModel = custom?.model ?? item.value;
                 const lookupAgent = custom ? 'custom' : source.provider;

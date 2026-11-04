@@ -135,6 +135,10 @@
         items.filter((item) => !live(cardOf(item, recordOf(item)).state))
             .length,
     );
+    const failedCount = $derived(
+        items.filter((item) => cardOf(item, recordOf(item)).state === 'failed')
+            .length,
+    );
     const activeCount = $derived(
         items.filter((item) => {
             const state = cardOf(item, recordOf(item)).state;
@@ -185,7 +189,8 @@
         >
             {#if activeCount > 0}{activeCount} active ·
             {/if}{#if queuedCount > 0}{queuedCount} queued ·
-            {/if}{finished}/{items.length} complete
+            {/if}{finished - failedCount}/{items.length} complete{#if failedCount > 0}
+                · {failedCount} failed{/if}
         </span>
     </div>
     <div class="py-1">

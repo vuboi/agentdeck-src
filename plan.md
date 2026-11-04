@@ -1,145 +1,291 @@
-# Plan: fix theme dark/light switch (UI nửa sáng nửa tối)
+# Plan: đồng bộ thông tin giữa các task chạy song song
 
-## Triệu chứng
+Ngày: 2026-11-04. Base: `main`. Thay plan fix theme cũ (đã xong, commit `aea7771`).
+Phạm vi: lane chính / lane listener trong một chat, delegated task (`delegate_task`), sub-agent của CLI, lượt tự động báo kết quả nền, session song song.
 
-Đổi theme dark ↔ light (Settings > Theme hoặc `theme.toggle()`), một phần UI đổi màu, phần còn lại giữ màu theme cũ.
-Lỗi giữ nguyên cho tới khi resize/di chuyển panel hoặc đóng Preview.
+## 1. Vấn đề
 
-## Kết quả debug
+Ngoài đời, hai người cùng sửa một tài liệu mà không báo nhau thì người sau làm theo bản cũ trong đầu và xoá việc của người trước.
+AgentDeck đang đúng như vậy: nhiều run cùng ghi một thư mục, không run nào biết run kia đã đổi gì, cũng không biết yêu cầu nào của user là mới nhất.
 
-### Phần đã loại trừ
+Muốn hết lỗi cần đủ ba thứ, như một team làm việc tử tế:
 
-- `theme.svelte.ts` áp đúng: class `dark`, `color-scheme`, token inline `!important` trên `<html>` đều khớp mode.
-  Log `theme snapshot` / `theme applied` trong `%APPDATA%\dev.agentdeck.desktop*\logs\debug.log`: `htmlDark`, `token`,
-  `body`, `.bg-background`, `.bg-card` luôn khớp `mode`.
-- `theme ui audit` (dark mode): không có surface token nào ra màu sáng. Chỉ thấy `bg-white` của thumb switch (đúng thiết kế).
-- Không có component nào override token cục bộ (`--background:`, `class="dark"`, `z-theme` con).
-- Code highlight (Markdown, CodeView, DiffView), CodeEditor, xterm, ScreenshotEditor đều đã nghe `theme.dark` và vẽ lại.
+1. **Một sổ chung**: ai đổi file nào, theo yêu cầu nào, lúc nào.
+2. **Báo đúng người, đúng lúc**: run đang làm trên file đó phải được báo ngay, không đợi xong việc.
+3. **Luật ai thắng**: yêu cầu mới nhất của user thắng. Không run nào được hoàn tác nó mà không hỏi.
 
-### Nguyên nhân gốc: `cutHole` đóng băng màu nền của theme cũ
+Thêm một lưới an toàn: nếu vẫn có ghi đè thì user phải thấy và khôi phục được bằng một nút.
 
-File: `apps/desktop/src/lib/browser/page-layer.ts` (từ commit `57d46c4`, Preview đặt dưới app).
+## 2. Kịch bản thật (flow log `dev.agentdeck.desktop.dev/logs/debug.log`, giờ VN)
 
-Khi Preview có trang mở, `BrowserView.svelte:333` gọi `cutHole(stage, rect)`. Hàm này đi từ `stage` lên tới `<html>`.
-Với **mọi tổ tiên có nền** (panel, layout, và `<body class="bg-background">` phủ cả cửa sổ) nó:
+Chat `claude:8a9681cf…`, Codex GPT 5.6 Luna, project `msg-new-template`, màn ABR Helios.
 
-1. Đọc màu đã resolve: `getComputedStyle(element).backgroundColor` (ví dụ `oklch(0.21 0.006 285.885)`).
-2. Lưu vào cache `holed` và **dùng lại mãi**: `holed.get(element)?.color ?? getComputedStyle(...)`.
-3. Ghi inline `background-color: transparent` + 4 dải `linear-gradient(<màu cố định>)` quanh lỗ.
+| Giờ      | Run                     | Việc                                                                                  |
+| -------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| 11:48:39 | chính `mw1mzikw6sb2`    | Bắt đầu "button group Áp dụng / Reset bộ lọc"                                         |
+| 11:51:12 | chính                   | Edit `en.json`, `vi.json`: nhãn dài                                                   |
+| 11:52:48 | chính                   | Chạy cùng lúc 4 lệnh: lint, format, tsc, `git diff --check` (đều xong trong vài giây) |
+| 11:52:48 | app                     | `queue: sending one waiting message`: tin "ghi ngắn gọn" được nhả sang lane listener  |
+| 11:52:48 | listener `mw1n4ukvt1n0` | Conversation Codex **mới** (`resume=false`), không biết task chính đang làm gì        |
+| 11:53:11 | listener                | Edit `en.json`, `vi.json`: "Áp dụng lọc / Reset lọc"                                  |
+| 11:53:20 | listener                | Xong                                                                                  |
+| 11:54:37 | chính                   | `git diff -- lib…`: thấy nhãn ngắn, coi là lệch so với ý định của nó                  |
+| 11:54:51 | chính                   | Edit `en.json`, `vi.json`: **đưa về nhãn dài**, xoá yêu cầu mới của user              |
+| 11:55:36 | chính                   | Xong, báo cáo vẫn ghi "Reset bộ lọc"                                                  |
 
-Khi đổi theme:
+Không có lỗi tool nào. Mỗi run đều làm "đúng" theo thông tin nó có. Lỗi nằm ở chỗ thông tin không được truyền giữa các run.
 
-- Token đổi, nhưng các tổ tiên này vẽ bằng **màu literal đã chụp**, không phải `var(--background)` → giữ màu cũ.
-- Phần tử con có `bg-*` riêng (card, sidebar, popover, input) đổi đúng → **UI nửa sáng nửa tối**.
-- `cutHole` không chạy lại: key `placed` (`BrowserView.svelte:325`) chỉ gồm tab/zoom/rect, không có theme.
-- Kể cả chạy lại, cache `holed` vẫn trả màu cũ (sau lần cắt đầu, computed bg đã là `transparent`, nên phải cache).
-- Lỗi chỉ hết khi `cutHole(null, null)` (đóng Preview, đổi tool, tab trống, lỗi điều hướng): inline được trả lại.
+## 3. Các nơi làm việc song song (đã đọc code)
 
-Vì sao log trước không bắt được: `themeSnapshot` không ghi trạng thái hole, và các snapshot có trong log đều chụp lúc Preview không mở.
+| Kênh                                                                                 | Thư mục        | Conversation                                                           | Biết gì về run khác                                                                                                            |
+| ------------------------------------------------------------------------------------ | -------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Lane `primary` + `listener` cùng chat                                                | chung          | listener mở conversation mới (`chat/session/binding.ts:78`, `fresh()`) | listener chỉ có digest lúc bắt đầu; primary không biết gì                                                                      |
+| `delegate_task` worker, `isolation: shared` (mặc định)                               | chung          | chat worker riêng                                                      | worker chỉ thấy text `task`; parent chỉ thấy report do worker tự viết                                                          |
+| `delegate_task` worker, `isolation: worktree`                                        | worktree riêng | chat worker riêng                                                      | tách file, chỉ gặp nhau lúc merge                                                                                              |
+| Sub-agent của Claude (`Agent`, có thể `run_in_background`)                           | chung          | trong tiến trình CLI                                                   | AgentDeck thấy event con qua `parent_tool_use_id` (`claude.rs:244`) và event `Task`; không có đường gửi tin tới sub-agent      |
+| Sub-agent của Codex (`spawnAgent`, app-server)                                       | chung          | thread riêng của app-server                                            | AgentDeck thấy thread con (`codex_server.rs:81`, `collab` :223); thread con có turn riêng nên có thể steer được (cần kiểm tra) |
+| Lượt tự động báo kết quả nền (`beginAutoTurn`, `chat/session/events.svelte.ts:1194`) | chung          | conversation chính                                                     | chỉ có report của task nền                                                                                                     |
+| Session song song (`propose_session`)                                                | worktree riêng | riêng                                                                  | tách file                                                                                                                      |
+| User sửa tay trong editor                                                            | chung          | không                                                                  | không run nào biết                                                                                                             |
 
-### Vấn đề phụ (không gây lỗi chính, sửa cùng đợt)
+## 4. Nguyên nhân gốc
 
-1. `src/app.html` hardcode `class="dark"` và `<meta name="theme-color" content="#0a0a0a">`.
-   Người dùng mode light thấy khung tối lúc khởi động cho tới khi `theme.svelte.ts` chạy.
-2. Webview Preview (`src-tauri/src/browser.rs:514`) nền trắng cố định. Trang lỗi (`browser.rs:79`) theo
-   `prefers-color-scheme` của OS, không theo theme app. Dark mode → dải trắng khi resize/đang tải.
-3. `logThemeUiAudit` quét **toàn bộ DOM** (`querySelectorAll('*')` + `getComputedStyle`) mỗi lần cửa sổ focus/visible.
-   Tốn CPU, ghi hàng trăm dòng log. Là code debug tạm, cần gỡ sau khi fix.
+- **R1. Nhả tin sang listener sai lúc.** `isLongRunningWork` (`chat/runs/run-lanes.ts:31`) đoán việc nền theo từ khoá (`check`, `run`, `test`, `lint`…). Vì vậy `git diff --check` bị coi là việc nền, và lane chính bị đánh dấu `waiting` dù vẫn đang sửa file. Được gọi ở `events.svelte.ts:1411`, `activity.svelte.ts:486`, `chat-work.ts:95`.
+- **R2. Không có sổ thay đổi chung.** `fileWrites` (`chat/runs/activity.svelte.ts:100`) chỉ là một bộ đếm `tick`, không lưu ai sửa file nào, theo yêu cầu nào. Trong khi đó dữ liệu đã có sẵn trong `FileChange` (`path`, `before`, `after`) của từng tool call.
+- **R3. Không có kênh báo tin giữa các run đang chạy.**
+    - `agent_inject` (`src-tauri/src/agent_runs.rs:545`) chỉ nhận provider dạng `ResponseAssociation::PerMessage`.
+    - Claude, Codex, Copilot là `NativeSteer { MergedIntoActive }` (`crates/adapters/src/agent/mod.rs:~350`) nên bị từ chối.
+    - Thực tế Codex app-server đã có `turn/steer` (`codex_server.rs:691`), và Claude đã có warm inbox. Đường truyền có sẵn, chỉ bị khoá vì nó được thiết kế cho tin của user cần một reply riêng. Một thông báo hệ thống không cần reply riêng.
+- **R4. Không có thứ tự yêu cầu.** Run không biết yêu cầu nào của user mới hơn yêu cầu nó đang làm.
+- **R5. Không phát hiện ghi đè.** Ghi đè xảy ra im lặng; user chỉ thấy khi tự kiểm tra lại.
+- **R6. Worker và parent lệch nhau.** Worker `shared` ghi cùng thư mục với parent. Parent chỉ nhận report do worker tự viết, không có danh sách file thật đã đổi.
+- **R7. Sub-agent là chỗ hở lớn nhất.**
+    - `spawnAgent` và `Agent` chạy nền được tính là việc nền (`background: true`, `isBackgroundWait`). Lane chính chuyển `waiting` và tin mới của user đi sang listener, **trong khi sub-agent vẫn đang sửa file**. Đây đúng là kịch bản mục 2, chỉ khác người ghi đè là sub-agent.
+    - Sub-agent nhận prompt một lần lúc được spawn. Sau đó nó không biết user hay run khác đã đổi gì.
+    - Claude không có đường gửi tin tới sub-agent đang chạy. Codex có thread riêng nhưng AgentDeck chưa dùng.
+    - Khi sub-agent xong, parent nhận kết quả do sub-agent tự kể. Parent không biết trong lúc đó user đã đổi gì.
+    - Lượt tự động sau khi sub-agent nền của Claude xong (`AutoTurn`, `tail.rs`) là CLI tự nói. AgentDeck không chèn prompt vào đó được, nên thông báo đang chờ có thể bị lỡ.
 
-## Kế hoạch sửa
+## 5. Nguyên tắc
 
-### Bước 1: `page-layer.ts` - bỏ cache màu, luôn đọc màu theo theme hiện tại
+- **N1. Sổ chung theo thư mục làm việc.** Mọi lần ghi file của mọi run (primary, listener, worker, sub-agent, user) đều vào một ledger theo project root.
+- **N2. Yêu cầu mới nhất của user thắng.** Mỗi run mang `intentSeq` của tin user khởi động nó. Run có `intentSeq` cũ không được hoàn tác thay đổi của run có `intentSeq` mới hơn.
+- **N3. Báo ngay, báo đúng người.** Một thay đổi được báo cho mọi run khác đang chạy mà đã đọc hoặc sửa file đó trong turn hiện tại:
+    - giữa turn nếu provider cho phép;
+    - nếu không thì ở đầu turn kế tiếp của conversation đó.
+- **N4. Báo cả ý định, không chỉ file.** Khi user gửi yêu cầu mới trong lúc run chính đang chạy, run chính được báo ngay nội dung yêu cầu, kể cả trước khi file nào bị đổi.
+- **N5. Không chặn cứng, nhưng không im lặng.** CLI ghi file trực tiếp nên AgentDeck không chặn trước được. Bù lại: báo trước, phát hiện sau, cho user khôi phục.
+- **N6. Có bằng chứng.** Flow log ghi đủ để dựng lại timeline như mục 2 mà không phải đoán.
 
-- Bỏ field `color` trong `holed` (chỉ giữ `inline` gốc để trả lại).
-- Trong `cutHole(stage, rect)`, với mỗi tổ tiên:
-    1. Nếu đã holed: trả inline gốc trước (`BACKGROUND.forEach(... = inline[i])`).
-    2. Đọc `getComputedStyle(element).backgroundColor` (giờ là màu thật của theme hiện tại).
-    3. Cắt lỗ lại bằng màu đó.
-- Tất cả chạy đồng bộ trong một task → trình duyệt không paint frame trung gian, không nháy.
-- Số tổ tiên ít (~5–10), chỉ chạy khi rect/theme đổi → chi phí style recalc không đáng kể.
+## 6. Thiết kế
 
-### Bước 2: `BrowserView.svelte` - cắt lại lỗ khi theme đổi
+### 6.1 Change ledger
 
-- Thêm `theme.settledKey` vào key `placed` (dòng 325), hoặc một `$effect` riêng:
+File mới:
 
-    ```ts
-    $effect(() => {
-        void theme.settledKey;
-        untrack(() => {
-            placed = '';
-            void sync();
-        });
-    });
-    ```
+- `src/lib/chat/runs/change-ledger.ts`: logic thuần, node test được.
+- `src/lib/chat/runs/change-ledger.svelte.ts`: state.
 
-- Dùng `settledKey` (không dùng `theme.dark`): `settledKey` được set **sau** khi class + token đã áp lên `<html>`
-  (`theme.svelte.ts:299`), nên `getComputedStyle` đọc ra màu mới.
-- Nếu `sync()` bất đồng bộ làm trễ 1 frame: gọi thẳng `cutHole(stage, lastRect)` đồng bộ trong effect, rồi mới `sync()`.
-  Cần lưu `lastRect` khi `placePage` cắt lỗ.
-
-### Bước 3: chẩn đoán gọn hơn trong `theme.svelte.ts`
-
-- Thêm vào `themeSnapshot`: số phần tử đang holed (export `holeCount()` từ `page-layer.ts`), và `body` inline `background-image` có hay không.
-- Gỡ `logThemeUiAudit` cùng listener `focus` / `visibilitychange` (chỉ giữ snapshot `before apply` / `applied` / `next frame`).
-- Giữ `MutationObserver` "root drift" (rẻ, có ích).
-
-### Bước 4: khởi động đúng theme (vấn đề phụ 1)
-
-- `app.html`: bỏ `class="dark"` cứng. Thêm script inline nhỏ trong `<head>` đọc `localStorage['agentdeck.theme']`,
-  set class `dark` + `style.colorScheme` + nền tạm (`#fff` / màu 900 của neutral) trước khi CSS paint.
-- CSP là `script-src 'self'`. Tauri tự thêm hash cho inline script khi build, nhưng dev server có thể bị chặn.
-  An toàn nhất: đặt script trong `static/theme-boot.js`, load bằng `<script src>` đồng bộ.
-- Cập nhật `<meta name="theme-color">` trong effect của `theme.svelte.ts`.
-
-### Bước 5: Preview webview theo theme app (vấn đề phụ 2, ưu tiên thấp)
-
-- `browser.rs`: nhận tham số `dark: bool` khi tạo/hiện webview; `background_color` = trắng hoặc màu nền tối.
-- Trang lỗi: render với `color-scheme` theo app thay vì `@media (prefers-color-scheme)`.
-- Không ép trang web ngoài theo theme app (trang tự quyết `prefers-color-scheme`).
-
-## Kiểm tra
-
-### Tái hiện trước khi sửa (để chắc nguyên nhân)
-
-1. `pnpm dev` (cần `~/.cargo/bin` trong PATH).
-2. Mở Preview, vào một URL bất kỳ (ví dụ `http://127.0.0.1:1430`).
-3. Settings > Theme: dark → light.
-4. Kỳ vọng thấy lỗi: nền body/panel quanh Preview vẫn tối, card/sidebar đã sáng.
-5. DevTools console: `document.body.style.backgroundImage` chứa `linear-gradient(oklch(0.21 ...` (màu tối).
-6. Đối chứng: đóng Preview rồi đổi theme → không lỗi.
-
-### Sau khi sửa
-
-- Lặp lại bước 1–3 với Preview mở: toàn bộ UI đổi màu trong một frame.
-- `document.body.style.backgroundImage` chứa màu nền của theme mới.
-- Đổi qua lại dark/light/system nhanh 10 lần, đổi neutral (zinc/stone/slate): không còn vệt màu cũ.
-- Mở modal/menu đè lên Preview (page xuống dưới app) sau khi đổi theme: viền quanh lỗ đúng màu.
-- Resize cửa sổ, kéo panel: lỗ vẫn đúng vị trí, đúng màu.
-- Khởi động app ở mode light: không có frame tối.
-- Terminal, code block, diff, editor đổi màu như trước.
-
-### DoD
-
-```bash
-cd apps/desktop && pnpm check
+```ts
+type RunRef = {
+    sessionId: string;
+    turn: string;
+    lane: 'primary' | 'listener' | 'worker' | 'subagent' | 'auto' | 'user';
+    intentSeq: number; // seq của tin user khởi động run (chat.ledger), worker: của parent
+};
+type LedgerWrite = {
+    root: string; // project root, chuẩn hoá bằng src/lib/files/paths.ts
+    path: string; // chuẩn hoá, so sánh không phân biệt hoa thường trên Windows
+    run: RunRef;
+    at: number;
+    before: string; // từ FileChange.before
+    after: string; // từ FileChange.after (giới hạn 200 KB/file, chỉ file text)
+    callId: string;
+};
+type LedgerRead = { root: string; path: string; run: RunRef; at: number };
 ```
 
-```bash
-cd apps/desktop && pnpm test
+- **Nguồn ghi:** event `tool_call` / `tool_result` có `change` trong `applyAgentEvent` (`chat/agent-reply.ts`), cho cả event `Scoped` của sub-agent (tính về run cha). Worker có `sessionId` riêng nhưng dùng chung `root` khi `isolation: shared`.
+- **Nguồn đọc:** tool đọc file rõ ràng (Read, view, `Get-Content`/`cat` một path cụ thể), đủ để biết run nào đang "giữ" file.
+- **User sửa tay:** lưu file trong editor (`openProjectFile`) ghi vào ledger với `lane: 'user'` và `intentSeq` mới nhất.
+- `fileWrites.tick` giữ nguyên cho chỗ đang dùng; ledger là lớp mới bên cạnh.
+
+### 6.2 Kênh báo tin (R3)
+
+Thêm Rust command `agent_notify(session, text) -> 'steered' | 'queued'`:
+
+- Nhận cả `NativeSteer { MergedIntoActive }` và `AppQueue`, vì thông báo không cần reply riêng.
+- Đường đi theo provider:
+
+| Provider                                           | Giữa turn                             | Kiểm tra                                                      |
+| -------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------- |
+| Codex (app-server)                                 | `turn/steer` (`codex_server.rs:691`)  | xác nhận path `exec`/app-server nào đang dùng cho chat thường |
+| Claude                                             | warm inbox stream-json                | đã có `warm::inject`                                          |
+| Copilot                                            | `NativeSteer`                         | xác nhận đường inject                                         |
+| Custom chat                                        | `InjectSlot` inbox, đọc giữa các bước | đã có                                                         |
+| OpenCode (`Parallel`), Antigravity (`NativeQueue`) | không                                 | chỉ ở đầu turn kế                                             |
+
+- **Không gửi được giữa turn:** thông báo vào hàng chờ `pendingNotices[conversation]`, được chèn vào đầu prompt turn kế của đúng conversation đó (`run.svelte.ts`, cạnh chỗ `forkContext`). Worker đang chờ `continue` cũng dùng đường này.
+- Gộp thông báo: một lần cho mỗi đợt thay đổi, mỗi run. Diff tối đa ~40 dòng mỗi file, còn lại ghi "và N dòng khác".
+- Mẫu (gửi cho agent, tiếng Anh):
+
+```
+[AgentDeck] While you were working, another run changed files in this project:
+- libs/assets/i18n/en.json, libs/assets/i18n/vi.json — by a side run for the user's newer request #12: "ghi ngắn gọn Áp dụng lọc / Reset lọc"
+<short diff>
+This is the user's latest intent. Re-read these files before you edit them and keep these changes; build on them.
+If your own plan conflicts with them, stop and ask the user instead of reverting.
 ```
 
-```bash
-cargo clippy --workspace -- -D warnings
-```
+### 6.3 Khi nào báo (N3, N4)
 
-(Chỉ cần clippy nếu làm Bước 5.)
+1. **Yêu cầu mới của user vào lane listener** trong lúc primary đang chạy:
+    - báo primary ngay: "The user also asked meanwhile: … It is handled by a side run; do not undo its result.";
+    - prompt listener có: yêu cầu primary đang làm và các file primary đã sửa trong turn hiện tại.
+2. **Một run ghi file P:** báo mọi run khác đang chạy cùng `root` mà đã đọc hoặc ghi P trong turn hiện tại.
+3. **Worker `shared` xong:** report gửi parent tự gắn thêm "Files changed by this worker (from AgentDeck's ledger): …", không dựa vào lời worker tự kể (R6).
+4. **`depends_on`:** worker phụ thuộc nhận danh sách file mà worker trước đã đổi, kèm report.
+5. **Sub-agent của CLI:** xem 6.9.
+6. **User sửa tay một file mà run đang giữ:** báo run đó như mục 2.
 
-## File đụng tới
+### 6.4 Chặn nhả tin sai lúc (R1)
 
-| File                                                             | Bước |
-| ---------------------------------------------------------------- | ---- |
-| `apps/desktop/src/lib/browser/page-layer.ts`                     | 1, 3 |
-| `apps/desktop/src/lib/components/browser/BrowserView.svelte`     | 2    |
-| `apps/desktop/src/lib/app/ui/theme.svelte.ts`                    | 3, 4 |
-| `apps/desktop/src/app.html`, `apps/desktop/static/theme-boot.js` | 4    |
-| `apps/desktop/src-tauri/src/browser.rs`                          | 5    |
+- Bỏ đoán theo từ khoá trong `isLongRunningWork`. Chỉ coi là chờ việc nền khi:
+    - provider báo rõ: `background: true`, `run_in_background`, `delegate_task` với `wait=false`, event `task` của provider; hoặc
+    - một lệnh shell đã chạy quá **20 giây**. Đo bằng thời gian thật từ `tool_call`, không đoán theo tên lệnh.
+- Ngoài hai trường hợp trên, tin của user vào queue như thường.
+- Ghi lý do quyết định vào flow log: `deliver=listener reason=shell>20s call=…` hoặc `deliver=queue reason=…`.
+
+### 6.5 Phát hiện ghi đè và khôi phục (R5)
+
+- Run B ghi P sau khi run A ghi P, với A ≠ B và `A.intentSeq > B.intentSeq` → ghi nhận xung đột:
+    - `B.after === A.before`: B đã **hoàn tác** hoàn toàn thay đổi của A;
+    - ngược lại: B **ghi đè** lên bản của A.
+- **UI:** dòng cảnh báo trong reply của B, cạnh `TurnChanges`, kèm hai nút:
+    - "Khôi phục bản của <A>": ghi lại `A.after`, và chỉ ghi khi file hiện tại vẫn bằng `B.after`;
+    - "Giữ bản này".
+- Nếu B còn đang chạy: gửi thêm thông báo qua 6.2 rằng nó vừa hoàn tác yêu cầu mới hơn của user.
+- Không tự khôi phục khi chưa hỏi user (xem câu hỏi mở 1).
+
+### 6.6 Trạng thái hiển thị
+
+- Lane primary đang `waiting` và có listener chạy bên dưới: live line của primary hiện "Waiting for progress…" kèm số giây, cùng style với "Thinking".
+- Khi một thông báo đã tới được run: thêm một dòng step "Synced 2 changes from side run" trong group của run đó, để user thấy các run có nói chuyện với nhau.
+- Thông báo đang chờ turn kế: step hiện "Will tell <run> on its next turn".
+
+### 6.7 Delegate thiếu `agent` (cùng khu vực, lỗi đang gặp)
+
+- Trạng thái 2026-11-04: code **chưa sửa**, `delegate.rs:254` và `delegate-task.ts:100` vẫn trả lỗi "agent is required".
+- `delegate_task` thiếu `agent`, `role` và `continue`: dùng agent của chat gọi (`caller.agent`).
+    - Rust `parse_delegate` (`src-tauri/src/delegate.rs:251`) và TS `parseDelegateArgs` (`tasks/delegate-task.ts:96`) trả `agent` rỗng thay vì lỗi.
+    - `planTask` (`tasks/delegate-plan.ts:174`) thêm `|| caller.agent`.
+- Mô tả schema của `agent`: "left out: the calling agent".
+- Header `TaskCards.svelte:188` tách số task failed ra riêng, không gộp vào "complete".
+
+### 6.9 Sub-agent của CLI (R7)
+
+1. **Ledger ghi sub-agent bằng danh tính riêng.**
+    - `lane: 'subagent'`, `subId`: `tool_use_id` của Claude hoặc `threadId` con của Codex, `label` (`subagent_type`/`description` hoặc prompt), cùng run cha.
+    - Nguồn: event con có `change` (Claude qua `parent_tool_use_id`, Codex qua `child_events`).
+    - Kiểm tra: Edit/Write của sub-agent Claude có mang `change` như ở run cha không. Nếu không có thì ít nhất ghi path từ input của tool.
+2. **Kênh báo tới sub-agent.**
+    - **Codex:** steer thẳng thread con (`turn/steer` với `threadId` và turn id của con). Cần lưu turn id của từng thread con trong `codex_server.rs`, và thử xem app-server có nhận steer cho thread con không.
+    - **Claude:** không có kênh tới sub-agent. Báo cho run cha (steer), nội dung: "sub-agent <label> có thể vẫn đang sửa <path>, user vừa đổi file đó; khi nó báo xong, đọc lại file và giữ thay đổi của user". Phần còn lại dựa vào phát hiện ghi đè (6.5).
+3. **Nhả tin sang listener khi chỉ còn sub-agent chạy.**
+    - Vẫn cho nhả (đó là lúc user rảnh tay), nhưng prompt của listener phải có: sub-agent nào đang chạy, làm gì, đã ghi những file nào.
+    - Nếu yêu cầu mới cần sửa file mà sub-agent đang giữ: listener vẫn làm, và mục 2 ở trên báo ngay cho sub-agent (Codex) hoặc run cha (Claude).
+    - Phương án chặt hơn để chọn (câu hỏi mở 4): vào queue nếu sub-agent đang chạy đã từng ghi file.
+4. **Khi sub-agent xong:** AgentDeck gửi cho run cha bản tóm tắt lấy từ ledger, gồm file sub-agent đã đổi và file user/listener đã đổi trong lúc đó. Run cha không phải dựa vào lời sub-agent tự kể.
+5. **`AutoTurn` sau sub-agent nền của Claude:** thông báo đang chờ được gửi qua `tail::deliver` (`tail.rs:138`) trước khi CLI tự mở lượt. Nếu không kịp, gửi vào lượt kế tiếp của chat. Cần thêm một dạng "deliver không tạo reply riêng" cho thông báo.
+6. **Ghi đè do sub-agent:** cảnh báo ở 6.5 ghi rõ người ghi đè là sub-agent nào (`Explore · Scan docs`), hiện dưới reply của run cha và trên card "Subagent & background activity".
+7. **Trạng thái:** run cha chỉ còn chờ sub-agent thì hiện "Waiting for 1 background task · Explore" (`waitingLabel` đã có). Khi có listener chạy bên dưới, giữ dòng này ở reply trên (6.6).
+
+### 6.10 Flow log
+
+Thêm các dòng sau:
+
+- `ledger write path=… run=… lane=… intent=…`
+- `notify run=… via=steer|queued files=…`
+- `conflict path=… writer=… over=… kind=revert|overwrite`
+- `deliver=queue|listener reason=…`
+
+## 7. Thứ tự làm
+
+Mỗi nhóm là một nhánh `sync/w<k>-<tên>`. Viết test tái hiện trước, merge `--no-ff`.
+
+| Nhóm | Việc                                                                                                                                     | Test chứng minh                                                                                                                         |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| W0   | Test tái hiện đúng timeline mục 2 bằng logic thuần (ledger + gating)                                                                     | Đỏ trước khi sửa                                                                                                                        |
+| W1   | 6.7 delegate thiếu agent + header failed                                                                                                 | `delegate.rs` test, `delegate-task.test.ts`, test `planTask`                                                                            |
+| W2   | 6.4 gating                                                                                                                               | `git diff --check`, lint → queue; shell 25 giây → listener; `run_in_background` → listener                                              |
+| W3   | 6.1 ledger + ghi từ event (primary, listener, worker, sub-agent)                                                                         | Node test: ghi, đọc, chuẩn hoá path Windows                                                                                             |
+| W4   | 6.2 `agent_notify` + hàng chờ đầu turn                                                                                                   | `ag-adapters`: notify nhận `MergedIntoActive`; TS: pending được chèn đúng conversation                                                  |
+| W5   | 6.3 các trigger                                                                                                                          | Timeline mục 2: primary nhận thông báo trước 11:54:51                                                                                   |
+| W5b  | 6.9 sub-agent: ledger theo `subId`, steer thread con Codex, báo run cha của Claude, tóm tắt khi sub-agent xong, deliver trước `AutoTurn` | Node test: event con có `change` vào ledger đúng `subId`; `ag-adapters`: steer thread con; timeline mục 2 với người ghi đè là sub-agent |
+| W6   | 6.5 phát hiện ghi đè + UI khôi phục                                                                                                      | Timeline mục 2: xung đột `kind=revert`, nút khôi phục trả đúng nhãn ngắn                                                                |
+| W7   | 6.6 trạng thái hiển thị                                                                                                                  | Ảnh chụp app thật                                                                                                                       |
+| W8   | 6.8 flow log, cập nhật `docs/development`                                                                                                | Đọc log của một lần chạy thử                                                                                                            |
+
+W2 tự nó đã chặn đúng kịch bản mục 2. W3 đến W6 xử lý khi có việc nền thật (`pnpm dev`, build dài, worker `wait=false`).
+
+## 8. Kiểm tra
+
+- `node --experimental-strip-types --test` cho các file test liên quan.
+- `pnpm check` (svelte-check).
+- `cargo test -p ag-adapters` và `cargo clippy --workspace -- -D warnings`. Crate desktop cần VS dev shell (whisper-rs-sys).
+- Chạy lại kịch bản trên app thật:
+    1. Task chính sửa nhãn rồi chạy lint. Gửi "ghi ngắn gọn" → tin vào **queue**, không vào listener.
+    2. Task chính chạy `pnpm dev` (việc nền thật), gửi yêu cầu sửa nhãn → listener làm; primary nhận thông báo, không hoàn tác.
+    3. Ép hoàn tác (prompt primary cố tình đổi lại) → cảnh báo xung đột hiện, nút khôi phục đúng.
+    4. Worker `shared` sửa file parent đang giữ → parent nhận thông báo; report có danh sách file từ ledger.
+    5. Claude spawn sub-agent nền sửa `en.json`. Trong lúc đó user gửi "ghi ngắn gọn" (vào listener) → run cha được báo. Nếu sub-agent vẫn ghi đè thì cảnh báo hiện tên sub-agent.
+    6. Như bước 5 với Codex `spawnAgent` → thread con nhận steer và không hoàn tác.
+
+## 9. Giới hạn và rủi ro
+
+- Không chặn trước được ghi file của CLI, chỉ báo trước và phát hiện sau.
+- CLI có thể bỏ qua thông báo steer. Lưới an toàn ở 6.5 bắt các trường hợp đó.
+- Chi phí token: thông báo được gộp và cắt diff.
+- Bộ nhớ: lưu `after` tối đa 200 KB/file, chỉ trong phiên; ledger bị xoá khi đóng chat.
+- OpenCode và Antigravity chỉ được báo ở đầu turn kế.
+- Đọc file qua lệnh shell tuỳ ý (pipe, script) không bắt hết được, nên "ai đang giữ file" là gần đúng. Ghi file thì chính xác, vì lấy từ `change`.
+
+## 10. Câu hỏi mở
+
+1. Có xung đột thì AgentDeck **hỏi** (card + nút) hay **tự khôi phục** bản của yêu cầu mới hơn? Đề xuất: hỏi.
+2. Listener có được sửa file mà primary đang giữ không? Đề xuất: được, và primary được báo ngay (6.3). Phương án chặt hơn: đưa tin đó vào queue.
+3. Ngưỡng 20 giây cho shell chạy lâu có hợp lý với project của bạn không?
+4. Khi chỉ còn sub-agent đang chạy và nó đã từng ghi file: tin mới vẫn vào listener (kèm báo cho sub-agent / run cha) hay vào queue? Đề xuất: vào listener và báo, vì đó là lúc user rảnh tay.
+
+## 11. Trạng thái triển khai (2026-11-04)
+
+Đã làm (code + test node; `pnpm check` 0 lỗi, 188/188 test chat/tasks pass):
+
+- W1: delegate thiếu `agent` dùng agent của chat gọi (TS + Rust + schema); header card tách số `failed`.
+- W2: `isLongRunningWork` không còn đoán theo từ khoá; shell chạy quá 20 giây mới nhả lane (`SHELL_WAIT_MS`, timer trong `events.svelte.ts`); dev server (`browser_serve`) vẫn nhả ngay.
+- W3: ledger ghi file (`runs/change-ledger.ts` + `.svelte.ts`), ghi từ `tool_call`/`tool_result` có `change`, sub-agent của Claude ghi dưới `subId`; ledger đọc (`readPathOf`).
+- W4: `agent_notify` (Rust, `agent_runs.rs`) + hàng chờ đầu turn (`notices.svelte.ts`, chèn vào prompt ở `run.svelte.ts`).
+- W5: trigger 1 (user nhắn side run), 2 (file đổi → run khác đã đọc/ghi file đó), 3 (worker xong → parent nhận danh sách file từ ledger).
+- W6: phát hiện ghi đè (`revert`/`overwrite`), báo writer, card `LedgerConflicts.svelte` trên composer, nút khôi phục (`restore.ts`, chỉ khi file còn đúng bản của writer).
+- W7: live line "Waiting for progress" khi lane chính chờ và side run đang chạy.
+- W8 (một phần): flow log `ledger write`, `conflict`, `notify`, `deliver`.
+
+Chưa làm / cần kiểm:
+
+- W5b: Codex `turn/steer` tới thread con và `deliver` trước `AutoTurn` của Claude. Chưa có.
+- Trigger 4 (`depends_on`: prompt worker có danh sách file của dependency, lấy từ ledger) và trigger 6 (user lưu file trong editor: ghi vào ledger như run mới nhất, báo các run đang giữ file) đã làm ở lượt sau.
+- Dòng "Synced N changes" và "Will tell <run> on its next turn" (6.6) chưa có.
+- Rust (`agent_notify`, `lib.rs`) chưa compile: crate desktop không build được trên máy này (whisper-rs-sys).
+- Chưa chạy app thật: kịch bản mục 8 chưa tái hiện.
+- Work tray: shell > 20 giây không còn được đưa vào tray (`activity.svelte.ts` dùng `isLongRunningWork`, nay chỉ còn dev server).
+- Docs trong `docs/development` chưa cập nhật.
+- Chưa commit.
+
+### Cập nhật lượt sau
+
+- Tray: shell chạy quá 20 giây được đưa lên Work tray (`promoteShellCall`), không còn mất.
+- Dòng "Will tell the next turn about N changes" trên composer khi có thông báo đang chờ (`LedgerConflicts.svelte`). Dòng "Synced N changes" trong group chưa làm.
+- Docs: `docs/development/change-sync.md`.
+- `pnpm check`: 0 lỗi (cần `NODE_OPTIONS=--max-old-space-size=8192`, mặc định hết bộ nhớ). Test chat/tasks: 190/190.
+- Rust desktop: `cargo check -p agentdeck-desktop` thất bại do artifact trong `target/` hỏng (rustc `STATUS_STACK_BUFFER_OVERRUN` ở build script của tauri-plugin-fs, `can't find crate tauri`). Chưa xác minh được Rust desktop. Cần `cargo clean` (hoặc xoá `target/`) rồi build lại trong VS dev shell.
+- Chưa làm và lý do: W5b Codex steer tới thread con (cần protocol app-server thật để xác minh `expectedTurnId` của thread con); deliver `AutoTurn` của Claude (cần đường mới trong `tail.rs`); dòng "Synced N changes" trong group.
