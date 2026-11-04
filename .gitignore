@@ -36,3 +36,4 @@
 !apps/desktop/.env.development
 !apps/desktop/.env.production
 *.key.old
+.svelte-kit/
