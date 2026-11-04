@@ -16,7 +16,12 @@ import {
     type InflightRun,
     type ServerLike,
 } from './inflight';
-import { sessionTail, watchOutput } from '../../terminal/terminal-session';
+import {
+    sessionTail,
+    watchOutput,
+    type RunEnd,
+} from '../../terminal/terminal-session';
+import { sendSystemNotification } from '../../app/platform/system-notifications';
 import {
     endedByTask,
     keepsAfterSuccessfulTurn,
@@ -25,7 +30,7 @@ import {
 import { isLongRunningWork } from './run-lanes';
 
 export type ActivityStatus =
-    'running' | 'background' | 'ok' | 'fail' | 'stopped';
+    'running' | 'background' | 'ok' | 'fail' | 'stopped' | 'closed';
 export type Activity = {
     key: string;
     /** The tool id the CLI gave this call. Ids restart every turn, so the key adds a counter. */
@@ -929,6 +934,7 @@ export function trackTerminal(
         cwd?: string;
         startedAt: number;
     } | null,
+    end: RunEnd = 'done',
 ) {
     const current = terminalRuns.get(id);
     const step = terminalStep(current?.runId, run);
@@ -936,11 +942,16 @@ export function trackTerminal(
     if (current && (step === 'finish' || step === 'restart')) {
         terminalRuns.delete(id);
         const item = current.item;
-        item.status = 'ok';
+        item.status = end === 'closed' ? 'closed' : 'ok';
         item.endedAt = Date.now();
         const text = sessionTail(id, 200);
         if (text !== null) item.output = text.slice(-OUTPUT_CAP);
         record(item);
+        if (item.status === 'closed')
+            void sendSystemNotification(
+                'Terminal closed',
+                `${item.input} was cut off: its shell or tab closed before it finished.`,
+            );
         if (step === 'finish')
             updateInflight(
                 (state) =>

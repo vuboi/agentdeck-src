@@ -66,7 +66,9 @@ export type AgentEvent =
     | { kind: 'auto_turn'; reason: string }
     | { kind: 'raw'; source: string; label: string; line: string };
 
-export type TaskStatus = 'started' | 'progress' | 'done' | 'failed' | 'stopped';
+/** `closed`: the app closed while the task ran (set when a chat is restored), not the user or the agent. */
+export type TaskStatus =
+    'started' | 'progress' | 'done' | 'failed' | 'stopped' | 'closed';
 
 /** A tool the CLI would not run without approval. `allow` is what approves exactly this call. */
 export type PermissionRequest = {

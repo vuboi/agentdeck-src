@@ -55,7 +55,12 @@ type CommandBlock = Extract<Block, { kind: 'command' }>;
 type TaskEvent = Extract<AgentEvent, { kind: 'task' }>;
 
 /** A task that has ended: its late events do not reopen it. */
-const ENDED = new Set<TaskRecord['status']>(['done', 'failed', 'stopped']);
+const ENDED = new Set<TaskRecord['status']>([
+    'done',
+    'failed',
+    'stopped',
+    'closed',
+]);
 
 /** The card's task, from all the tasks of its call: running while any runs; otherwise failed if one failed, stopped if
  *  one was stopped, else done. Its label and summary are the last ones given. */
@@ -71,6 +76,8 @@ function cardTask(tasks: Record<string, TaskRecord>): TaskRecord {
         status = 'failed';
     } else if (all.some((task) => task.status === 'stopped')) {
         status = 'stopped';
+    } else if (all.some((task) => task.status === 'closed')) {
+        status = 'closed';
     }
     const starts = all.flatMap((task) =>
         task.startedAt === undefined ? [] : [task.startedAt],
@@ -130,6 +137,36 @@ export function stopCallTasks(call: CommandBlock) {
     } else if (call.task && !ENDED.has(call.task.status)) {
         call.task = { ...call.task, status: 'stopped', endedAt: now };
     }
+}
+
+/** Ends the open tasks of a call as closed: AgentDeck closed while they ran (see `closeRestoredTasks`). */
+function closeCallTasks(call: CommandBlock) {
+    const now = Date.now();
+    if (call.tasks) {
+        for (const task of Object.values(call.tasks)) {
+            if (ENDED.has(task.status)) continue;
+            task.status = 'closed';
+            task.endedAt = now;
+        }
+        call.task = cardTask(call.tasks);
+    } else if (call.task && !ENDED.has(call.task.status)) {
+        call.task = { ...call.task, status: 'closed', endedAt: now };
+    }
+}
+
+/** A restored chat's background tasks that were still open: the app closed while they ran. Closes them (in place) and
+ *  returns how many calls were closed. */
+export function closeRestoredTasks(blocks: Block[]): number {
+    let closed = 0;
+    for (const block of blocks) {
+        if (block.kind !== 'command') continue;
+        if (block.task && !ENDED.has(block.task.status)) {
+            closeCallTasks(block);
+            closed++;
+        }
+        if (block.children) closed += closeRestoredTasks(block.children);
+    }
+    return closed;
 }
 
 /** Child events that came before the call they belong to was drawn (the call's start is late or was lost). They wait

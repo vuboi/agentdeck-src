@@ -665,7 +665,10 @@
                                                 ? 'done'
                                                 : item.task.status === 'failed'
                                                   ? 'failed'
-                                                  : 'working'}</span
+                                                  : item.task.status ===
+                                                      'closed'
+                                                    ? 'closed'
+                                                    : 'working'}</span
                                         >
                                         <span
                                             class="shrink-0 underline decoration-dotted underline-offset-2"

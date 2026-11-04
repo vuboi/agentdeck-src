@@ -233,6 +233,10 @@ fn seconds_of(value: &Value) -> Option<f64> {
 }
 
 pub fn parse_delegate(args: &Value) -> Result<DelegateArgs, String> {
+    // A blank id is not "no continue": it would silently start a new task.
+    if matches!(&args["continue"], Value::String(value) if value.trim().is_empty()) {
+        return Err("continue must be the id of the task to continue".into());
+    }
     let continue_id = text_of(&args["continue"]);
     // A role names its agent in Settings > Task roles, so it needs none here.
     let role = text_of(&args["role"]);

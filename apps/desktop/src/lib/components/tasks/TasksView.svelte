@@ -485,6 +485,7 @@
             ok: { label: 'Done', tone: 'text-emerald-500' },
             fail: { label: 'Failed', tone: 'text-destructive' },
             stopped: { label: 'Stopped', tone: 'text-muted-foreground' },
+            closed: { label: 'Closed', tone: 'text-muted-foreground' },
         };
     /** What a call asked, for its box: the command of a shell call (`{"command":"...","description":"..."}`), else the text as it is. */
     function askedOf(input: string): string {

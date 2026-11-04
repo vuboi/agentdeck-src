@@ -148,6 +148,7 @@ async function harness({
             loadModels: async () => {},
             reloadModels: async () => {},
         },
+        './agent-status.svelte': { loadAgentStatus: async () => {} },
         'svelte/reactivity': { SvelteMap: Map, SvelteSet: Set },
     };
     const cache = new Map();

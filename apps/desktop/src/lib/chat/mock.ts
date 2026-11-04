@@ -29,7 +29,7 @@ export type Session = {
 
 /** How far one sub-agent or background job a tool call started has got. */
 export type TaskRecord = {
-    status: 'started' | 'progress' | 'done' | 'failed' | 'stopped';
+    status: 'started' | 'progress' | 'done' | 'failed' | 'stopped' | 'closed';
     label?: string;
     summary?: string;
     tools?: number;

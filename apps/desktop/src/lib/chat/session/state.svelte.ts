@@ -14,7 +14,8 @@ import {
     setPref,
     setPrefs,
 } from '../../app/platform/prefs';
-import { applyAgentEvent } from '../agent-reply';
+import { applyAgentEvent, closeRestoredTasks } from '../agent-reply';
+import { sendSystemNotification } from '../../app/platform/system-notifications';
 import { answerCopilotPermission } from '../agent';
 import { samePath } from '../../files/paths';
 import { listen } from '../../app/platform/tauri-event';
@@ -604,6 +605,11 @@ const localReady = loadLocalState().then(
         if (!saved) return;
         // A reply that was still running when the app closed is not running any more: its open blocks are closed (as a
         // stopped turn closes them), and its chat is idle, or the send button would stay a stop button after a reload.
+        // Background tasks still open when the app closed are closed too (their CLI went with the app), and said once.
+        let closedTasks = 0;
+        for (const list of Object.values(saved.messages ?? {}))
+            for (const message of list)
+                closedTasks += closeRestoredTasks(message.blocks);
         for (const [id, list] of Object.entries(saved.messages ?? {}))
             localMessages[id] = list.map((message) => ({
                 ...message,
@@ -651,6 +657,12 @@ const localReady = loadLocalState().then(
                 workspace.sessions.push(item);
             rememberSessionPlacement(item.id, item.projectId, 'agentdeck');
         }
+        if (closedTasks > 0)
+            void sendSystemNotification(
+                'Background task closed',
+                `${closedTasks} background task(s) were cut off when AgentDeck closed.`,
+                { evenFocused: true },
+            );
         if (saved.activeId && !workspace.activeId)
             workspace.activeId = saved.activeId;
         // Screenshots of these chats: their files are drawn again from the screenshot index (the saved copy has none).
