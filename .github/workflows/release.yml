@@ -154,5 +154,17 @@ jobs:
           DRAFT: ${{ github.event.inputs.draft == 'true' && '--draft' || '' }}
         shell: bash
         run: |
-          gh release create "v$VERSION" dist/* -R "$PUBLIC_REPO" \
-            --title "AgentDeck v$VERSION" --notes-file notes.md $DRAFT
+          # GitHub answers 502/404 now and then while assets upload (v0.1.76 and v0.1.77 failed that way). A failed
+          # attempt may leave the release half made: the next attempt uploads over it instead of creating it again.
+          for attempt in 1 2 3; do
+            if gh release view "v$VERSION" -R "$PUBLIC_REPO" >/dev/null 2>&1; then
+              gh release upload "v$VERSION" dist/* -R "$PUBLIC_REPO" --clobber && exit 0
+            else
+              gh release create "v$VERSION" dist/* -R "$PUBLIC_REPO" \
+                --title "AgentDeck v$VERSION" --notes-file notes.md $DRAFT && exit 0
+            fi
+            echo "attempt $attempt failed, retrying"
+            sleep 30
+          done
+          echo "publish failed after 3 attempts" >&2
+          exit 1

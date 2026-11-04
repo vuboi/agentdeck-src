@@ -1281,14 +1281,22 @@
         {#if history.scanning}
             <!-- Start-up with no cached list: covers the empty tree until the chats are read. A cached list is shown at once. -->
             <div
-                class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background px-6 text-center text-sm text-muted-foreground"
+                class="absolute inset-0 z-10 flex flex-col gap-2 overflow-hidden bg-background p-2"
                 role="status"
+                aria-label="Loading chats"
             >
-                <ZIcon
-                    zType={'lucideLoaderCircle' as ZIconName}
-                    class="size-5 animate-spin text-primary"
-                />
-                <span>Scanning AI agents on this machine…</span>
+                {#each [0.45, 0.7, 0.55, 0.8, 0.6] as width, index (index)}
+                    <div
+                        class="flex shrink-0 animate-pulse flex-col gap-1.5 rounded-md px-2 py-2"
+                        style:animation-delay="{index * 120}ms"
+                    >
+                        <div
+                            class="h-3 rounded bg-muted"
+                            style:width="{width * 100}%"
+                        ></div>
+                        <div class="h-2.5 w-1/3 rounded bg-muted/60"></div>
+                    </div>
+                {/each}
             </div>
         {/if}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
