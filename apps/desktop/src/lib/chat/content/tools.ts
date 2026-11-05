@@ -9,6 +9,7 @@ export const TOOLS: Tool[] = [
   { value: 'Preview', label: 'Preview', icon: 'lucideGlobe' as ZIconName },
   { value: 'Images', label: 'Images', icon: 'lucideImage' as ZIconName },
   { value: 'Tasks', label: 'Tasks', icon: 'lucideListChecks' as ZIconName },
+  { value: 'Plans', label: 'Plans', icon: 'lucideClipboardList' as ZIconName },
   { value: 'Store', label: 'Store', icon: 'lucidePuzzle' as ZIconName },
   { value: 'Workflow', label: 'Workflow', icon: 'lucideWorkflow' as ZIconName },
   { value: 'Usage', label: 'Usage', icon: 'lucideActivity' as ZIconName },

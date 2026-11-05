@@ -5,6 +5,7 @@
   import DevTools from '../browser/DevTools.svelte';
   import FileViewer from '../files/FileViewer.svelte';
   import TasksView from '../tasks/TasksView.svelte';
+  import PlansView from '../plans/PlansView.svelte';
   import McpView from '../settings/McpView.svelte';
   import StoreView from '../store/StoreView.svelte';
   import WorkflowView from '../tasks/WorkflowView.svelte';
@@ -25,6 +26,8 @@
   <ImageGenerator />
 {:else if tool === 'Tasks' || tool === 'Audit'}
   <TasksView />
+{:else if tool === 'Plans'}
+  <PlansView />
 {:else if tool === 'Workflow'}
   <WorkflowView />
 {:else if tool === 'DevTools'}
