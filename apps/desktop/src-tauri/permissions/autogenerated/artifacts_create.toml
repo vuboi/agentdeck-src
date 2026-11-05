@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-artifacts-create"
+description = "Enables the artifacts_create command without any pre-configured scope."
+commands.allow = ["artifacts_create"]
+
+[[permission]]
+identifier = "deny-artifacts-create"
+description = "Denies the artifacts_create command without any pre-configured scope."
+commands.deny = ["artifacts_create"]

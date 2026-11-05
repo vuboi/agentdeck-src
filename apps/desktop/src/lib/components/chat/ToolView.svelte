@@ -1,52 +1,60 @@
 <script lang="ts">
-  import { ZIcon } from '@shival99/z-ui-svelte';
-  import { toolOf } from '../../chat/content/tools';
-  import BrowserView from '../browser/BrowserView.svelte';
-  import DevTools from '../browser/DevTools.svelte';
-  import FileViewer from '../files/FileViewer.svelte';
-  import TasksView from '../tasks/TasksView.svelte';
-  import PlansView from '../plans/PlansView.svelte';
-  import McpView from '../settings/McpView.svelte';
-  import StoreView from '../store/StoreView.svelte';
-  import WorkflowView from '../tasks/WorkflowView.svelte';
-  import UsageView from '../settings/UsageView.svelte';
-  import ProjectActivityView from '../tasks/ProjectActivityView.svelte';
-  import ImageGenerator from '../files/ImageGenerator.svelte';
+    import { ZIcon } from '@shival99/z-ui-svelte';
+    import { toolOf } from '../../chat/content/tools';
+    import BrowserView from '../browser/BrowserView.svelte';
+    import DevTools from '../browser/DevTools.svelte';
+    import FileViewer from '../files/FileViewer.svelte';
+    import TasksView from '../tasks/TasksView.svelte';
+    import PlansView from '../plans/PlansView.svelte';
+    import CanvasView from '../canvas/CanvasView.svelte';
+    import McpView from '../settings/McpView.svelte';
+    import StoreView from '../store/StoreView.svelte';
+    import WorkflowView from '../tasks/WorkflowView.svelte';
+    import UsageView from '../settings/UsageView.svelte';
+    import ProjectActivityView from '../tasks/ProjectActivityView.svelte';
+    import ImageGenerator from '../files/ImageGenerator.svelte';
 
-  // The body of a workspace tool. Same view in the right panel and in the detached modal.
-  let { tool }: { tool: string } = $props();
-  const current = $derived(toolOf(tool));
+    // The body of a workspace tool. Same view in the right panel and in the detached modal.
+    let { tool }: { tool: string } = $props();
+    const current = $derived(toolOf(tool));
 </script>
 
 {#if tool === 'Explore' || tool === 'Files' || tool === 'Diff'}
-  <FileViewer />
+    <FileViewer />
 {:else if tool === 'Preview'}
-  <BrowserView />
+    <BrowserView />
 {:else if tool === 'Images'}
-  <ImageGenerator />
+    <ImageGenerator />
 {:else if tool === 'Tasks' || tool === 'Audit'}
-  <TasksView />
+    <TasksView />
 {:else if tool === 'Plans'}
-  <PlansView />
+    <PlansView />
+{:else if tool === 'Canvas'}
+    <CanvasView />
 {:else if tool === 'Workflow'}
-  <WorkflowView />
+    <WorkflowView />
 {:else if tool === 'DevTools'}
-  <DevTools embedded />
+    <DevTools embedded />
 {:else if tool === 'MCP'}
-  <McpView />
+    <McpView />
 {:else if tool === 'Store'}
-  <StoreView />
+    <StoreView />
 {:else if tool === 'Usage'}
-  <UsageView />
+    <UsageView />
 {:else if tool === 'Activity'}
-  <ProjectActivityView />
+    <ProjectActivityView />
 {:else}
-
-<div class="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground" role="tabpanel" aria-label={current.label}>
-  <ZIcon zType={current.icon} class="size-8 opacity-60" />
-  <h2 class="text-sm font-medium text-foreground">{current.label}</h2>
-  <p class="m-0 max-w-56 text-sm leading-normal">
-    {current.value === 'Preview' ? 'Your browser preview will appear here.' : `No ${current.label.toLowerCase()} data yet.`}
-  </p>
-</div>
+    <div
+        class="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
+        role="tabpanel"
+        aria-label={current.label}
+    >
+        <ZIcon zType={current.icon} class="size-8 opacity-60" />
+        <h2 class="text-sm font-medium text-foreground">{current.label}</h2>
+        <p class="m-0 max-w-56 text-sm leading-normal">
+            {current.value === 'Preview'
+                ? 'Your browser preview will appear here.'
+                : `No ${current.label.toLowerCase()} data yet.`}
+        </p>
+    </div>
 {/if}

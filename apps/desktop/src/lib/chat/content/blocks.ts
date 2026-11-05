@@ -7,6 +7,12 @@ import type { Block } from '../mock';
 import { ROLE_STATUS, roleOfCall } from '../../agents/task-roles';
 import { askAsStep } from '../recovery/questions';
 import {
+    artifactFences,
+    isArtifactCommand,
+    withoutArtifactFences,
+    type ArtifactFence,
+} from '../../canvas/fence';
+import {
     AGENT,
     ASK,
     CREATE,
@@ -40,6 +46,8 @@ export type Segment =
           kind: 'proposal';
           item: CommandBlock;
       }
+    | { kind: 'artifact'; item: CommandBlock }
+    | { kind: 'artifact_fence'; response: Block; fence: ArtifactFence }
     | /** Calls of delegate_task: each is a card of its own, not a line among the steps. */ {
           kind: 'tasks';
           items: CommandBlock[];
@@ -124,6 +132,10 @@ const askSteps = new WeakMap<
     Block,
     { text: string; step: CommandBlock | null }
 >();
+const fenceCache = new WeakMap<
+    Block,
+    { source: string; response: Block; fences: ArtifactFence[] }
+>();
 function askStepOf(
     block: Extract<Block, { kind: 'response' }>,
     askOf: AskOf,
@@ -174,7 +186,28 @@ export function segments(blocks: Block[], askOf: AskOf = askAsStep): Segment[] {
         }
         if (block.kind !== 'command') {
             flush();
-            out.push({ kind: 'block', block });
+            if (block.kind === 'response' && !block.streaming) {
+                let cached = fenceCache.get(block);
+                if (!cached || cached.source !== block.text) {
+                    const fences = artifactFences(block.text);
+                    cached = {
+                        source: block.text,
+                        response: {
+                            ...block,
+                            text: withoutArtifactFences(block.text, fences),
+                        },
+                        fences,
+                    };
+                    fenceCache.set(block, cached);
+                }
+                out.push({ kind: 'block', block: cached.response });
+                for (const fence of cached.fences)
+                    out.push({
+                        kind: 'artifact_fence',
+                        response: block,
+                        fence,
+                    });
+            } else out.push({ kind: 'block', block });
             // The questions in an answer stay in the activity list as a step to open, not only as the card that closes once answered.
             // Read once the answer is written out, as the question card is (ChatBlock): a streaming answer is not parsed per delta.
             const ask =
@@ -197,6 +230,11 @@ export function segments(blocks: Block[], askOf: AskOf = askAsStep): Segment[] {
         if (kindOfCommand(block.command) === 'propose_session') {
             flush();
             out.push({ kind: 'proposal', item: block });
+            continue;
+        }
+        if (isArtifactCommand(block.command)) {
+            flush();
+            out.push({ kind: 'artifact', item: block });
             continue;
         }
         if (block.task) {
@@ -239,6 +277,14 @@ function unchanged(old: Segment, next: Segment): boolean {
         return sameItems(old.items, next.items);
     if (old.kind === 'proposal' && next.kind === 'proposal')
         return old.item === next.item;
+    if (old.kind === 'artifact' && next.kind === 'artifact')
+        return old.item === next.item;
+    if (old.kind === 'artifact_fence' && next.kind === 'artifact_fence')
+        return (
+            old.response === next.response &&
+            old.fence.start === next.fence.start &&
+            old.fence.content === next.fence.content
+        );
     if (old.kind === 'commands' && next.kind === 'commands')
         return (
             sameItems(old.items, next.items) &&

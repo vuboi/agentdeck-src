@@ -36,10 +36,17 @@ export function afterSteps(parts: Segment[], position: number) {
             part.kind === 'plan' ||
             part.kind === 'tasks' ||
             part.kind === 'agent_activity' ||
-            part.kind === 'proposal'
+            part.kind === 'proposal' ||
+            part.kind === 'artifact' ||
+            part.kind === 'artifact_fence'
         )
             return false;
-        if (part.block.kind === 'thinking' && !part.block.text.trim()) continue;
+        if (
+            part.kind === 'block' &&
+            part.block.kind === 'thinking' &&
+            !part.block.text.trim()
+        )
+            continue;
         return false;
     }
     return false;

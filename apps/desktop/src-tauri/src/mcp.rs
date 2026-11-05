@@ -573,6 +573,7 @@ pub(crate) fn tool_list() -> Value {
             .chain(crate::index::tool_defs())
             .chain(crate::devtools::tool_defs())
             .chain(crate::plans::tool_defs())
+            .chain(crate::artifacts::tool_defs())
             .chain(crate::delegate::tool_defs())
             .chain(crate::page_memory::tool_defs())
             .chain([
@@ -668,6 +669,12 @@ async fn call_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> Val
     }
     if crate::plans::is_tool(name) {
         return match crate::plans::call(app, name, args, chat).await {
+            Ok(text) => text_reply(text),
+            Err(error) => error_reply(error),
+        };
+    }
+    if crate::artifacts::is_tool(name) {
+        return match crate::artifacts::call(app, name, args, chat).await {
             Ok(text) => text_reply(text),
             Err(error) => error_reply(error),
         };
