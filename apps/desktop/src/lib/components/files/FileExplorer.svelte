@@ -29,11 +29,7 @@
     // Folders come first, then files, each by name.
     const sortEntries = (entries: Entry[]) =>
         [...entries].sort((a, b) =>
-            a.dir === b.dir
-                ? a.name.localeCompare(b.name)
-                : a.dir
-                  ? -1
-                  : 1,
+            a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1,
         );
 
     // The files are listed ahead of time, so the search opens full.
@@ -313,7 +309,10 @@
             )?.dir
         )
             return;
-        if (root) openProjectFile(node.id.slice(1), root);
+        if (root)
+            openProjectFile(node.id.slice(1), root, undefined, {
+                fromTree: true,
+            });
     }
 
     const parentOf = (id: string) => id.slice(0, id.lastIndexOf('/'));

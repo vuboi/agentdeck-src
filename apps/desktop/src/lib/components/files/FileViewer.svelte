@@ -253,7 +253,8 @@
         const now = { opened: viewer.opened, active: viewer.active };
         if (now.opened === seen.opened && now.active === seen.active) return;
         seen = now;
-        treeOnly = false;
+        // A file opened from the tree keeps the tree beside it (see openInViewer).
+        if (!viewer.fromTree) treeOnly = false;
     });
 
     const arrow =

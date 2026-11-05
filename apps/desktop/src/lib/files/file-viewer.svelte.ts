@@ -15,6 +15,8 @@ export const viewer = $state({
     side: { open: false, mode: 'files' as 'files' | 'changes', width: 240 },
     /** Counts the opens, the same file again included: a narrow Files tool shows the file each time. */
     opened: 0,
+    /** The last open came from the tree itself: a narrow panel keeps the tree beside the file then. */
+    fromTree: false,
 });
 
 /** Ids differ from the content tabs' (the path): the same file open in both keeps two separate unsaved drafts. */
@@ -53,7 +55,7 @@ export function openInViewer(
     path: string,
     root: string,
     view?: 'file' | 'changes',
-    options?: { revealPanel?: boolean },
+    options?: { revealPanel?: boolean; fromTree?: boolean },
 ) {
     const id = viewerId(path);
     const open = viewer.tabs.find((tab) => tab.id === id);
@@ -68,6 +70,7 @@ export function openInViewer(
         });
     else if (view) open.view = view;
     viewer.active = id;
+    viewer.fromTree = options?.fromTree === true;
     viewer.opened++;
     // Opening a file from chat should give the editor the whole workspace. Keep Explore selected so a later manual
     // panel reveal shows this file; reveal the panel only for an explicit side-panel action.
@@ -83,7 +86,7 @@ export function openProjectFile(
     path: string,
     projectRoot: string,
     view?: 'file' | 'changes',
-    options?: { revealPanel?: boolean },
+    options?: { revealPanel?: boolean; fromTree?: boolean },
 ) {
     const full = resolveInProject(path, projectRoot);
     openInViewer(full, fileRootOf(full, projectRoot), view, options);
