@@ -10,7 +10,7 @@ In chat, use `/plan <goal>` to ask an agent to write and save a plan, or `/plans
 
 ## Canvas
 
-Open **Canvas** in the right panel to browse artifacts for a project and choose a saved version. HTML and SVG render in a restricted sandbox; Markdown is rendered as a document and code is read-only. Use the source toggle to inspect the original content, Copy to copy it, or Save as file to write a copy under `docs/`.
+Open **Canvas** in the right panel to browse artifacts for a project and choose a saved version. HTML and SVG render in a restricted sandbox; Markdown is rendered as a document and code is read-only. Use the source toggle to inspect the original content, Copy to copy it, or Save as file to open the native Save As dialog for the selected version.
 
 Artifacts created in the current chat open in Canvas and appear as a card in the conversation. Each update creates a version. Delete asks for confirmation and removes the artifact and its saved versions from `docs/artifacts/`.
 

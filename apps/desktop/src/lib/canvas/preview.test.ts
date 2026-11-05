@@ -44,3 +44,14 @@ test('Canvas iframe has only script permission and no unsafe sandbox flags', asy
         /allow-same-origin|allow-forms|allow-popups|allow-top-navigation/,
     );
 });
+
+test('Save as copies the selected version through the native dialog', async () => {
+    const component = await readFile(
+        new URL('../components/canvas/CanvasView.svelte', import.meta.url),
+        'utf8',
+    );
+    assert.match(component, /invoke<string \| null>\('file_copy_as'/);
+    assert.match(component, /joinPath\(current\.path, version\.file\)/);
+    assert.doesNotMatch(component, /invoke\('file_write'/);
+    assert.match(component, /else toast\.info\('Save cancelled'\)/);
+});

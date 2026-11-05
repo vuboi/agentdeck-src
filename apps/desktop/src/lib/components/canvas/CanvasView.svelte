@@ -12,6 +12,7 @@
     } from '../../chat/sessions.svelte';
     import { toast } from '../../app/platform/toast';
     import { TRIGGER_ON } from '../../app/ui/popover';
+    import { joinPath } from '../../files/paths';
     import Markdown from '../ui/Markdown.svelte';
     import {
         loadArtifacts,
@@ -118,28 +119,15 @@
         }
     }
     async function saveCopy() {
-        if (!root || !current) return;
+        if (!root || !current || !version) return;
         saving = true;
         try {
-            const ext =
-                current.kind === 'markdown'
-                    ? 'md'
-                    : current.kind === 'code'
-                      ? 'txt'
-                      : current.kind;
-            const slug =
-                current.title
-                    .toLowerCase()
-                    .replace(/[^a-z0-9]+/g, '-')
-                    .replace(/^-|-$/g, '')
-                    .slice(0, 48) || current.id;
             const { invoke } = await import('@tauri-apps/api/core');
-            await invoke('file_write', {
-                root,
-                path: `docs/${slug}.${ext}`,
-                text: artifactState.content,
+            const saved = await invoke<string | null>('file_copy_as', {
+                path: joinPath(current.path, version.file),
             });
-            toast.success(`Saved to docs/${slug}.${ext}`);
+            if (saved) toast.success(`Saved artifact to ${saved}`);
+            else toast.info('Save cancelled');
         } catch (error) {
             toast.error(`Could not save artifact: ${String(error)}`);
         } finally {
