@@ -41,6 +41,29 @@ test('ignores malformed, unsupported, and incomplete fences', () => {
     assert.deepEqual(artifactFences(source), []);
 });
 
+test('skips an artifact fence quoted inside another code fence', () => {
+    const source = [
+        'Use this format:',
+        '````markdown',
+        '```agentdeck-artifact title="Example" kind="html"',
+        '<b>x</b>',
+        '```',
+        '````',
+        '```agentdeck-artifact title="Real" kind="svg"',
+        '<svg/>',
+        '```',
+    ].join('\r\n');
+    const fences = artifactFences(source);
+    assert.deepEqual(
+        fences.map((fence) => [fence.title, fence.content]),
+        [['Real', '<svg/>']],
+    );
+    assert.equal(
+        withoutArtifactFences(source, fences),
+        source.slice(0, fences[0].start).trim(),
+    );
+});
+
 test('recognizes only built-in artifact MCP commands for chat cards', () => {
     assert.equal(isArtifactCommand('artifact_create {"title":"x"}'), true);
     assert.equal(

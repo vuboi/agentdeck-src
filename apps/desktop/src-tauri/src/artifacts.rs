@@ -61,6 +61,8 @@ pub struct ArtifactListItem {
     pub language: String,
     pub agent: String,
     pub chat: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_key: Option<String>,
     pub created: String,
     pub updated: String,
     pub versions: Vec<ArtifactVersion>,
@@ -458,6 +460,7 @@ pub fn list(root: &Path) -> Result<Vec<ArtifactListItem>, String> {
                 language: meta.language,
                 agent: meta.agent,
                 chat: meta.chat,
+                source_key: meta.source_key,
                 created: meta.created,
                 updated: meta.updated,
                 versions: meta.versions,
@@ -509,7 +512,11 @@ pub async fn call(
     args: &Value,
     chat: &str,
 ) -> Result<String, String> {
-    let root = PathBuf::from(crate::index::root_of(chat, args)?);
+    let root = PathBuf::from(if name == "artifact_list" || name == "artifact_read" {
+        crate::index::root_of(chat, args)?
+    } else {
+        crate::index::write_root_of(chat, args)?
+    });
     match name {
         "artifact_create" => {
             let (meta, _) = create(

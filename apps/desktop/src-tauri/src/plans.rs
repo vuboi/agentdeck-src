@@ -578,9 +578,8 @@ pub fn write(root: &Path, mut req: WriteReq) -> Result<PlanInfo, String> {
         .filter(|text| parse_fm(text).keys.is_empty());
     if let Some(legacy_body) = legacy_body {
         fm = ensure_frontmatter(&path, legacy_body, Some(status));
-    } else {
-        fm.body = req.body;
     }
+    fm.body = req.body;
     let title = if legacy_body.is_some() {
         key(&fm, "title")
             .map(str::to_string)
@@ -739,7 +738,11 @@ pub async fn call(
     args: &Value,
     chat: &str,
 ) -> Result<String, String> {
-    let root = PathBuf::from(crate::index::root_of(chat, args)?);
+    let root = PathBuf::from(if name == "plan_list" || name == "plan_read" {
+        crate::index::root_of(chat, args)?
+    } else {
+        crate::index::write_root_of(chat, args)?
+    });
     let result = match name {
         "plan_list" => list(&root, args["status"].as_str())?
             .into_iter()
@@ -1024,7 +1027,7 @@ mod tests {
     }
 
     #[test]
-    fn updating_a_legacy_plan_adds_frontmatter_without_changing_its_body() {
+    fn updating_a_legacy_plan_adds_frontmatter_and_applies_the_new_body() {
         let root = temp();
         let path = root.join("docs/plans/legacy.md");
         fs::create_dir_all(path.parent().expect("parent")).expect("plans dir");
@@ -1042,7 +1045,7 @@ mod tests {
         assert!(header.contains("title: Legacy heading"));
         assert!(header.contains("source: manual"));
         assert!(header.contains(&format!("created: {created}")));
-        assert_eq!(kept_body, body);
+        assert_eq!(kept_body, "replacement body");
         assert_eq!(info.agent, "");
         assert_eq!(info.chat, "");
         fs::remove_dir_all(root).expect("cleanup");

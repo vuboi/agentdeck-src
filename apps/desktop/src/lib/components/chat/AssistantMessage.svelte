@@ -182,6 +182,7 @@
                 fence={segment.fence}
                 sourceKey={segment.sourceKey}
                 sessionId={workspace.activeId}
+                startedAt={message.startedAt}
             />
         {:else if segment.kind === 'tasks'}
             <TaskCards items={segment.items} />

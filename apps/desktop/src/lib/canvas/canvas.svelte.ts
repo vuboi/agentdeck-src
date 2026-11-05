@@ -18,6 +18,8 @@ export type ArtifactInfo = {
     language: string;
     agent: string;
     chat: string;
+    /** Set for an artifact saved from a fenced block in a reply. */
+    sourceKey?: string;
     created: string;
     updated: string;
     versions: ArtifactVersion[];
@@ -42,29 +44,31 @@ if (inTauri() && !isPreviewCopy()) {
             listen<{ root: string; id: string; version: number; chat: string }>(
                 'artifact-changed',
                 ({ payload }) => {
-                    const state = stateFor(payload.root);
-                    if (payload.chat && payload.chat === workspace.activeId) {
-                        const session = activeSession();
-                        const activeRoot = session ? sessionCwd(session) : null;
-                        if (activeRoot && samePath(activeRoot, payload.root)) {
-                            layout.activeTool = 'Canvas';
-                            void loadArtifacts(payload.root, true).then(() =>
-                                selectArtifact(
-                                    payload.root,
-                                    payload.id,
-                                    payload.version,
-                                ),
-                            );
-                            return;
-                        }
+                    // Rust sends the root with forward slashes; Canvas keys its state by the chat's folder as the UI spells it.
+                    const session = activeSession();
+                    const activeRoot = session ? sessionCwd(session) : null;
+                    const isActiveRoot =
+                        !!activeRoot && samePath(activeRoot, payload.root);
+                    const root = isActiveRoot
+                        ? activeRoot
+                        : (Object.keys(canvasState).find((key) =>
+                              samePath(key, payload.root),
+                          ) ?? payload.root);
+                    const state = stateFor(root);
+                    if (
+                        payload.chat &&
+                        payload.chat === workspace.activeId &&
+                        isActiveRoot
+                    ) {
+                        layout.activeTool = 'Canvas';
+                        void loadArtifacts(root, true).then(() =>
+                            selectArtifact(root, payload.id, payload.version),
+                        );
+                        return;
                     }
                     if (state.selected === payload.id)
-                        void loadArtifacts(payload.root, true).then(() =>
-                            selectArtifact(
-                                payload.root,
-                                payload.id,
-                                payload.version,
-                            ),
+                        void loadArtifacts(root, true).then(() =>
+                            selectArtifact(root, payload.id, payload.version),
                         );
                 },
             ),

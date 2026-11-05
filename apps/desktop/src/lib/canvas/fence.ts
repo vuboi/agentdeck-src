@@ -25,23 +25,52 @@ export function isArtifactCommand(command: string): boolean {
     );
 }
 
-/** Finds complete, plain fenced artifact blocks in a finished assistant reply. */
+/** Finds complete, plain fenced artifact blocks in a finished assistant reply. A fence written inside another code fence
+ *  (a reply quoting the format) is only an example and is skipped. */
 export function artifactFences(source: string): ArtifactFence[] {
     const found: ArtifactFence[] = [];
-    const pattern =
-        /^```agentdeck-artifact\s+([^\r\n]*)\r?\n([\s\S]*?)^```\s*$/gm;
-    for (const match of source.matchAll(pattern)) {
-        const title = /(?:^|\s)title="([^"\r\n]{1,160})"/.exec(match[1])?.[1];
+    const lines = /^(`{3,}|~{3,})([^\r\n]*)$/gm;
+    let open: {
+        marker: string;
+        start: number;
+        body: number;
+        header: string | null;
+    } | null = null;
+    for (const match of source.matchAll(lines)) {
+        const [line, marker, info] = match;
+        const at = match.index ?? 0;
+        if (!open) {
+            const header = /^agentdeck-artifact\s+(.*)$/.exec(info.trim());
+            open = {
+                marker,
+                start: at,
+                body: source.indexOf('\n', at) + 1 || source.length,
+                header: marker === '```' && header ? header[1] : null,
+            };
+            continue;
+        }
+        if (
+            marker[0] !== open.marker[0] ||
+            marker.length < open.marker.length ||
+            info.trim()
+        )
+            continue;
+        const header = open.header;
+        const body = open.body;
+        const start = open.start;
+        open = null;
+        if (header === null) continue;
+        const title = /(?:^|\s)title="([^"\r\n]{1,160})"/.exec(header)?.[1];
         const kind = /(?:^|\s)kind="(html|markdown|svg|code)"/.exec(
-            match[1],
+            header,
         )?.[1] as ArtifactKind | undefined;
-        if (!title || !kind || match.index === undefined) continue;
+        if (!title || !kind) continue;
         found.push({
             title,
             kind,
-            content: match[2].replace(/\r?\n$/, ''),
-            start: match.index,
-            end: match.index + match[0].length,
+            content: source.slice(body, at).replace(/\r?\n$/, ''),
+            start,
+            end: at + line.length,
         });
     }
     return found;

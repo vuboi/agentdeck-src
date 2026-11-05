@@ -105,6 +105,26 @@ pub(crate) fn root_of(chat: &str, args: &Value) -> Result<String, String> {
     })
 }
 
+/// Root for a tool that writes into the project: the chat's own folder when AgentDeck knows it, so an agent cannot
+/// write plans or artifacts into another folder by passing `root`. A chat with no known folder still passes `root`.
+pub(crate) fn write_root_of(chat: &str, args: &Value) -> Result<String, String> {
+    let known = ROOTS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "index busy")?
+        .get(chat)
+        .map(|root| norm(root));
+    let Some(known) = known else {
+        return root_of(chat, args);
+    };
+    match args["root"].as_str().filter(|root| !root.is_empty()) {
+        Some(root) if !norm(root).eq_ignore_ascii_case(&known) => {
+            Err(format!("root must be this chat's project folder ({known})"))
+        }
+        _ => Ok(known),
+    }
+}
+
 // --- parsing ---------------------------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq)]
@@ -906,6 +926,29 @@ fn resolve(from: &str, spec: &str, exists: &dyn Fn(&str) -> bool) -> Option<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_root_is_the_chats_known_folder() {
+        ROOTS
+            .get_or_init(Default::default)
+            .lock()
+            .expect("roots")
+            .insert("write-root-chat".into(), "C:/work/app".into());
+        let chat = "write-root-chat";
+        assert_eq!(
+            write_root_of(chat, &json!({})).expect("known"),
+            "C:/work/app"
+        );
+        assert_eq!(
+            write_root_of(chat, &json!({"root": "c:\\work\\app\\"})).expect("same folder"),
+            "C:/work/app"
+        );
+        assert!(write_root_of(chat, &json!({"root": "C:/other"})).is_err());
+        assert_eq!(
+            write_root_of("unknown-chat", &json!({"root": "C:/other"})).expect("unknown chat"),
+            "C:/other"
+        );
+    }
 
     #[test]
     fn typescript_symbols_refs_and_imports() {
