@@ -32,6 +32,12 @@ pub struct PlanInfo {
     pub done: usize,
     pub total: usize,
     pub read_only: bool,
+    /// When the user approved the plan (empty while it is not approved).
+    pub approved_at: String,
+    /// The chat that runs this plan, once one is started from it.
+    pub run_chat: String,
+    /// `off` when the user chose to run the plan without its approval gate.
+    pub gate: String,
 }
 
 #[derive(Clone, Debug)]
@@ -237,24 +243,77 @@ fn render_fm(fm: &FrontMatter) -> String {
     out
 }
 
-fn counts(body: &str) -> (usize, usize) {
-    let mut done = 0;
-    let mut total = 0;
+/// A checklist step with the detail lines under it (`files:`, `verify:`, `evidence:`).
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanStep {
+    /// 1-based, as `plan_step` numbers steps.
+    pub number: usize,
+    pub text: String,
+    pub done: bool,
+    pub files: Vec<String>,
+    pub verify: Option<String>,
+    pub evidence: Option<String>,
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// The steps of a plan body. A detail line is a `- ` / `* ` item indented under its step, read until a blank line or
+/// a line at the step's indent; any other item there is ignored. Counting goes through here too, so a detail line
+/// such as `- verify: …` is never a step.
+pub fn steps(body: &str) -> Vec<PlanStep> {
+    let mut out: Vec<PlanStep> = Vec::new();
+    // The indent of the step whose detail lines are being read; None once that block is closed.
+    let mut open: Option<usize> = None;
     for line in body.lines() {
-        let s = line.trim_start();
-        let Some(rest) = s.strip_prefix("- [").or_else(|| s.strip_prefix("* [")) else {
+        let indent = line.len() - line.trim_start().len();
+        if step_line(line) {
+            out.push(PlanStep {
+                number: out.len() + 1,
+                text: step_text(line),
+                done: matches!(line.trim_start().as_bytes().get(3), Some(b'x' | b'X')),
+                ..Default::default()
+            });
+            open = Some(indent);
+            continue;
+        }
+        let Some(step_indent) = open else { continue };
+        let item = line.trim_start();
+        let Some(detail) = item.strip_prefix("- ").or_else(|| item.strip_prefix("* ")) else {
+            open = None;
             continue;
         };
-        let valid = rest.as_bytes().get(1) == Some(&b']')
-            && rest.as_bytes().get(2) == Some(&b' ')
-            && !rest[3..].is_empty()
-            && matches!(rest.as_bytes()[0], b' ' | b'x' | b'X');
-        if valid {
-            total += 1;
-            done += usize::from(matches!(rest.as_bytes()[0], b'x' | b'X'));
+        if indent <= step_indent {
+            open = None;
+            continue;
+        }
+        let Some((name, value)) = detail.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        let Some(step) = out.last_mut() else { continue };
+        match name.trim().to_ascii_lowercase().as_str() {
+            "files" => {
+                step.files = value
+                    .split(',')
+                    .map(|file| file.trim().trim_matches('`').trim())
+                    .filter(|file| !file.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
+            "verify" => step.verify = non_empty(value),
+            "evidence" => step.evidence = non_empty(value),
+            _ => {}
         }
     }
-    (done, total)
+    out
+}
+
+fn counts(body: &str) -> (usize, usize) {
+    let steps = steps(body);
+    (steps.iter().filter(|step| step.done).count(), steps.len())
 }
 
 fn title_from(body: &str, fallback: &str) -> String {
@@ -293,6 +352,9 @@ fn info(id: &str, path: &Path, read_only: bool) -> Result<(PlanInfo, String), St
         done,
         total,
         read_only,
+        approved_at: key(&fm, "approved_at").unwrap_or("").to_string(),
+        run_chat: key(&fm, "run_chat").unwrap_or("").to_string(),
+        gate: key(&fm, "gate").unwrap_or("").to_string(),
     };
     Ok((pi, text))
 }
@@ -481,7 +543,10 @@ pub fn write(root: &Path, mut req: WriteReq) -> Result<PlanInfo, String> {
         return Err("plan body exceeds 256 KB".into());
     }
     let status = req.status.as_deref().unwrap_or("draft");
-    if !["draft", "approved", "doing", "done", "dropped"].contains(&status) {
+    if ["approved", "doing", "done"].contains(&status) {
+        return Err("only the user can set a plan to approved, doing or done: save it as draft and ask the user to approve it in Plans".into());
+    }
+    if !["draft", "dropped"].contains(&status) {
         return Err("invalid plan status".into());
     }
     // Auto-saves revise this conversation's draft; explicit MCP/manual writes still create a new plan.
@@ -576,8 +641,14 @@ pub fn write(root: &Path, mut req: WriteReq) -> Result<PlanInfo, String> {
     let legacy_body = existing
         .as_deref()
         .filter(|text| parse_fm(text).keys.is_empty());
+    let previous = key(&fm, "status").unwrap_or("").to_string();
+    let body_changed = !same_text(&fm.body, &req.body);
+    let effective = effective_status(req.status.as_deref(), &previous, body_changed);
     if let Some(legacy_body) = legacy_body {
-        fm = ensure_frontmatter(&path, legacy_body, Some(status));
+        fm = ensure_frontmatter(&path, legacy_body, Some(effective.as_str()));
+    }
+    if effective == "draft" {
+        fm.keys.retain(|(k, _)| k != "approved_at");
     }
     fm.body = req.body;
     let title = if legacy_body.is_some() {
@@ -587,7 +658,7 @@ pub fn write(root: &Path, mut req: WriteReq) -> Result<PlanInfo, String> {
     } else {
         req.title.clone()
     };
-    for (k, v) in [("title", title.as_str()), ("status", status)] {
+    for (k, v) in [("title", title.as_str()), ("status", effective.as_str())] {
         update_key(&mut fm, k, v);
     }
     if legacy_body.is_none() {
@@ -603,6 +674,23 @@ pub fn write(root: &Path, mut req: WriteReq) -> Result<PlanInfo, String> {
     touch_updated(&mut fm);
     atomic_write(&path, &render_fm(&fm))?;
     Ok(info(&id, &path, false)?.0)
+}
+
+/// Line endings and trailing blank lines do not count as a change to the text.
+fn same_text(a: &str, b: &str) -> bool {
+    a.replace("\r\n", "\n").trim_end() == b.replace("\r\n", "\n").trim_end()
+}
+
+/// The status a write leaves a plan with. Approval covers the text the user read: changing an approved, running or done
+/// plan sends it back to draft, and saving the same text (or leaving the status out) keeps it.
+fn effective_status(requested: Option<&str>, previous: &str, body_changed: bool) -> String {
+    match requested {
+        Some(status) if !matches!(status, "draft") => status.to_string(),
+        _ if matches!(previous, "approved" | "doing" | "done") => {
+            if body_changed { "draft" } else { previous }.to_string()
+        }
+        _ => "draft".to_string(),
+    }
 }
 
 fn ensure_frontmatter(path: &Path, text: &str, status: Option<&str>) -> FrontMatter {
@@ -637,7 +725,31 @@ pub fn set_status(root: &Path, id: &str, status: &str) -> Result<PlanInfo, Strin
     }
     let (path, _) = path_for(root, id, true)?;
     let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let fm = ensure_frontmatter(&path, &text, Some(status));
+    let mut fm = ensure_frontmatter(&path, &text, Some(status));
+    if status == "approved" {
+        update_key(&mut fm, "approved_at", &now());
+    } else if status == "draft" {
+        fm.keys.retain(|(k, _)| k != "approved_at");
+    }
+    touch_updated(&mut fm);
+    atomic_write(&path, &render_fm(&fm))?;
+    Ok(info(id, &path, false)?.0)
+}
+
+/// Turns the approval gate of one plan off (`gate: off`) or back on. Only the user's Plans/chat actions call this.
+pub fn set_gate(root: &Path, id: &str, off: bool) -> Result<PlanInfo, String> {
+    let _mutation = MUTATION_LOCK
+        .lock()
+        .map_err(|_| "plan mutation lock is unavailable")?;
+    let (path, _) = path_for(root, id, true)?;
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut fm = ensure_frontmatter(&path, &text, None);
+    if off {
+        update_key(&mut fm, "gate", "off");
+    } else {
+        fm.keys.retain(|(k, _)| k != "gate");
+    }
+    touch_updated(&mut fm);
     atomic_write(&path, &render_fm(&fm))?;
     Ok(info(id, &path, false)?.0)
 }
@@ -693,11 +805,12 @@ pub fn set_step(root: &Path, id: &str, step: StepRef, done: bool) -> Result<Plan
     }
     fm.body = output;
     let (completed, total) = counts(&fm.body);
+    // Only an approved plan moves on by its ticks: a draft stays a draft, so ticking one cannot start it.
     let status = key(&fm, "status").unwrap_or("unknown");
-    if status != "dropped" {
+    if matches!(status, "approved" | "doing") {
         if total > 0 && completed == total {
             update_key(&mut fm, "status", "done");
-        } else if completed > 0 && matches!(status, "approved" | "draft") {
+        } else if completed > 0 && status == "approved" {
             update_key(&mut fm, "status", "doing");
         }
     }
@@ -725,9 +838,9 @@ pub fn is_tool(name: &str) -> bool {
 
 pub fn tool_defs() -> Vec<Value> {
     vec![
-        json!({"name":"plan_list","description":"Plans saved for this project, shared by every AgentDeck agent. Call before starting multi-step work; follow an approved plan and tick steps with plan_step.","inputSchema":{"type":"object","properties":{"root":{"type":"string"},"status":{"type":"string"}},"required":[]}}),
+        json!({"name":"plan_list","description":"Plans saved for this project, shared by every AgentDeck agent. Call before starting multi-step work. Only change code for a plan whose status is approved or doing; a draft waits for the user's approval in Plans.","inputSchema":{"type":"object","properties":{"root":{"type":"string"},"status":{"type":"string"}},"required":[]}}),
         json!({"name":"plan_read","description":"Read a project's plan by id from plan_list. Use this before following or changing a plan.","inputSchema":{"type":"object","properties":{"root":{"type":"string"},"id":{"type":"string"}},"required":["id"]}}),
-        json!({"name":"plan_write","description":"Save a new or updated shared project plan. Provide a title and body with ordered checkbox steps; body must not include front matter. Use base_updated from plan_read when updating.","inputSchema":{"type":"object","properties":{"root":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"},"status":{"type":"string"},"id":{"type":"string"},"agent":{"type":"string"},"base_updated":{"type":"string"}},"required":["title","body"]}}),
+        json!({"name":"plan_write","description":"Save a new or updated shared project plan. Provide a title and body with ordered checkbox steps; body must not include front matter. Use base_updated from plan_read when updating. Status can only be draft or dropped: only the user approves a plan, in the Plans tab. Changing an approved plan sends it back to draft.","inputSchema":{"type":"object","properties":{"root":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"},"status":{"type":"string"},"id":{"type":"string"},"agent":{"type":"string"},"base_updated":{"type":"string"}},"required":["title","body"]}}),
         json!({"name":"plan_step","description":"Mark a plan checklist step done or unchecked by its 1-based number or exact step text. Re-reads the plan before changing it.","inputSchema":{"type":"object","properties":{"root":{"type":"string"},"id":{"type":"string"},"step":{"type":["string","integer"]},"done":{"type":"boolean"}},"required":["id","step","done"]}}),
     ]
 }
@@ -772,6 +885,10 @@ pub async fn call(
             )
         }
         "plan_write" => {
+            let previous = args["id"]
+                .as_str()
+                .and_then(|id| read(&root, id).ok())
+                .map(|(p, _)| p.status);
             let p = write(
                 &root,
                 WriteReq {
@@ -786,7 +903,18 @@ pub async fn call(
                 },
             )?;
             let _ = app.emit("plan-changed", json!({"root":root,"id":p.id}));
-            format!("saved {} (status={})", p.id, p.status)
+            let reopened = matches!(previous.as_deref(), Some("approved" | "doing" | "done"))
+                && p.status == "draft";
+            format!(
+                "saved {} (status={}){}",
+                p.id,
+                p.status,
+                if reopened {
+                    " — the plan changed after approval: tell the user to approve it again in Plans"
+                } else {
+                    ""
+                }
+            )
         }
         "plan_step" => {
             let step = if let Some(n) = args["step"].as_u64() {
@@ -910,6 +1038,106 @@ mod tests {
         assert_eq!(title_from(&old.body, "x"), "Old");
     }
     #[test]
+    fn steps_read_detail_lines_and_detail_lines_are_never_steps() {
+        let body = "# P\n- [ ] Add toCsv\n  - files: src/a.ts, `src/a.test.ts`\n  - verify: pnpm test csv\n- [x] Button\n    - verify: click it\n    - evidence: ran it: ok\n  - note: free text\n- [ ] Last\n";
+        let parsed = steps(body);
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(counts(body), (1, 3));
+        assert_eq!(parsed[0].number, 1);
+        assert_eq!(parsed[0].files, vec!["src/a.ts", "src/a.test.ts"]);
+        assert_eq!(parsed[0].verify.as_deref(), Some("pnpm test csv"));
+        assert_eq!(parsed[0].evidence, None);
+        assert!(parsed[1].done);
+        assert_eq!(parsed[1].verify.as_deref(), Some("click it"));
+        assert_eq!(parsed[1].evidence.as_deref(), Some("ran it: ok"));
+        assert!(parsed[2].files.is_empty());
+        assert_eq!(parsed[2].verify, None);
+    }
+
+    #[test]
+    fn agent_writes_cannot_approve_start_or_finish_a_plan() {
+        let root = temp();
+        for status in ["approved", "doing", "done"] {
+            let mut request = req("Plan", "- [ ] one\n");
+            request.status = Some(status.into());
+            let err = write(&root, request).expect_err("refused");
+            assert!(err.contains("only the user"), "{err}");
+        }
+        assert!(write(&root, req("Plan", "- [ ] one\n")).is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn changing_an_approved_plan_sends_it_back_to_draft() {
+        let root = temp();
+        let saved = write(&root, req("Plan", "- [ ] one\n- [ ] two\n"))
+            .expect("draft")
+            .id;
+        set_status(&root, &saved, "approved").expect("approve");
+        let (approved, _) = read(&root, &saved).expect("read");
+        assert_eq!(approved.status, "approved");
+        assert!(!approved.approved_at.is_empty());
+
+        // Saving the same text (with the status left out) keeps the approval.
+        let mut same = req("Plan", "- [ ] one\n- [ ] two\n");
+        same.id = Some(saved.clone());
+        same.status = None;
+        assert_eq!(write(&root, same).expect("same").status, "approved");
+
+        // Changing the text sends it back to draft and drops the approval time.
+        let mut changed = req("Plan", "- [ ] one\n- [ ] two\n- [ ] three\n");
+        changed.id = Some(saved.clone());
+        changed.status = None;
+        let info = write(&root, changed).expect("changed");
+        assert_eq!(info.status, "draft");
+        assert!(info.approved_at.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ticking_a_draft_does_not_start_it_but_an_approved_plan_moves_on() {
+        let root = temp();
+        let saved = write(&root, req("Plan", "- [ ] one\n- [ ] two\n"))
+            .expect("draft")
+            .id;
+        let ticked = set_step(&root, &saved, StepRef::Number(1), true).expect("tick");
+        assert_eq!((ticked.status.as_str(), ticked.done), ("draft", 1));
+        set_status(&root, &saved, "approved").expect("approve");
+        let second = set_step(&root, &saved, StepRef::Number(2), true).expect("tick");
+        assert_eq!(second.status, "done");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn approving_sets_the_time_and_going_back_to_draft_clears_it() {
+        let root = temp();
+        let saved = write(&root, req("Plan", "- [ ] one\n")).expect("draft").id;
+        set_status(&root, &saved, "approved").expect("approve");
+        assert!(!read(&root, &saved).expect("read").0.approved_at.is_empty());
+        set_status(&root, &saved, "draft").expect("draft");
+        assert!(read(&root, &saved).expect("read").0.approved_at.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_gate_is_stored_as_off_and_removed_on_request() {
+        let root = temp();
+        let saved = write(&root, req("Plan", "- [ ] one\n")).expect("draft").id;
+        assert_eq!(read(&root, &saved).expect("read").0.gate, "");
+        assert_eq!(set_gate(&root, &saved, true).expect("off").gate, "off");
+        assert_eq!(set_gate(&root, &saved, false).expect("on").gate, "");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_detail_line_at_the_step_indent_is_not_a_detail() {
+        let parsed = steps("- [ ] a\n- verify: nope\n- [ ] b\n");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].verify, None);
+        assert_eq!(parsed[1].verify, None);
+    }
+
+    #[test]
     fn writes_steps_status_collision_and_conflicts() {
         let root = temp();
         let a = write(&root, req("My Plan", "- [ ] first\n- [ ] second\n")).expect("write");
@@ -918,7 +1146,11 @@ mod tests {
             .id
             .ends_with("my-plan-2.md"));
         let updated = set_step(&root, &a.id, StepRef::Number(1), true).expect("number");
-        assert_eq!(updated.status, "doing");
+        assert_eq!(updated.status, "draft");
+        set_status(&root, &a.id, "approved").expect("approve");
+        let updated = set_step(&root, &a.id, StepRef::Number(1), false).expect("untick");
+        assert_eq!(updated.status, "approved");
+        set_step(&root, &a.id, StepRef::Number(1), true).expect("number");
         let updated = set_step(&root, &a.id, StepRef::Text("second".into()), true).expect("text");
         assert_eq!(updated.status, "done");
         let mut conflict = req("My Plan", "new");

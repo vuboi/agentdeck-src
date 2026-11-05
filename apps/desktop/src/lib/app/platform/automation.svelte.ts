@@ -14,6 +14,8 @@ export const automation = $state({
     orchestrate: true,
     prehandle: true,
     review: false,
+    /** A chat that saved a plan stays in Plan mode until the user approves that plan. */
+    requirePlanApproval: false,
 });
 
 const KEY = 'chat.automation';

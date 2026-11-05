@@ -48,6 +48,7 @@ import { agentDisplayName } from '../../agents/provider-registry';
 import { customProviderOf } from '../../agents/provider-registry';
 import { mcp } from '../../agents/mcp.svelte';
 import { automation } from '../../app/platform/automation.svelte';
+import { permissionOf } from '../../plans/plan-gate.svelte';
 import { logError } from '../../app/platform/error-log.svelte';
 import {
     DELEGATE_HINT,
@@ -447,7 +448,7 @@ export function prewarmChat(sessionId: string) {
         agentSession: cliId,
         resume,
         model: selectedModel,
-        permissionMode: PERMISSION_MODE[turnOptionsOf(session.id).permission],
+        permissionMode: PERMISSION_MODE[permissionOf(session.id)],
         effort: effortFor(session),
         allowedTools: [...(approved[session.id] ?? [])],
         cwd,
@@ -482,7 +483,7 @@ function prewarmFallback(session: SessionItem) {
         agentSession: null,
         resume: false,
         model: picked.model,
-        permissionMode: PERMISSION_MODE[turnOptionsOf(session.id).permission],
+        permissionMode: PERMISSION_MODE[permissionOf(session.id)],
         effort: picked.effort ?? null,
         allowedTools: [...(approved[session.id] ?? [])],
         cwd,
@@ -802,7 +803,8 @@ export function startTurn(
         delete liveAsks[session.id];
     } else if (!listener) delete liveHandouts[session.id];
     if (!listener) replies[session.id] = reply.id;
-    const permission = turnOptionsOf(session.id).permission;
+    // The Composer's choice, or Plan while the chat's plan is not approved yet (plan-gate.svelte.ts).
+    const permission = permissionOf(session.id);
     runReplies.set(turn, {
         sessionId: session.id,
         permission,
@@ -1162,7 +1164,7 @@ export function startTurn(
             selectedModel,
             [
                 `Effort: ${turnOptionsOf(session.id).effort}`,
-                `Permission: ${turnOptionsOf(session.id).permission}`,
+                `Permission: ${permission}`,
                 `Conversation: ${resume ? `continues ${cliId}` : cliId ? `new (${cliId})` : 'new'}`,
                 `Folder: ${cwd ?? 'none'}`,
                 `Message: ${prompt.length} characters${images.length ? `, ${images.length} picture(s)` : ''}${files.length ? `, ${files.length} file(s)` : ''}`,

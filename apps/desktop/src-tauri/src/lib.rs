@@ -741,6 +741,21 @@ fn plans_set_status(
 }
 
 #[tauri::command]
+fn plans_set_gate(
+    app: AppHandle,
+    root: String,
+    id: String,
+    off: bool,
+) -> Result<plans::PlanInfo, String> {
+    let plan = plans::set_gate(Path::new(&root), &id, off)?;
+    let _ = app.emit(
+        "plan-changed",
+        serde_json::json!({"root": root, "id": plan.id}),
+    );
+    Ok(plan)
+}
+
+#[tauri::command]
 fn plans_set_step(
     app: AppHandle,
     root: String,
@@ -2909,6 +2924,7 @@ pub fn run() {
             plans_list,
             plans_read,
             plans_set_status,
+            plans_set_gate,
             plans_set_step,
             plans_save,
             artifacts_list,
