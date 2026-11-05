@@ -53,11 +53,13 @@
     // null: all projects. '' is a real choice: the chats outside any project.
     let project = $state<string | null>(null);
 
+    // Only the replies of the range shown are read from the database (plan storage-sqlite P3).
     async function reload() {
-        log = await usageLog();
+        log = await usageLog(startOfRange(range));
         loaded = true;
     }
     $effect(() => {
+        void range;
         void reload();
         return onUsage(() => void reload());
     });

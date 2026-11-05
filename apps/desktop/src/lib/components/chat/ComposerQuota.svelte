@@ -92,9 +92,9 @@
         cost: number;
     } | null>(null);
     async function readToday() {
-        const log = await usageLog();
         const from = new SvelteDate();
         from.setHours(0, 0, 0, 0);
+        const log = await usageLog(from.getTime());
         const mine = log.filter(
             (item) =>
                 new Date(item.at) >= from &&

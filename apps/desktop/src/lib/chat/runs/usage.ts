@@ -378,9 +378,13 @@ export function recordUsage(record: UsageRecord) {
 }
 
 /** Every kept reply, oldest first. */
-export async function usageLog(): Promise<UsageRecord[]> {
-    if (!inTauri()) return (await getPref<UsageRecord[]>(LOG_KEY)) ?? [];
+/** The kept replies from `fromMs` on (0: all), oldest first. */
+export async function usageLog(fromMs = 0): Promise<UsageRecord[]> {
+    if (!inTauri())
+        return ((await getPref<UsageRecord[]>(LOG_KEY)) ?? []).filter(
+            (item) => Date.parse(item.at) >= fromMs,
+        );
     await migrated();
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<UsageRecord[]>('usage_since', { fromMs: 0 });
+    return invoke<UsageRecord[]>('usage_since', { fromMs });
 }
