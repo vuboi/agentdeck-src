@@ -698,7 +698,11 @@ function mergeDetected(id: ConnectorId, next: Detected) {
 
 /** Connectors whose CLI check has run on its own, and whether a full check has run. */
 const detectedFor = new SvelteSet<ConnectorId>();
-let detectedAll = false;
+// Reactive, so a card reads "checking" until its own CLI has been looked at (not only when every connector has).
+const detectedState = $state({ all: false });
+/** True once the CLI of this connector has been checked: its card can say installed or not installed. */
+export const cliChecked = (id: ConnectorId) =>
+    detectedState.all || detectedFor.has(id);
 
 /** Checks already running, by key: a repeat call joins the running check instead of failing. */
 const detectRuns = new Map<string, Promise<void>>();
@@ -722,7 +726,7 @@ export function refreshDetect(only?: ConnectorId): Promise<void> {
                 detectedFor.add(only);
             } else {
                 connectors.detected = next;
-                detectedAll = true;
+                detectedState.all = true;
             }
         });
         if (ok) delete connectors.errors.detect;
@@ -924,7 +928,7 @@ let prefetching = false;
 
 /** Checks the other connectors in the background right after the visible tab, so opening one finds its version already there. */
 function prefetchDetect() {
-    if (prefetching || detectedAll) return;
+    if (prefetching || detectedState.all) return;
     prefetching = true;
     const rest = ALL_CONNECTORS.filter((other) => !detectedFor.has(other));
     void Promise.all(rest.map((other) => refreshDetect(other))).finally(() => {
@@ -948,7 +952,7 @@ export async function refreshConnector(id: ConnectorId, refresh = false) {
     if (!inTauri()) return;
     await Promise.all([accountCacheReady, autoSwitchReady]);
     // A tab that was never checked has no tool entries yet (an earlier tab's check only filled its own).
-    if (!connectors.detected || (!detectedAll && !detectedFor.has(id))) {
+    if (!connectors.detected || (!detectedState.all && !detectedFor.has(id))) {
         await refreshDetect(id);
         if (!connectors.detected) return;
     }

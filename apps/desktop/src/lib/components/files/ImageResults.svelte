@@ -175,9 +175,9 @@
 {:else}
     <div class="flex flex-1 items-center justify-center">
         <DevEmpty
-            icon="lucideImages"
-            title="No image candidates yet"
-            hint="Enter a prompt, choose your models, then generate a few options here."
+            icon="lucideWandSparkles"
+            title="Nothing generated yet"
+            hint="Write a prompt and pick models. Results show up here."
         />
     </div>
 {/if}

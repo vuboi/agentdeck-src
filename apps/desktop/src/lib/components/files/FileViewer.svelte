@@ -1,5 +1,6 @@
 <script lang="ts">
     import Menu from '../ui/Menu.svelte';
+    import DevEmpty from '../browser/DevEmpty.svelte';
     import { ZIcon, zTooltip } from '@shival99/z-ui-svelte';
     import type { ZDropdownMenuItem, ZIconName } from '@shival99/z-ui-svelte';
     import { tick } from 'svelte';
@@ -478,25 +479,14 @@
                     {/key}
                 {:else}
                     <div
-                        class="flex h-full min-h-0 flex-col items-center justify-center gap-3 bg-background p-6 text-center"
+                        class="h-full min-h-0 bg-background"
                         aria-label="No file open"
                     >
-                        <ZIcon
-                            zType={icon('lucideFolder')}
-                            zSize="28"
-                            class="size-7 text-muted-foreground/70"
+                        <DevEmpty
+                            icon="lucideFile"
+                            title="No file open"
+                            hint="Pick a file in the tree or click a path in the chat."
                         />
-                        <div class="flex flex-col gap-1">
-                            <p class="m-0 text-sm font-medium text-foreground">
-                                Open files appear here
-                            </p>
-                            <p
-                                class="m-0 max-w-56 text-sm leading-relaxed text-muted-foreground"
-                            >
-                                Pick a file in the tree, or click a file path in
-                                the conversation.
-                            </p>
-                        </div>
                     </div>
                 {/if}
             </div>

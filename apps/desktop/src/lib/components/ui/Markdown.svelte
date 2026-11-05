@@ -54,6 +54,11 @@
     import { inTauri } from '../../app/platform/history';
     import { openTablePreview } from '../../browser/preview.svelte';
     import {
+        gripAt,
+        layoutTable,
+        startResize,
+    } from '../../app/text/table-layout';
+    import {
         colourFinished,
         colourStarted,
         eagerColour,
@@ -667,6 +672,36 @@
         return () => clearTimeout(id);
     });
 
+    // Tables: column widths by formula (re-worked when the card's width changes), and drag a header edge to resize.
+    $effect(() => {
+        void html;
+        const container = root;
+        if (!container || typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver((entries) => {
+            for (const entry of entries)
+                if (entry.target.isConnected)
+                    layoutTable(entry.target as HTMLElement);
+        });
+        for (const card of container.querySelectorAll('.md-table'))
+            observer.observe(card);
+        return () => observer.disconnect();
+    });
+
+    function gripHover(event: PointerEvent) {
+        if (event.buttons) return;
+        for (const th of root?.querySelectorAll<HTMLElement>('th[data-grip]') ??
+            [])
+            th.removeAttribute('data-grip');
+        const th = gripAt(event);
+        if (th) th.setAttribute('data-grip', '');
+    }
+
+    function gripDown(event: PointerEvent) {
+        if (event.button !== 0) return;
+        const th = gripAt(event);
+        if (th) startResize(th, event);
+    }
+
     const linkOf = (event: Event) =>
         (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
 
@@ -855,7 +890,15 @@
 </script>
 
 <!-- eslint-disable svelte/no-at-html-tags -- every block is sanitised by DOMPurify in renderMarkdown (app/text/markdown.ts) -->
-<div bind:this={root} class="md" {onclick} {oncontextmenu} {onmousedown}>
+<div
+    bind:this={root}
+    class="md"
+    {onclick}
+    {oncontextmenu}
+    {onmousedown}
+    onpointermove={gripHover}
+    onpointerdown={gripDown}
+>
     {#each html as block, index (index)}<div class="md-block">
             {@html block}
         </div>{/each}
