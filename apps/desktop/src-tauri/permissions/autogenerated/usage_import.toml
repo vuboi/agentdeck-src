@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-usage-import"
+description = "Enables the usage_import command without any pre-configured scope."
+commands.allow = ["usage_import"]
+
+[[permission]]
+identifier = "deny-usage-import"
+description = "Denies the usage_import command without any pre-configured scope."
+commands.deny = ["usage_import"]

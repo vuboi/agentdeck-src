@@ -59,6 +59,7 @@ mod sqlite;
 mod store;
 mod tts;
 mod ui_memory;
+mod usage_log;
 mod voice;
 mod worktree;
 
@@ -2922,6 +2923,9 @@ pub fn run() {
             tray_update_recent,
             history_list,
             plans_list,
+            usage_log::usage_record,
+            usage_log::usage_since,
+            usage_log::usage_import,
             plans_read,
             plans_set_status,
             plans_set_gate,
