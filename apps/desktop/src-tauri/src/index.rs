@@ -19,6 +19,24 @@ use tree_sitter::{Language, Node, Parser};
 const MAX_FILE: u64 = 1_000_000;
 /// Between two looks at the disk, so a burst of tool calls does one walk.
 const RECHECK: Duration = Duration::from_secs(2);
+/// A project bigger than this is indexed up to the limit and reported as partial (`code_index_status`).
+const MAX_FILES: usize = 50_000;
+/// Files that mark a folder as a project. A folder with none of them is not indexed (home, scratch, temp folders).
+const PROJECT_MARKERS: [&str; 13] = [
+    ".git",
+    "package.json",
+    "Cargo.toml",
+    "pyproject.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "composer.json",
+    "Gemfile",
+    "deno.json",
+    "CMakeLists.txt",
+    "Package.swift",
+    "pubspec.yaml",
+];
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, mtime INTEGER NOT NULL, size INTEGER NOT NULL, lang TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS symbols (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL, line INTEGER NOT NULL, end_line INTEGER NOT NULL, parent TEXT, sig TEXT NOT NULL);
@@ -34,6 +52,8 @@ CREATE INDEX IF NOT EXISTS imports_file ON imports(file_id);
 struct Index {
     conn: Connection,
     checked: Option<Instant>,
+    /// The last refresh stopped at `MAX_FILES`: the index is partial.
+    capped: bool,
 }
 
 static INDEXES: OnceLock<Mutex<HashMap<String, Arc<Mutex<Index>>>>> = OnceLock::new();
@@ -64,12 +84,17 @@ fn open(root: &str) -> Result<Arc<Mutex<Index>>, String> {
     let conn = Connection::open(folder.join(format!("{:016x}.db", fnv(&root.to_lowercase()))))
         .map_err(|error| error.to_string())?;
     let _ = conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()));
-    let _ = conn.execute_batch("PRAGMA synchronous=NORMAL;");
+    // The WAL is folded back into the file once it passes 4 MB and cut to 64 MB after a checkpoint, so it cannot grow
+    // without bound (it reached 3 GB before).
+    let _ = conn.execute_batch(
+        "PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; PRAGMA journal_size_limit=67108864;",
+    );
     conn.execute_batch(SCHEMA)
         .map_err(|error| error.to_string())?;
     let index = Arc::new(Mutex::new(Index {
         conn,
         checked: None,
+        capped: false,
     }));
     all.insert(root.to_string(), index.clone());
     Ok(index)
@@ -86,9 +111,80 @@ pub fn set_root(chat: &str, root: &str) {
             roots.insert(chat.to_string(), root.clone());
         }
     }
+    if refusal(&root).is_some() {
+        return;
+    }
     std::thread::spawn(move || {
         let _ = refresh(&root);
     });
+}
+
+/// The user's home folder, from the environment (where Windows and Unix keep it).
+fn home_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)
+}
+
+/// A path as one lower-case string with forward slashes, for comparing folders.
+fn folder_key(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase()
+}
+
+/// Whether a folder has a file that marks it as a project (a top-level manifest or `.git`).
+fn project_marker(path: &Path) -> bool {
+    std::fs::read_dir(path).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            PROJECT_MARKERS.contains(&name.as_str())
+                || name.ends_with(".sln")
+                || name.ends_with(".csproj")
+        })
+    })
+}
+
+/// Why a folder is not indexed, or None when it is a project. Home, drive roots, temp and app-data folders are never
+/// indexed: indexing them walked whole profiles (a 1 GB index for `C:\Users\<name>`).
+fn refused_because(
+    path: &Path,
+    home: Option<&Path>,
+    temp: &Path,
+    has_marker: bool,
+) -> Option<&'static str> {
+    let key = folder_key(path);
+    let under = |base: &Path| {
+        let base = folder_key(base);
+        key == base || key.starts_with(&format!("{base}/"))
+    };
+    if path.parent().is_none() {
+        return Some("a drive root");
+    }
+    if home.is_some_and(|home| key == folder_key(home)) {
+        return Some("your home folder");
+    }
+    if under(temp) {
+        return Some("a temporary folder");
+    }
+    if key.split('/').any(|part| part == "appdata") {
+        return Some("an app data folder");
+    }
+    if !has_marker {
+        return Some("not a project (no .git or project manifest)");
+    }
+    None
+}
+
+fn refusal(root: &str) -> Option<&'static str> {
+    let path = Path::new(root);
+    refused_because(
+        path,
+        home_dir().as_deref(),
+        &std::env::temp_dir(),
+        project_marker(path),
+    )
 }
 
 pub(crate) fn root_of(chat: &str, args: &Value) -> Result<String, String> {
@@ -453,6 +549,9 @@ fn refresh(root: &str) -> Result<(), String> {
     }
     let tx = conn.transaction().map_err(sql)?;
     let mut seen = HashSet::new();
+    // A walk that reaches MAX_FILES stops there: the rest is not forgotten, the index is marked partial.
+    let mut capped = false;
+    let mut written = 0usize;
     let walker = WalkBuilder::new(root)
         .filter_entry(|entry| !skipped(entry))
         .build();
@@ -488,6 +587,10 @@ fn refresh(root: &str) -> Result<(), String> {
             .map_or(0, |time| time.as_millis() as i64);
         let size = meta.len() as i64;
         seen.insert(relative.clone());
+        if seen.len() > MAX_FILES {
+            capped = true;
+            break;
+        }
         if known
             .get(&relative)
             .is_some_and(|old| old.1 == mtime && old.2 == size)
@@ -509,6 +612,7 @@ fn refresh(root: &str) -> Result<(), String> {
         )
         .map_err(sql)?;
         let id = tx.last_insert_rowid();
+        written += 1;
         for (name, kind, line, end, parent, sig) in &parsed.symbols {
             tx.execute("INSERT INTO symbols (file_id, name, kind, line, end_line, parent, sig) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", params![id, name, kind, line, end, parent, sig]).map_err(sql)?;
         }
@@ -527,12 +631,22 @@ fn refresh(root: &str) -> Result<(), String> {
             .map_err(sql)?;
         }
     }
-    for (path, old) in &known {
-        if !seen.contains(path) {
-            forget(&tx, old.0).map_err(sql)?;
+    // Deleted files are forgotten only after a complete walk: a partial one cannot tell them from unvisited files.
+    let mut deleted = 0usize;
+    if !capped {
+        for (path, old) in &known {
+            if !seen.contains(path) {
+                forget(&tx, old.0).map_err(sql)?;
+                deleted += 1;
+            }
         }
     }
     tx.commit().map_err(sql)?;
+    if written + deleted > 0 {
+        // Fold the WAL back into the database file, so it does not keep the size of its busiest moment.
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+    guard.capped = capped;
     guard.checked = Some(Instant::now());
     Ok(())
 }
@@ -575,6 +689,11 @@ fn sql(error: rusqlite::Error) -> String {
 
 fn run(name: &str, args: &Value, chat: &str) -> Result<String, String> {
     let root = root_of(chat, args)?;
+    if let Some(reason) = refusal(&root) {
+        return Err(format!(
+            "{root} is {reason}, so it is not indexed. Use Grep or Glob to search it."
+        ));
+    }
     refresh(&root)?;
     let index = open(&root)?;
     let guard = index.lock().map_err(|_| "index busy")?;
@@ -880,8 +999,13 @@ fn run(name: &str, args: &Value, chat: &str) -> Result<String, String> {
                 .map_err(sql)?
                 .flatten()
                 .collect();
+            let partial = if guard.capped {
+                "\nPartial: the walk stopped at 50,000 files, so searches cover only part of the project."
+            } else {
+                ""
+            };
             Ok(format!(
-                "{root}\n{} files, {} symbols, {} references, {} imports\n{}",
+                "{root}\n{} files, {} symbols, {} references, {} imports\n{}{partial}",
                 count("files"),
                 count("symbols"),
                 count("refs"),
@@ -951,6 +1075,66 @@ mod tests {
     }
 
     #[test]
+    fn only_project_folders_are_indexed() {
+        let temp = Path::new("C:/Users/x/AppData/Local/Temp");
+        let home = Path::new("C:/Users/x");
+        assert_eq!(
+            refused_because(Path::new("C:/"), Some(home), temp, true),
+            Some("a drive root")
+        );
+        assert_eq!(
+            refused_because(Path::new("C:/Users/x"), Some(home), temp, true),
+            Some("your home folder")
+        );
+        assert_eq!(
+            refused_because(
+                Path::new("C:/Users/x/AppData/Local/Temp/job"),
+                Some(home),
+                temp,
+                true
+            ),
+            Some("a temporary folder")
+        );
+        assert_eq!(
+            refused_because(
+                Path::new("C:/Users/x/Temporary/app"),
+                Some(home),
+                temp,
+                false
+            ),
+            Some("not a project (no .git or project manifest)")
+        );
+        assert_eq!(
+            refused_because(
+                Path::new("C:/Users/x/AppData/Roaming/tool"),
+                Some(home),
+                temp,
+                true
+            ),
+            Some("an app data folder")
+        );
+        assert_eq!(
+            refused_because(Path::new("E:/work/notes"), Some(home), temp, false),
+            Some("not a project (no .git or project manifest)")
+        );
+        assert_eq!(
+            refused_because(Path::new("E:/work/app"), Some(home), temp, true),
+            None
+        );
+    }
+
+    #[test]
+    fn a_folder_with_a_manifest_is_a_project() {
+        let folder =
+            std::env::temp_dir().join(format!("agentdeck-index-marker-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("folder");
+        assert!(!project_marker(&folder));
+        std::fs::write(folder.join("Cargo.toml"), "[package]").expect("manifest");
+        assert!(project_marker(&folder));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
     fn typescript_symbols_refs_and_imports() {
         let parsed = parse("ts", "import { A } from './a';\nexport class Foo {\n  bar(x: number) { return helper(x); }\n}\nexport const make = () => new Foo();\nconst LIMIT = 3;\nfunction helper(n: number) { const local = 1; return n + local; }\n").expect("parsed");
         let names: Vec<(&str, &str, Option<&str>)> = parsed
@@ -996,9 +1180,13 @@ mod tests {
     #[test]
     fn indexes_this_project() {
         // A tiny project of its own: lib/viewer.ts imports lib/content-tabs.ts.
-        let dir = std::env::temp_dir().join(format!("agentdeck-index-{}", std::process::id()));
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("agentdeck-index-{}", std::process::id()));
         let lib = dir.join("lib");
         std::fs::create_dir_all(&lib).expect("temp project");
+        // A project needs a manifest: without one the folder is refused (see refused_because).
+        std::fs::write(dir.join("package.json"), "{}").expect("manifest");
         std::fs::write(
             lib.join("content-tabs.ts"),
             "export function openFileTab(path: string) { return path; }\n",
