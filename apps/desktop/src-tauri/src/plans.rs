@@ -736,6 +736,24 @@ pub fn set_status(root: &Path, id: &str, status: &str) -> Result<PlanInfo, Strin
     Ok(info(id, &path, false)?.0)
 }
 
+/// Turns the approval gate of one plan off (`gate: off`) or back on. Only the user's Plans/chat actions call this.
+pub fn set_gate(root: &Path, id: &str, off: bool) -> Result<PlanInfo, String> {
+    let _mutation = MUTATION_LOCK
+        .lock()
+        .map_err(|_| "plan mutation lock is unavailable")?;
+    let (path, _) = path_for(root, id, true)?;
+    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut fm = ensure_frontmatter(&path, &text, None);
+    if off {
+        update_key(&mut fm, "gate", "off");
+    } else {
+        fm.keys.retain(|(k, _)| k != "gate");
+    }
+    touch_updated(&mut fm);
+    atomic_write(&path, &render_fm(&fm))?;
+    Ok(info(id, &path, false)?.0)
+}
+
 pub fn set_step(root: &Path, id: &str, step: StepRef, done: bool) -> Result<PlanInfo, String> {
     let _mutation = MUTATION_LOCK
         .lock()
@@ -1098,6 +1116,16 @@ mod tests {
         assert!(!read(&root, &saved).expect("read").0.approved_at.is_empty());
         set_status(&root, &saved, "draft").expect("draft");
         assert!(read(&root, &saved).expect("read").0.approved_at.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_gate_is_stored_as_off_and_removed_on_request() {
+        let root = temp();
+        let saved = write(&root, req("Plan", "- [ ] one\n")).expect("draft").id;
+        assert_eq!(read(&root, &saved).expect("read").0.gate, "");
+        assert_eq!(set_gate(&root, &saved, true).expect("off").gate, "off");
+        assert_eq!(set_gate(&root, &saved, false).expect("on").gate, "");
         let _ = fs::remove_dir_all(root);
     }
 

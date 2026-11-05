@@ -75,6 +75,14 @@
     } from '../../chat/agent';
     import { inTauri } from '../../app/platform/history';
     import { toast } from '../../app/platform/toast';
+    import {
+        approvePlan,
+        gateHeld,
+        gatePlanOf,
+        projectRootOf,
+        runPlanWithoutGate,
+    } from '../../plans/plan-gate.svelte';
+    import { openProjectFile } from '../../files/file-viewer.svelte';
     import ModelPicker from './ModelPicker.svelte';
     import ComposerQueue from './ComposerQueue.svelte';
     import BackgroundTasks from './BackgroundTasks.svelte';
@@ -128,6 +136,28 @@
 
     // What is typed belongs to the open session: switch away and back and it is still there.
     const sessionId = $derived(forSession ?? workspace.activeId);
+    // The plan this chat is held by: its turns run in Plan mode until the plan is approved.
+    const gatePlan = $derived(gatePlanOf(sessionId));
+    async function approveHeldPlan() {
+        const root = projectRootOf(sessionId);
+        if (!root || !gatePlan) return;
+        try {
+            await approvePlan(root, gatePlan.id);
+        } catch (error) {
+            toast.error(`Could not approve plan: ${String(error)}`);
+        }
+    }
+    async function runWithoutGate() {
+        const root = projectRootOf(sessionId);
+        if (!root || !gatePlan) return;
+        try {
+            await runPlanWithoutGate(root, gatePlan.id);
+        } catch (error) {
+            toast.error(
+                `Could not run plan without approval: ${String(error)}`,
+            );
+        }
+    }
     const voice = $derived(voiceOf(sessionId));
     const draft = $derived(drafts[sessionId] ?? '');
     const mentions = $derived(draftMentions[sessionId] ?? []);
@@ -1051,6 +1081,37 @@
 </script>
 
 <svelte:window bind:innerWidth={innerW} />
+{#if !compact && gateHeld(sessionId) && gatePlan}
+    <div
+        class="mx-2 mb-1 flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm"
+        role="status"
+    >
+        <ZIcon
+            zType="lucideClipboardList"
+            class="size-4 shrink-0 text-muted-foreground"
+        />
+        <span class="min-w-0 flex-1 truncate"
+            >Plan “{gatePlan.title}” is not approved: this chat runs in Plan
+            mode (read only).</span
+        >
+        <ZButton
+            zType="default"
+            zSize="sm"
+            onclick={() => void approveHeldPlan()}>Approve</ZButton
+        >
+        <ZButton
+            zType="ghost"
+            zSize="sm"
+            onclick={() =>
+                gatePlan &&
+                openProjectFile(gatePlan.path, projectRootOf(sessionId) ?? '')}
+            >Open plan</ZButton
+        >
+        <ZButton zType="ghost" zSize="sm" onclick={() => void runWithoutGate()}
+            >Run without approval</ZButton
+        >
+    </div>
+{/if}
 {#if !compact && backgroundWork.length > 0 && (waiting.length > 0 || queuePaused[sessionId])}
     <!-- Work and queue share one tray, so its sides run down to the composer like the queue's do. -->
     <div
