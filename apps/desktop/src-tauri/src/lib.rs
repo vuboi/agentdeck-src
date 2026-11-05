@@ -816,9 +816,10 @@ fn artifacts_create(
     language: Option<String>,
     agent: Option<String>,
     chat: Option<String>,
+    source_key: Option<String>,
 ) -> Result<artifacts::ArtifactInfo, String> {
     let chat = chat.unwrap_or_default();
-    let (artifact, _) = artifacts::create(
+    let (artifact, _) = artifacts::create_with_key(
         Path::new(&root),
         &title,
         &kind,
@@ -826,10 +827,17 @@ fn artifacts_create(
         language.as_deref().unwrap_or(""),
         agent.as_deref().unwrap_or("custom-chat"),
         &chat,
+        source_key.as_deref(),
     )?;
+    let version = artifact
+        .versions
+        .iter()
+        .map(|item| item.n)
+        .max()
+        .unwrap_or(1);
     let _ = app.emit(
         "artifact-changed",
-        serde_json::json!({"root": root, "id": artifact.id, "version": 1, "chat": chat}),
+        serde_json::json!({"root": root, "id": artifact.id, "version": version, "chat": chat}),
     );
     Ok(artifact)
 }

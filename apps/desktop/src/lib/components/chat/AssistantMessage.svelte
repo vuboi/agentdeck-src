@@ -57,7 +57,10 @@
     // do not render again (reuseSegments). Plain variable on purpose: it is a cache, not state.
     let lastParts: Segment[] = [];
     const parts = $derived.by(() => {
-        lastParts = reuseSegments(lastParts, segments(message.blocks));
+        lastParts = reuseSegments(
+            lastParts,
+            segments(message.blocks, undefined, workspace.activeId, message.id),
+        );
         return lastParts;
     });
     // Replies of the same agent and model that follow one another share one name line, while each actual answer keeps
@@ -177,6 +180,7 @@
             <ArtifactFenceCard
                 response={segment.response}
                 fence={segment.fence}
+                sourceKey={segment.sourceKey}
                 sessionId={workspace.activeId}
             />
         {:else if segment.kind === 'tasks'}

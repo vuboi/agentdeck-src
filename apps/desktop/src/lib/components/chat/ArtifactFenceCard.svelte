@@ -46,8 +46,14 @@
     let {
         response,
         fence,
+        sourceKey,
         sessionId,
-    }: { response: object; fence: ArtifactFence; sessionId: string } = $props();
+    }: {
+        response: object;
+        fence: ArtifactFence;
+        sourceKey: string;
+        sessionId: string;
+    } = $props();
     let item: CommandBlock | null = $state(null);
     onMount(() => {
         const session = workspace.sessions.find(
@@ -57,19 +63,23 @@
         if (!root) return;
         void fenceRequest(response, fence.start, async () => {
             const { invoke } = await import('@tauri-apps/api/core');
-            const info = await invoke<{ id: string }>('artifacts_create', {
+            const info = await invoke<{
+                id: string;
+                versions: { n: number }[];
+            }>('artifacts_create', {
                 root,
                 title: fence.title,
                 kind: fence.kind,
                 content: fence.content,
                 agent: activeSession()?.agent ?? 'codex',
                 chat: sessionId,
+                sourceKey,
             });
             return {
                 kind: 'command',
                 id: `artifact-fence:${sessionId}:${info.id}`,
                 command: `artifact_create ${JSON.stringify({ id: info.id, title: fence.title, kind: fence.kind })}`,
-                output: `artifact ${info.id} v1 (fallback)`,
+                output: `artifact ${info.id} v${info.versions.at(-1)?.n ?? 1} (fallback)`,
                 status: 'ok',
             };
         })

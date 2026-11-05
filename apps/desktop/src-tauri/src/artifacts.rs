@@ -2,6 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ const TOOLS: [&str; 4] = [
     "artifact_read",
 ];
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+static MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +44,8 @@ pub struct ArtifactInfo {
     pub agent: String,
     #[serde(default)]
     pub chat: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_key: Option<String>,
     pub created: String,
     pub updated: String,
     pub versions: Vec<ArtifactVersion>,
@@ -273,7 +277,35 @@ pub fn create(
     agent: &str,
     chat: &str,
 ) -> Result<(ArtifactInfo, bool), String> {
+    create_with_key(root, title, kind, content, language, agent, chat, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_with_key(
+    root: &Path,
+    title: &str,
+    kind: &str,
+    content: &str,
+    language: &str,
+    agent: &str,
+    chat: &str,
+    source_key: Option<&str>,
+) -> Result<(ArtifactInfo, bool), String> {
+    let _mutation = MUTATION_LOCK
+        .lock()
+        .map_err(|_| "artifact mutation lock is unavailable")?;
     validate_content(content)?;
+    if source_key.is_some_and(|key| key.is_empty() || key.len() > 4096) {
+        return Err("artifact source key must contain 1 to 4096 bytes".into());
+    }
+    if let Some(source_key) = source_key {
+        for item in list(root)? {
+            let (_, existing) = read_meta(root, &item.id)?;
+            if existing.source_key.as_deref() == Some(source_key) {
+                return Ok((existing, false));
+            }
+        }
+    }
     let ext = extension(kind, language)?;
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let base = root.join(DIR);
@@ -327,6 +359,7 @@ pub fn create(
         language: language.to_string(),
         agent: agent.to_string(),
         chat: chat.to_string(),
+        source_key: source_key.map(str::to_string),
         created: timestamp.clone(),
         updated: timestamp.clone(),
         versions: vec![ArtifactVersion {
@@ -347,6 +380,9 @@ pub fn update(
     note: &str,
     base_version: Option<u32>,
 ) -> Result<(ArtifactInfo, bool), String> {
+    let _mutation = MUTATION_LOCK
+        .lock()
+        .map_err(|_| "artifact mutation lock is unavailable")?;
     validate_content(content)?;
     let (dir, mut meta) = read_meta(root, id)?;
     let current = meta
@@ -648,6 +684,71 @@ mod tests {
         .expect("tamper metadata");
         assert!(update(&root, &meta.id, "next", "", Some(1)).is_err());
         assert_eq!(fs::read_to_string(outside).expect("read sentinel"), "keep");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fallback_source_key_returns_existing_artifact_instead_of_creating_a_duplicate() {
+        let root = temp();
+        let first = create_with_key(
+            &root,
+            "Landing",
+            "html",
+            "<h1>Hello</h1>",
+            "",
+            "custom",
+            "chat-1",
+            Some("chat-1:message-7:0"),
+        )
+        .expect("first creation")
+        .0;
+        let repeated = create_with_key(
+            &root,
+            "Landing",
+            "html",
+            "<h1>Hello</h1>",
+            "",
+            "custom",
+            "chat-1",
+            Some("chat-1:message-7:0"),
+        )
+        .expect("repeat creation")
+        .0;
+        assert_eq!(first.id, repeated.id);
+        assert_eq!(list(&root).expect("list").len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_updates_with_same_base_version_have_one_winner() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let root = temp();
+        let (meta, _) = create(&root, "x", "html", "initial", "", "", "").expect("create");
+        let barrier = Arc::new(Barrier::new(3));
+        let mut workers = Vec::new();
+        for content in ["first update", "second update"] {
+            let root = root.clone();
+            let id = meta.id.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                update(&root, &id, content, "", Some(1))
+            }));
+        }
+        barrier.wait();
+        let results: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("worker should not panic"))
+            .collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
+        assert!(results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .any(|error| error.contains("changed since you read it")));
+        assert_eq!(list(&root).expect("list").len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 }

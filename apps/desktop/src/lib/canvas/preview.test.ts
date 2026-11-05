@@ -3,11 +3,12 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { ARTIFACT_CSP, previewDocument } from './preview.ts';
 
-test('inserts network-denying CSP before artifact HTML', () => {
+test('puts trusted CSP before artifact HTML', () => {
     const html = previewDocument(
         '<!doctype html><html><head><title>x</title></head><body><script>fetch("https://example.com")</script></body></html>',
         'html',
     );
+    assert.equal((html.match(/Content-Security-Policy/g) ?? []).length, 1);
     assert.ok(
         html.indexOf(`content="${ARTIFACT_CSP}"`) < html.indexOf('<script>'),
     );
@@ -15,10 +16,21 @@ test('inserts network-denying CSP before artifact HTML', () => {
     assert.doesNotMatch(ARTIFACT_CSP, /https?:|connect-src/);
 });
 
-test('wraps SVG as a document and keeps the raw SVG inside the frame', () => {
+test('wraps SVG as a document inside the sandboxed frame', () => {
     const html = previewDocument('<circle cx="4" cy="4" r="2"/>', 'svg');
     assert.match(html, /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"><circle/);
     assert.match(html, /Content-Security-Policy/);
+});
+
+test('a fake head in a leading comment cannot swallow the trusted CSP', () => {
+    const html = previewDocument(
+        '<!-- <head> -->\n<script>fetch("https://example.com")</script>',
+        'html',
+    );
+    const firstPolicy = html.indexOf(`content="${ARTIFACT_CSP}"`);
+    assert.ok(firstPolicy >= 0);
+    assert.ok(firstPolicy < html.indexOf('<!-- <head> -->'));
+    assert.ok(firstPolicy < html.indexOf('<script>'));
 });
 
 test('Canvas iframe has only script permission and no unsafe sandbox flags', async () => {

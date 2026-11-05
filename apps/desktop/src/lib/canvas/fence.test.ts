@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    artifactFenceSourceKey,
     artifactFences,
     isArtifactCommand,
     withoutArtifactFences,
@@ -48,4 +49,22 @@ test('recognizes only built-in artifact MCP commands for chat cards', () => {
     );
     assert.equal(isArtifactCommand('agentdeck.artifact_create {}'), true);
     assert.equal(isArtifactCommand('mcp__other__artifact_create {}'), false);
+});
+
+test('artifact fence identity survives block re-creation and separates reply fences', () => {
+    const first = artifactFenceSourceKey('chat-a', 'message-7', 2, 18);
+    const afterReload = artifactFenceSourceKey('chat-a', 'message-7', 2, 18);
+    assert.equal(first, afterReload);
+    assert.notEqual(
+        first,
+        artifactFenceSourceKey('chat-a', 'message-7', 3, 18),
+    );
+    assert.notEqual(
+        first,
+        artifactFenceSourceKey('chat-a', 'message-7', 2, 19),
+    );
+    assert.notEqual(
+        first,
+        artifactFenceSourceKey('chat-b', 'message-7', 2, 18),
+    );
 });

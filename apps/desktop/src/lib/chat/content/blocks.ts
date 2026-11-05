@@ -7,6 +7,7 @@ import type { Block } from '../mock';
 import { ROLE_STATUS, roleOfCall } from '../../agents/task-roles';
 import { askAsStep } from '../recovery/questions';
 import {
+    artifactFenceSourceKey,
     artifactFences,
     isArtifactCommand,
     withoutArtifactFences,
@@ -47,7 +48,12 @@ export type Segment =
           item: CommandBlock;
       }
     | { kind: 'artifact'; item: CommandBlock }
-    | { kind: 'artifact_fence'; response: Block; fence: ArtifactFence }
+    | {
+          kind: 'artifact_fence';
+          response: Block;
+          fence: ArtifactFence;
+          sourceKey: string;
+      }
     | /** Calls of delegate_task: each is a card of its own, not a line among the steps. */ {
           kind: 'tasks';
           items: CommandBlock[];
@@ -157,7 +163,12 @@ function askStepOf(
 }
 
 /** `askOf` is askAsStep; a parameter so a test can count the calls. */
-export function segments(blocks: Block[], askOf: AskOf = askAsStep): Segment[] {
+export function segments(
+    blocks: Block[],
+    askOf: AskOf = askAsStep,
+    chatId = '',
+    messageId = '',
+): Segment[] {
     const out: Segment[] = [];
     const showsAgentTasks = blocks.some(
         (block) => block.kind === 'command' && Boolean(block.task),
@@ -206,6 +217,12 @@ export function segments(blocks: Block[], askOf: AskOf = askAsStep): Segment[] {
                         kind: 'artifact_fence',
                         response: block,
                         fence,
+                        sourceKey: artifactFenceSourceKey(
+                            chatId,
+                            messageId,
+                            blocks.indexOf(block),
+                            fence.start,
+                        ),
                     });
             } else out.push({ kind: 'block', block });
             // The questions in an answer stay in the activity list as a step to open, not only as the card that closes once answered.
@@ -283,7 +300,8 @@ function unchanged(old: Segment, next: Segment): boolean {
         return (
             old.response === next.response &&
             old.fence.start === next.fence.start &&
-            old.fence.content === next.fence.content
+            old.fence.content === next.fence.content &&
+            old.sourceKey === next.sourceKey
         );
     if (old.kind === 'commands' && next.kind === 'commands')
         return (

@@ -8,6 +8,16 @@ export type ArtifactFence = {
     end: number;
 };
 
+/** Durable identity for a finished artifact fence in a persisted chat message. */
+export function artifactFenceSourceKey(
+    chatId: string,
+    messageId: string,
+    blockIndex: number,
+    offset: number,
+): string {
+    return JSON.stringify([chatId, messageId, blockIndex, offset]);
+}
+
 /** Whether an agent command line names AgentDeck's artifact tools. */
 export function isArtifactCommand(command: string): boolean {
     return /^(?:artifact_(?:create|update)|mcp__agentdeck__artifact_(?:create|update)|agentdeck\.artifact_(?:create|update))\s/.test(
