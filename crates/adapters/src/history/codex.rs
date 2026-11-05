@@ -214,6 +214,7 @@ pub(super) fn load(path: &Path) -> std::io::Result<Vec<HistoryMessage>> {
                 (
                     "assistant".to_owned(),
                     HistoryBlock::Command {
+                        id: None,
                         command,
                         output: String::new(),
                         status: "ok".into(),

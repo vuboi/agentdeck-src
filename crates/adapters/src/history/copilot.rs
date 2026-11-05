@@ -136,6 +136,7 @@ pub(super) fn load(path: &Path) -> std::io::Result<Vec<HistoryMessage>> {
                     let name = tool_name(str_of(request, "name"));
                     let arguments = request.get("arguments").cloned().unwrap_or(Value::Null);
                     messages[index].blocks.push(HistoryBlock::Command {
+                        id: None,
                         command: describe_tool(name, &arguments),
                         output: String::new(),
                         status: "ok".into(),

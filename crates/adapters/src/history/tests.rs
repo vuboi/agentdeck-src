@@ -99,6 +99,7 @@ fn claude_transcript_merges_assistant_lines_and_attaches_tool_results() {
             },
             HistoryBlock::Response { text: "hi".into() },
             HistoryBlock::Command {
+                id: Some("t1".into()),
                 command: "Bash  ls".into(),
                 output: "file1".into(),
                 status: "ok".into(),
@@ -191,6 +192,7 @@ fn terminal_colour_codes_are_removed_from_tool_output() {
     assert_eq!(
         messages[1].blocks,
         vec![HistoryBlock::Command {
+            id: Some("t1".into()),
             command: "Bash  lint".into(),
             output: "OK done".into(),
             status: "ok".into(),
@@ -219,6 +221,7 @@ fn claude_failed_tool_result_is_marked() {
     assert_eq!(
         messages[1].blocks,
         vec![HistoryBlock::Command {
+            id: Some("t1".into()),
             command: "Read  x.rs".into(),
             output: "nope".into(),
             status: "fail".into(),
@@ -323,6 +326,7 @@ fn codex_transcript_skips_injected_context_and_reads_tools() {
                 text: "thinking about ls".into()
             },
             HistoryBlock::Command {
+                id: None,
                 command: "shell  bash -lc ls".into(),
                 output: "boom".into(),
                 status: "fail".into(),

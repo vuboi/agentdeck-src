@@ -109,7 +109,7 @@
                 zWave={false}
                 zType="ghost"
                 zSize="sm"
-                class="h-8! gap-1 px-2! {layout.toolsOpen &&
+                class="size-8! {layout.toolsOpen &&
                 layout.activeTool === AGENTS_TOOL
                     ? '!bg-primary/15 !text-primary hover:!bg-primary/20 hover:!text-primary'
                     : '!bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary'}"
@@ -117,15 +117,22 @@
                 aria-pressed={layout.toolsOpen &&
                     layout.activeTool === AGENTS_TOOL &&
                     !isAway(AGENTS_TOOL)}
-                title="Sub agents ({agentsRunning.running} running)"
+                title="Sub agents ({agentsRunning.running} running of {agentsRunning.total})"
                 onclick={toggleAgentsPanel}
             >
-                <ZIcon zType={'lucideListChecks' as ZIconName} class="size-4" />
-                <span class="text-xs tabular-nums"
-                    >{agentsRunning.running > 0
-                        ? agentsRunning.running
-                        : agentsRunning.total}</span
-                >
+                <span class="relative flex">
+                    <ZIcon
+                        zType={'lucideListChecks' as ZIconName}
+                        class="size-4"
+                    />
+                    <!-- The badge counts the agents running now; none running, no badge. -->
+                    {#if agentsRunning.running > 0}
+                        <span
+                            class="absolute -top-2 -right-2 grid h-4 min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] leading-none font-medium text-primary-foreground tabular-nums"
+                            >{agentsRunning.running}</span
+                        >
+                    {/if}
+                </span>
             </ZButton>
         {/if}
         <ZButton
