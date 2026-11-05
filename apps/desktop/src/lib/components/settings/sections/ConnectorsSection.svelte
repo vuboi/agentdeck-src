@@ -52,6 +52,7 @@
         switchAccount,
         switchAgyAccount,
         subscribeQuotaRefresh,
+        cliChecked,
         tool,
         type Account,
         type AccountProvider,
@@ -549,6 +550,7 @@
                             {@const path = native
                                 ? card.id
                                 : tool(card.binary)?.path}
+                            {@const checked = cliChecked(card.id)}
                             {@const cliInstalled = native
                                 ? Boolean(tool(card.binary)?.path)
                                 : Boolean(path)}
@@ -615,7 +617,7 @@
                                             <h3 class="text-sm font-semibold">
                                                 {card.label}
                                             </h3>
-                                            {#if !connectors.detected || path}
+                                            {#if !checked || path}
                                                 <!-- Grey while the version is read; the text morphs into the checked version in green. -->
                                                 <span
                                                     class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.6875rem] tabular-nums transition-colors duration-300 {connectors.detected &&
@@ -630,8 +632,11 @@
                                                         class="size-3"
                                                     />
                                                     <ZTextMorph
-                                                        zText={!connectors.detected
-                                                            ? 'Checking…'
+                                                        zText={!checked
+                                                            ? connectors.errors
+                                                                  .detect
+                                                                ? 'Check failed'
+                                                                : 'Checking…'
                                                             : (version ??
                                                               'Installed')}
                                                     />
@@ -745,7 +750,7 @@
                                                 </ZButton>
                                             </span>
                                         {/if}
-                                        {#if connectors.detected && !cliInstalled && !native}
+                                        {#if checked && !cliInstalled && !native}
                                             <span
                                                 class="inline-flex"
                                                 in:fade={{

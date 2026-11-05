@@ -598,6 +598,61 @@ html[data-warming] [data-z-popover] {
     overflow-wrap: break-word;
     white-space: normal;
 }
+/* Once the columns have widths (table-layout.ts: by formula, or dragged by the reader) the table is fixed: a cell wraps
+   inside its column and never runs into the next one. A header edge shows a line while it can be dragged. */
+.md-table table[data-fixed] {
+    table-layout: fixed;
+    min-width: 0;
+}
+.md-table table[data-fixed] .md-cell,
+.md-table table[data-fixed] td:first-child .md-cell {
+    max-width: none;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.md-table table[data-fixed] th {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The drag handle: two short bars at a header's right edge, faint while the header is hovered, primary on the edge itself. */
+.md-table th {
+    position: relative;
+}
+.md-table th::before,
+.md-table th::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 2px;
+    height: 16px;
+    margin-top: -8px;
+    border-radius: 1px;
+    background: var(--muted-foreground);
+    opacity: 0;
+    transition: opacity 120ms;
+    pointer-events: none;
+}
+.md-table th::before {
+    right: 7px;
+}
+.md-table th::after {
+    right: 3px;
+}
+.md-table th:hover::before,
+.md-table th:hover::after {
+    opacity: 0.4;
+}
+.md-table th[data-grip],
+.md-table th[data-dragging] {
+    cursor: col-resize;
+}
+.md-table th[data-grip]::before,
+.md-table th[data-grip]::after,
+.md-table th[data-dragging]::before,
+.md-table th[data-dragging]::after {
+    background: var(--primary);
+    opacity: 1;
+}
 .md img {
     max-width: 100%;
     border-radius: var(--radius-large);

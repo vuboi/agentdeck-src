@@ -163,8 +163,11 @@
     let expandAllMode = $state(false);
     let expandAllRun = 0;
     // An opened folder reads its entries the first time.
+    // Untracked: a folder that cannot be listed stays without a listing, and a load that reads or writes `loading`
+    // here would run this effect again and again.
     $effect(() => {
-        for (const id of expanded) if (!listing[id]) void load(id);
+        for (const id of expanded)
+            if (!listing[id]) untrack(() => void load(id));
     });
 
     const PLACEHOLDER = '/…';
