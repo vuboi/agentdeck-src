@@ -1358,8 +1358,11 @@ async function readFromFile(session: SessionItem, token: number) {
         requestAnimationFrame(() => setTimeout(resolve, 0)),
     );
     if (token !== transcriptToken) return;
-    let cached = transcripts.get(session.id);
-    if (!cached) {
+    // A chat read from several files is never shown from its saved tail: the tail is not the whole chat, and showing it
+    // first made the view move when the whole chat replaced it.
+    const whole = Boolean(wholeFilesOf(session));
+    let cached = whole ? undefined : transcripts.get(session.id);
+    if (!cached && !whole) {
         const saved = await getPref<Transcript>(`transcript.${session.id}`);
         if (token !== transcriptToken) return;
         if (saved?.messages) {
