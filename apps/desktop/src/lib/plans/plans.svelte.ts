@@ -15,6 +15,12 @@ export type PlanInfo = {
     done: number;
     total: number;
     readOnly: boolean;
+    /** When the user approved the plan; empty while it is not approved. */
+    approvedAt: string;
+    /** The chat that runs this plan, once one is started from it. */
+    runChat: string;
+    /** `off` when the plan runs without its approval gate. */
+    gate: string;
 };
 
 type PlanState = { items: PlanInfo[]; loading: boolean; error: string };

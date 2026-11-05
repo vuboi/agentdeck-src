@@ -32,6 +32,12 @@ pub struct PlanInfo {
     pub done: usize,
     pub total: usize,
     pub read_only: bool,
+    /// When the user approved the plan (empty while it is not approved).
+    pub approved_at: String,
+    /// The chat that runs this plan, once one is started from it.
+    pub run_chat: String,
+    /// `off` when the user chose to run the plan without its approval gate.
+    pub gate: String,
 }
 
 #[derive(Clone, Debug)]
@@ -237,24 +243,77 @@ fn render_fm(fm: &FrontMatter) -> String {
     out
 }
 
-fn counts(body: &str) -> (usize, usize) {
-    let mut done = 0;
-    let mut total = 0;
+/// A checklist step with the detail lines under it (`files:`, `verify:`, `evidence:`).
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanStep {
+    /// 1-based, as `plan_step` numbers steps.
+    pub number: usize,
+    pub text: String,
+    pub done: bool,
+    pub files: Vec<String>,
+    pub verify: Option<String>,
+    pub evidence: Option<String>,
+}
+
+fn non_empty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// The steps of a plan body. A detail line is a `- ` / `* ` item indented under its step, read until a blank line or
+/// a line at the step's indent; any other item there is ignored. Counting goes through here too, so a detail line
+/// such as `- verify: …` is never a step.
+pub fn steps(body: &str) -> Vec<PlanStep> {
+    let mut out: Vec<PlanStep> = Vec::new();
+    // The indent of the step whose detail lines are being read; None once that block is closed.
+    let mut open: Option<usize> = None;
     for line in body.lines() {
-        let s = line.trim_start();
-        let Some(rest) = s.strip_prefix("- [").or_else(|| s.strip_prefix("* [")) else {
+        let indent = line.len() - line.trim_start().len();
+        if step_line(line) {
+            out.push(PlanStep {
+                number: out.len() + 1,
+                text: step_text(line),
+                done: matches!(line.trim_start().as_bytes().get(3), Some(b'x' | b'X')),
+                ..Default::default()
+            });
+            open = Some(indent);
+            continue;
+        }
+        let Some(step_indent) = open else { continue };
+        let item = line.trim_start();
+        let Some(detail) = item.strip_prefix("- ").or_else(|| item.strip_prefix("* ")) else {
+            open = None;
             continue;
         };
-        let valid = rest.as_bytes().get(1) == Some(&b']')
-            && rest.as_bytes().get(2) == Some(&b' ')
-            && !rest[3..].is_empty()
-            && matches!(rest.as_bytes()[0], b' ' | b'x' | b'X');
-        if valid {
-            total += 1;
-            done += usize::from(matches!(rest.as_bytes()[0], b'x' | b'X'));
+        if indent <= step_indent {
+            open = None;
+            continue;
+        }
+        let Some((name, value)) = detail.split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        let Some(step) = out.last_mut() else { continue };
+        match name.trim().to_ascii_lowercase().as_str() {
+            "files" => {
+                step.files = value
+                    .split(',')
+                    .map(|file| file.trim().trim_matches('`').trim())
+                    .filter(|file| !file.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
+            "verify" => step.verify = non_empty(value),
+            "evidence" => step.evidence = non_empty(value),
+            _ => {}
         }
     }
-    (done, total)
+    out
+}
+
+fn counts(body: &str) -> (usize, usize) {
+    let steps = steps(body);
+    (steps.iter().filter(|step| step.done).count(), steps.len())
 }
 
 fn title_from(body: &str, fallback: &str) -> String {
@@ -293,6 +352,9 @@ fn info(id: &str, path: &Path, read_only: bool) -> Result<(PlanInfo, String), St
         done,
         total,
         read_only,
+        approved_at: key(&fm, "approved_at").unwrap_or("").to_string(),
+        run_chat: key(&fm, "run_chat").unwrap_or("").to_string(),
+        gate: key(&fm, "gate").unwrap_or("").to_string(),
     };
     Ok((pi, text))
 }
@@ -909,6 +971,31 @@ mod tests {
         assert!(old.keys.is_empty());
         assert_eq!(title_from(&old.body, "x"), "Old");
     }
+    #[test]
+    fn steps_read_detail_lines_and_detail_lines_are_never_steps() {
+        let body = "# P\n- [ ] Add toCsv\n  - files: src/a.ts, `src/a.test.ts`\n  - verify: pnpm test csv\n- [x] Button\n    - verify: click it\n    - evidence: ran it: ok\n  - note: free text\n- [ ] Last\n";
+        let parsed = steps(body);
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(counts(body), (1, 3));
+        assert_eq!(parsed[0].number, 1);
+        assert_eq!(parsed[0].files, vec!["src/a.ts", "src/a.test.ts"]);
+        assert_eq!(parsed[0].verify.as_deref(), Some("pnpm test csv"));
+        assert_eq!(parsed[0].evidence, None);
+        assert!(parsed[1].done);
+        assert_eq!(parsed[1].verify.as_deref(), Some("click it"));
+        assert_eq!(parsed[1].evidence.as_deref(), Some("ran it: ok"));
+        assert!(parsed[2].files.is_empty());
+        assert_eq!(parsed[2].verify, None);
+    }
+
+    #[test]
+    fn a_detail_line_at_the_step_indent_is_not_a_detail() {
+        let parsed = steps("- [ ] a\n- verify: nope\n- [ ] b\n");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].verify, None);
+        assert_eq!(parsed[1].verify, None);
+    }
+
     #[test]
     fn writes_steps_status_collision_and_conflicts() {
         let root = temp();
