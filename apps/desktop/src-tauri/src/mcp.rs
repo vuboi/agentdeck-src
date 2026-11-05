@@ -339,8 +339,19 @@ fn find_js(query: &str) -> String {
     .replace("__HELPERS__", PAGE_HELPERS)
 }
 
-/// Stores the elements the last `browser_elements` / `browser_find` numbered (`window.__adEls`), with their selectors.
+/// The project folder of the chat that calls a browser tool: where its page memory lives. None for a chat without one.
+fn memory_root(chat: &str) -> Option<String> {
+    (!chat.is_empty())
+        .then(|| crate::index::root_of(chat, &json!({})).ok())
+        .flatten()
+}
+
+/// Stores the elements the last `browser_elements` / `browser_find` numbered (`window.__adEls`), with their selectors, in
+/// the memory of the chat's project. A chat with no project folder keeps nothing.
 async fn remember_seen(app: &AppHandle, params: &HashMap<String, String>) {
+    let Some(root) = params.get("chat").and_then(|chat| memory_root(chat)) else {
+        return;
+    };
     let Ok(answer) = crate::bridge::answer(app, "/eval", params, crate::page_memory::MEMO_JS).await
     else {
         return;
@@ -348,14 +359,19 @@ async fn remember_seen(app: &AppHandle, params: &HashMap<String, String>) {
     let Some(text) = answer["result"].as_str() else {
         return;
     };
-    if let Ok(seen) = serde_json::from_str::<Value>(text) {
-        if seen["elements"]
-            .as_array()
-            .is_some_and(|list| !list.is_empty())
-        {
-            crate::page_memory::store(app, seen);
-        }
+    let Ok(seen) = serde_json::from_str::<Value>(text) else {
+        return;
+    };
+    let url = seen["url"].as_str().unwrap_or_default().to_string();
+    let elements: Vec<crate::ui_memory::PageElement> =
+        serde_json::from_value(seen["elements"].clone()).unwrap_or_default();
+    if elements.is_empty() {
+        return;
     }
+    let _ = tokio::task::spawn_blocking(move || {
+        crate::ui_memory::remember_elements(std::path::Path::new(&root), &url, &elements)
+    })
+    .await;
 }
 
 /// `browser_recall` and `browser_remember`.
@@ -375,43 +391,53 @@ async fn memory_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> V
     if !url.starts_with("http") {
         return error_reply("open a web page in the Preview first (browser_open)".into());
     }
+    let Some(root) = memory_root(chat) else {
+        return error_reply("This chat has no project folder, so nothing is remembered. Use browser_elements or browser_find.".into());
+    };
     if name == "browser_remember" {
-        let goal = args["goal"].as_str().unwrap_or_default().trim();
-        let steps: Vec<&str> = args["steps"]
+        let goal = args["goal"].as_str().unwrap_or_default().trim().to_string();
+        let steps: Vec<String> = args["steps"]
             .as_str()
             .unwrap_or_default()
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
+            .map(str::to_string)
             .collect();
         if goal.is_empty() || steps.is_empty() {
             return error_reply("give a goal and at least one step".into());
         }
-        return match crate::page_memory::ask(
-            app,
-            "remember",
-            json!({ "url": url, "goal": goal, "steps": steps }),
-        )
+        let count = steps.len();
+        let kept = goal.clone();
+        return match tokio::task::spawn_blocking(move || {
+            crate::ui_memory::remember_recipe(std::path::Path::new(&root), &url, &kept, &steps)
+        })
         .await
         {
-            Ok(_) => text_reply(format!("Remembered {} steps for \"{goal}\".", steps.len())),
-            Err(error) => error_reply(error),
+            Ok(Ok(true)) => text_reply(format!("Remembered {count} steps for \"{goal}\".")),
+            Ok(Ok(false)) => error_reply("this page cannot be remembered (not a web page)".into()),
+            Ok(Err(error)) => error_reply(error),
+            Err(error) => error_reply(error.to_string()),
         };
     }
-    let query = args["query"].as_str().unwrap_or_default().trim();
+    let query = args["query"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     if query.is_empty() {
         return error_reply("say what you are looking for".into());
     }
-    let limit = args["limit"].as_u64().unwrap_or(8).clamp(1, 20);
-    let found = match crate::page_memory::ask(
-        app,
-        "recall",
-        json!({ "url": url, "query": query, "limit": limit }),
-    )
+    let limit = args["limit"].as_u64().unwrap_or(8).clamp(1, 20) as usize;
+    let page = url.clone();
+    let found = match tokio::task::spawn_blocking(move || {
+        crate::ui_memory::recall(std::path::Path::new(&root), &page, &query, limit)
+    })
     .await
     {
-        Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or(Value::Null),
-        Err(error) => return error_reply(error),
+        Ok(Ok(found)) => found,
+        Ok(Err(error)) => return error_reply(error),
+        Err(error) => return error_reply(error.to_string()),
     };
     let selectors: Vec<String> = found["hits"]
         .as_array()

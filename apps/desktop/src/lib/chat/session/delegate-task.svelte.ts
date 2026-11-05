@@ -63,7 +63,6 @@ import { WORKTREE_RULE, worktreeSlug } from '../../tasks/worktree';
 import { type PlanState, planTask } from '../../tasks/delegate-plan';
 import { type WorkerCall, workerArgsOf } from '../../tasks/propose';
 import { inTauri } from '../../app/platform/history';
-import { startPageMemoryBridge } from '../../browser/page-memory-bridge';
 import {
     MODELS,
     localMessages,
@@ -1866,8 +1865,13 @@ if (inTauri()) {
     void listenWorkerSlots(startQueued);
     // The watchdog (watchWorkers): long workers get a progress check by their caller, hung ones are stopped.
     setInterval(() => void watchWorkers(), 60_000);
-    // The Preview agent's memory of pages (page-memory.ts): its tools read and write the store through this.
-    void startPageMemoryBridge();
+    // The Preview agent's page memory now lives in each project (.agentdeck/ui-memory, ui_memory.rs); the store it had in
+    // the app is dropped. Deleting a database that is already gone does nothing.
+    try {
+        indexedDB.deleteDatabase('agentdeck-pages');
+    } catch {
+        // No IndexedDB: nothing to drop.
+    }
     void listenDelegateAborts((callId) => {
         // A question whose call was dropped (the worker's connection to AgentDeck closed) is cancelled; the task stays
         // running. A worker that really died is caught by the watchdog.
