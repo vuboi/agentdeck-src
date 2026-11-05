@@ -55,6 +55,7 @@ mod pty;
 mod question_repair;
 mod servers;
 mod slash_commands;
+mod sqlite;
 mod store;
 mod tts;
 mod voice;

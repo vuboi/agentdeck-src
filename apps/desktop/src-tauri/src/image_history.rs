@@ -3,6 +3,7 @@
 //! file for good, and `created_at` plus the sha256 of each file are what a sync compares.
 
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -58,14 +59,20 @@ pub struct HistoryRun {
     pub images: Vec<HistoryImage>,
 }
 
-fn open() -> Result<Connection, String> {
+/// The one connection to the history, opened on first use. Every call used to open the file again.
+static CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
+
+fn open() -> Result<MutexGuard<'static, Connection>, String> {
+    if let Some(conn) = CONN.get() {
+        return conn.lock().map_err(|_| "image history is busy".to_string());
+    }
     let folder = crate::home_folder()?.join(crate::channel::home_folder_name());
-    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let conn =
-        Connection::open(folder.join("image-history.db")).map_err(|error| error.to_string())?;
-    conn.execute_batch(SCHEMA)
-        .map_err(|error| error.to_string())?;
-    Ok(conn)
+    let conn = crate::sqlite::open(&folder.join("image-history.db"), &[SCHEMA])?;
+    // Two first calls at once: the one that lost the race drops its connection.
+    let shared = CONN.get_or_init(|| Mutex::new(conn));
+    shared
+        .lock()
+        .map_err(|_| "image history is busy".to_string())
 }
 
 fn now_millis() -> i64 {
@@ -125,7 +132,9 @@ pub fn record(
         )
         .map_err(|error| error.to_string())?;
     }
-    tx.commit().map_err(|error| error.to_string())
+    tx.commit().map_err(|error| error.to_string())?;
+    crate::sqlite::checkpoint(&conn);
+    Ok(())
 }
 
 /// The newest runs first, each with its files.
