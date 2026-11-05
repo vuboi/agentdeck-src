@@ -352,6 +352,15 @@ fn save(root: &Path, memory: &mut SiteMemory) -> Result<(), String> {
     if !canonical_folder.starts_with(&canonical_root) {
         return Err("ui memory folder escapes the project folder".into());
     }
+    // Kept out of the project's git by a `.gitignore` of its own, so the project's root `.gitignore` is never edited.
+    // One the user changed is left as it is.
+    let ignore = folder.join(".gitignore");
+    if !ignore.exists() {
+        crate::plans::atomic_write(
+            &ignore,
+            "# AgentDeck's memory of the Preview pages of this project.\n*\n",
+        )?;
+    }
     memory.version = 1;
     prune(memory, now_ms());
     // Sorted so a project that keeps this file in git sees small diffs.
@@ -634,6 +643,9 @@ mod tests {
         assert_eq!(remember_elements(&root, url, &seen).expect("store"), 2);
         assert_eq!(remember_elements(&root, url, &seen[..1]).expect("again"), 1);
         assert!(root.join(".agentdeck/ui-memory/local.json").is_file());
+        let ignore =
+            fs::read_to_string(root.join(".agentdeck/ui-memory/.gitignore")).expect("gitignore");
+        assert!(ignore.lines().any(|line| line == "*"));
         let steps = vec![
             "click \"Export\"".to_string(),
             "click \"CSV\" (#csv)".to_string(),
