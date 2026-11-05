@@ -395,7 +395,7 @@ fn create_temp_file(path: &Path) -> Result<(PathBuf, File), String> {
     Err("could not allocate a unique temporary plan file".into())
 }
 
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
     let (tmp, mut file) = create_temp_file(path)?;
     let result = file
         .write_all(text.as_bytes())

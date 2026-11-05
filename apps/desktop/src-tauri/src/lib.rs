@@ -58,6 +58,7 @@ mod slash_commands;
 mod sqlite;
 mod store;
 mod tts;
+mod ui_memory;
 mod voice;
 mod worktree;
 
@@ -3101,7 +3102,6 @@ pub fn run() {
             delegate::delegate_release,
             delegate::delegate_pause,
             delegate::delegate_resume,
-            page_memory::page_memory_reply,
             attachment_save,
             attachment_save_file,
             browser_save_guide,
