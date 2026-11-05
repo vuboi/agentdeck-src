@@ -936,7 +936,7 @@
             >
                 <!-- A theme change repaints every row from scratch: a row kept from before can show the old theme's colours until the page is reloaded. -->
                 {#key theme.settledKey}
-                    {#each virtualRows as row (row.key)}
+                    {#each virtualRows as row (rowKeys[row.index] ?? row.index)}
                         {@const message = chat.messages[row.index + from]}
                         {@const mine = message?.role === 'user'}
                         {@const agent =
