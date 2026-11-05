@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plans-list"
+description = "Enables the plans_list command without any pre-configured scope."
+commands.allow = ["plans_list"]
+
+[[permission]]
+identifier = "deny-plans-list"
+description = "Denies the plans_list command without any pre-configured scope."
+commands.deny = ["plans_list"]

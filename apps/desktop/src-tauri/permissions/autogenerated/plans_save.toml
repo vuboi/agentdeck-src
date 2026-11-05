@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plans-save"
+description = "Enables the plans_save command without any pre-configured scope."
+commands.allow = ["plans_save"]
+
+[[permission]]
+identifier = "deny-plans-save"
+description = "Denies the plans_save command without any pre-configured scope."
+commands.deny = ["plans_save"]
