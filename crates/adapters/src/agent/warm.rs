@@ -406,6 +406,7 @@ async fn read_turn(
     stop: StopToken,
     mut inject: Option<UnboundedReceiver<String>>,
     chat: &str,
+    suggest: bool,
     emit: &mut impl FnMut(AgentEvent),
 ) -> Ending {
     let conversation = warm.conversation.clone();
@@ -427,6 +428,9 @@ async fn read_turn(
     // injected: a result that arrives while an injected one is unread ends only a part of the work, the CLI runs on.
     let mut unread = u32::from(inject.is_some());
     let mut injected = 0u32;
+    // A finished turn that waits for the CLI's predicted next prompt (see `SUGGESTION_GRACE`), and whether it came.
+    let mut waiting: Option<Ending> = None;
+    let mut suggested = false;
     loop {
         let next = match deadline {
             Some(at) => tokio::time::timeout_at(at, lines.next_segment())
@@ -470,7 +474,7 @@ async fn read_turn(
             },
         };
         let Ok(Some(bytes)) = next else {
-            return Ending::Closed;
+            return waiting.take().unwrap_or(Ending::Closed);
         };
         dog.touch();
         if std::mem::take(&mut first_line) {
@@ -505,6 +509,7 @@ async fn read_turn(
             match &event {
                 // The end of a part of the work while an injected message is still unread: the CLI goes on with it as the
                 // next turn, so this result is not the end and is not shown as one.
+                AgentEvent::Suggestion { .. } => suggested = true,
                 AgentEvent::Done { .. } if injected > 0 && unread > 0 => continue,
                 AgentEvent::Done { session_id, .. } => {
                     ending = Some(Ending::Done(
@@ -525,7 +530,17 @@ async fn read_turn(
             emit(event);
         }
         if let Some(ending) = ending {
+            if suggest && !suggested && matches!(ending, Ending::Done(_)) {
+                waiting = Some(ending);
+                deadline = Some(tokio::time::Instant::now() + super::SUGGESTION_GRACE);
+                continue;
+            }
             return ending;
+        }
+        if suggested {
+            if let Some(ending) = waiting.take() {
+                return ending;
+            }
         }
     }
 }
@@ -693,7 +708,8 @@ pub async fn drive_warm_turn_with(
     }
 
     let began = std::time::Instant::now();
-    match read_turn(&mut warm, provider, stop, inbox, &chat, &mut emit).await {
+    let suggest = super::predicts_next_prompt(provider, req);
+    match read_turn(&mut warm, provider, stop, inbox, &chat, suggest, &mut emit).await {
         Ending::Done(conversation) => {
             if conversation.is_some() {
                 warm.conversation = conversation;

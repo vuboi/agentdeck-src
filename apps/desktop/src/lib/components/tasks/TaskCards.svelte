@@ -1,18 +1,8 @@
 <script lang="ts">
     import { fade, slide } from 'svelte/transition';
-    import { MorphIcon, type IconInput } from 'morphicons/svelte';
-    import { svgToIcon } from 'morphicons/adapters';
-    import {
-        lucideBan,
-        lucideCheck,
-        lucideCircleDot,
-        lucideLoaderCircle,
-        lucideShieldAlert,
-        lucideX,
-    } from '@ng-icons/lucide';
     import { ZIcon, ZLoading, ZShimmerText } from '@shival99/z-ui-svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
-    import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
+    import TaskStateIcon from './TaskStateIcon.svelte';
     import { elapsed, type CommandBlock } from '../../chat/content/blocks';
     import { ticker } from '../../app/platform/clock.svelte';
     import { LOADER, LOADER_SIZE } from '../../app/platform/loaders';
@@ -59,50 +49,6 @@
         card: ReturnType<typeof cardOf>,
         record: ReturnType<typeof recordOf>,
     ) => (record?.agent ?? card.agent ?? '').toLowerCase();
-    const STATUS_RING: Record<CardState, string> = {
-        queued: 'bg-gray-500/10',
-        waiting: 'bg-gray-500/10',
-        running: 'bg-transparent',
-        background: 'bg-transparent',
-        paused: 'bg-gray-500/10',
-        approval: 'bg-amber-500/10',
-        done: 'bg-emerald-500/10',
-        failed: 'bg-red-500/10',
-        stopped: 'bg-gray-500/10',
-    };
-    const STATUS_BG: Record<CardState, string> = {
-        queued: 'bg-gray-500/15',
-        waiting: 'bg-gray-500/15',
-        running: 'bg-transparent',
-        background: 'bg-transparent',
-        paused: 'bg-gray-500/15',
-        approval: 'bg-amber-500/15',
-        done: 'bg-emerald-500/15',
-        failed: 'bg-red-500/15',
-        stopped: 'bg-gray-500/15',
-    };
-    const STATUS_ICON: Record<CardState, string> = {
-        queued: 'text-gray-400',
-        waiting: 'text-muted-foreground',
-        running: 'text-muted-foreground',
-        background: 'text-muted-foreground',
-        paused: 'text-muted-foreground',
-        approval: 'text-amber-400',
-        done: 'text-emerald-400',
-        failed: 'text-red-400',
-        stopped: 'text-gray-400',
-    };
-    const STATUS_MORPH: Record<CardState, IconInput> = {
-        queued: svgToIcon(lucideCircleDot),
-        waiting: svgToIcon(lucideCircleDot),
-        running: svgToIcon(lucideLoaderCircle),
-        background: svgToIcon(lucideLoaderCircle),
-        paused: svgToIcon(lucideBan),
-        approval: svgToIcon(lucideShieldAlert),
-        done: svgToIcon(lucideCheck),
-        failed: svgToIcon(lucideX),
-        stopped: svgToIcon(lucideBan),
-    };
     const live = (state: CardState) =>
         state === 'queued' ||
         state === 'waiting' ||
@@ -217,36 +163,7 @@
                     aria-hidden="true"
                 >
                     <div class="flex h-6 items-center justify-center">
-                        {#if card.state === 'running' || card.state === 'background'}
-                            <span
-                                class="relative z-10 flex size-5 items-center justify-center {STATUS_ICON[
-                                    card.state
-                                ]}"
-                            >
-                                <PhyllotaxisLoader className="text-current" />
-                            </span>
-                        {:else}
-                            <span
-                                class="relative z-10 flex size-5 items-center justify-center rounded-full {STATUS_RING[
-                                    card.state
-                                ]}"
-                            >
-                                <span
-                                    class="relative flex size-3.5 items-center justify-center rounded-full {STATUS_BG[
-                                        card.state
-                                    ]} {STATUS_ICON[card.state]}"
-                                >
-                                    <MorphIcon
-                                        icon={STATUS_MORPH[card.state]}
-                                        size="10"
-                                        strokeWidth={2.3}
-                                        spring="snappy"
-                                        reducedMotion="user"
-                                        class="size-2.5"
-                                    />
-                                </span>
-                            </span>
-                        {/if}
+                        <TaskStateIcon state={card.state} />
                     </div>
                 </div>
                 <div class="min-w-0 flex-1">

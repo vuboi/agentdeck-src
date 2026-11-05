@@ -12,102 +12,307 @@
 // and stops there. The chat shows the questions as cards, one at a time, and sends the answers back as the next message.
 
 export type QuestionOption = { label: string; description?: string };
-export type Question = { header?: string; question: string; options: QuestionOption[]; multiSelect?: boolean; /** The agent cannot go on without the answer: skipping it does not let the agent decide for itself. */ required?: boolean };
+export type Question = {
+    header?: string;
+    question: string;
+    options: QuestionOption[];
+    multiSelect?: boolean;
+    /** The agent cannot go on without the answer: skipping it does not let the agent decide for itself. */ required?: boolean;
+};
 /** One question with one choice among two or three options (or one): the chat shows it as a quick card, a click answers. */
 export const isQuick = (questions: Question[]) =>
-  questions.length === 1 && !questions[0].multiSelect && questions[0].options.length > 0 && questions[0].options.length <= 3;
+    questions.length === 1 &&
+    !questions[0].multiSelect &&
+    questions[0].options.length > 0 &&
+    questions[0].options.length <= 3;
 /** What the user chose for one question: labels of options, and text of their own. */
 export type Answer = { picked: string[]; text: string };
 
-const FENCE = /```(?:questions|agentdeck-questions|agentdeck-ask)[^\n]*\n([\s\S]*?)```/;
+const FENCE =
+    /```(?:questions|agentdeck-questions|agentdeck-ask)[^\n]*\n([\s\S]*?)```/;
 
 /** A block written without its fence: a `{"questions":…}` object that ends the answer (some models drop the fence). */
-function bareBlock(text: string): { body: string; index: number; length: number } | null {
-  const index = text.search(/\{\s*"questions"\s*:[^]*$/);
-  if (index < 0) return null;
-  const body = text.slice(index).trim();
-  return body.endsWith('}') ? { body, index, length: text.length - index } : null;
+function bareBlock(
+    text: string,
+): { body: string; index: number; length: number } | null {
+    const index = text.search(/\{\s*"questions"\s*:[^]*$/);
+    if (index < 0) return null;
+    const body = text.slice(index).trim();
+    return body.endsWith('}')
+        ? { body, index, length: text.length - index }
+        : null;
+}
+
+/** Common ways a model breaks the JSON of a question block, repaired without changing what the questions say:
+ *  - smart double quotes (`“ ”`) used as delimiters become straight `"`;
+ *  - a bare `"` inside a string value (an XSS payload like `<img>, " onmouseover`, a quote in prose) — one not followed
+ *    by `:`, `,`, `}`, `]`, or the end — is escaped instead of closing the string;
+ *  - a raw newline / carriage return / tab inside a string is escaped;
+ *  - a trailing comma before a closing `}` or `]` is dropped.
+ *  Backslash escapes are kept as-is. Single-quoted strings are left alone: converting them would corrupt apostrophes in
+ *  prose, so those still fall through to the "stays as text" path. */
+function repairJson(body: string): string {
+    const straightened = body.replace(/[“”]/g, '"');
+    let out = '';
+    let inString = false;
+    for (let index = 0; index < straightened.length; index++) {
+        const char = straightened[index];
+        if (inString) {
+            if (char === '\\') {
+                out += char + (straightened[index + 1] ?? '');
+                index++;
+                continue;
+            }
+            if (char === '"') {
+                let ahead = index + 1;
+                while (
+                    ahead < straightened.length &&
+                    /\s/.test(straightened[ahead])
+                )
+                    ahead++;
+                const next = straightened[ahead];
+                if (
+                    next === undefined ||
+                    next === ':' ||
+                    next === ',' ||
+                    next === '}' ||
+                    next === ']'
+                ) {
+                    inString = false;
+                    out += char;
+                    continue;
+                }
+                out += '\\"'; // a stray quote inside the string, not a closing one
+                continue;
+            }
+            if (char === '\n') {
+                out += '\\n';
+                continue;
+            }
+            if (char === '\r') {
+                out += '\\r';
+                continue;
+            }
+            if (char === '\t') {
+                out += '\\t';
+                continue;
+            }
+            out += char;
+            continue;
+        }
+        if (char === '"') inString = true;
+        out += char;
+    }
+    return out.replace(/,(\s*[}\]])/g, '$1');
+}
+
+/** Parse the block body as JSON, retrying once with stray quotes escaped if the agent's response was malformed. */
+function parseBlockBody(
+    body: string,
+): { questions?: unknown } | unknown[] | null {
+    try {
+        return JSON.parse(body);
+    } catch {
+        try {
+            return JSON.parse(repairJson(body));
+        } catch {
+            return null;
+        }
+    }
 }
 
 /** The questions in an answer (when it has a valid block) and the text around them. */
-export function parseQuestions(text: string): { questions: Question[]; rest: string } {
-  const found = FENCE.exec(text);
-  const block = found ? { body: found[1], index: found.index, length: found[0].length } : bareBlock(text);
-  if (!block) return { questions: [], rest: text };
-  try {
-    const data = JSON.parse(block.body) as { questions?: unknown } | unknown[];
-    const list = (Array.isArray(data) ? data : (data as { questions?: unknown }).questions) as unknown[];
+export function parseQuestions(text: string): {
+    questions: Question[];
+    rest: string;
+} {
+    const found = FENCE.exec(text);
+    const block = found
+        ? { body: found[1], index: found.index, length: found[0].length }
+        : bareBlock(text);
+    if (!block) return { questions: [], rest: text };
+    // A block that is not valid JSON (even after repair) stays as text: the user still reads the questions.
+    const data = parseBlockBody(block.body);
+    if (!data) return { questions: [], rest: text };
+    const list = (
+        Array.isArray(data) ? data : (data as { questions?: unknown }).questions
+    ) as unknown[];
     // Each provider names the same parts its own way (question / text / prompt, options / choices, label / title / value,
     // multi / multiSelect / multiple): all of them land in one shape here.
     const questions = (Array.isArray(list) ? list : [])
-      .map((item) => item as Record<string, unknown>)
-      .map((item) => ({
-        header: typeof item.header === 'string' ? item.header : undefined,
-        question: [item.question, item.text, item.prompt].find((value): value is string => typeof value === 'string')?.trim() ?? '',
-        multiSelect: item.multiSelect === true || item.multi === true || item.multiple === true,
-        required: item.required === true,
-        options: (Array.isArray(item.options) ? item.options : Array.isArray(item.choices) ? item.choices : [])
-          .map((option): QuestionOption => {
-            if (typeof option === 'string') return { label: option };
-            const entry = option as Record<string, unknown>;
-            const label = [entry.label, entry.title, entry.value].find((value): value is string => typeof value === 'string') ?? '';
-            return { label, description: typeof entry.description === 'string' ? entry.description : undefined };
-          })
-          .filter((option) => option.label.trim())
-          .slice(0, 6),
-      }))
-      .filter((item) => item.question)
-      .slice(0, 6);
+        .map((item) => item as Record<string, unknown>)
+        .map((item) => ({
+            header: typeof item.header === 'string' ? item.header : undefined,
+            question:
+                [item.question, item.text, item.prompt]
+                    .find((value): value is string => typeof value === 'string')
+                    ?.trim() ?? '',
+            multiSelect:
+                item.multiSelect === true ||
+                item.multi === true ||
+                item.multiple === true,
+            required: item.required === true,
+            options: (Array.isArray(item.options)
+                ? item.options
+                : Array.isArray(item.choices)
+                  ? item.choices
+                  : []
+            )
+                .map((option): QuestionOption => {
+                    if (typeof option === 'string') return { label: option };
+                    const entry = option as Record<string, unknown>;
+                    const label =
+                        [entry.label, entry.title, entry.value].find(
+                            (value): value is string =>
+                                typeof value === 'string',
+                        ) ?? '';
+                    return {
+                        label,
+                        description:
+                            typeof entry.description === 'string'
+                                ? entry.description
+                                : undefined,
+                    };
+                })
+                .filter((option) => option.label.trim())
+                .slice(0, 6),
+        }))
+        .filter((item) => item.question)
+        .slice(0, 6);
     if (!questions.length) return { questions: [], rest: text };
-    return { questions, rest: (text.slice(0, block.index) + text.slice(block.index + block.length)).trim() };
-  } catch {
-    // A block that is not valid JSON stays as text: the user still reads the questions.
-    return { questions: [], rest: text };
-  }
+    return {
+        questions,
+        rest: (
+            text.slice(0, block.index) + text.slice(block.index + block.length)
+        ).trim(),
+    };
+}
+
+/** The body of a question block the parser could not turn into questions: a fenced or bare `{"questions":…}` that is
+ *  present but still invalid JSON after `repairJson`. Null when there is no block, or the block already parses (so a
+ *  model repair would add nothing). This is what the last-resort model repair is asked to fix. */
+export function unparsedQuestionBody(text: string): string | null {
+    const found = FENCE.exec(text);
+    const block = found ? { body: found[1] } : bareBlock(text);
+    if (!block) return null;
+    return parseBlockBody(block.body) ? null : block.body;
+}
+
+/** The answer with the broken block's body replaced by the model's repaired JSON, fence and surrounding text kept. */
+export function withRepairedBody(text: string, repaired: string): string {
+    const found = FENCE.exec(text);
+    if (found) {
+        return `${text.slice(0, found.index)}\`\`\`agentdeck-ask\n${repaired}\n\`\`\`${text.slice(found.index + found[0].length)}`;
+    }
+    const bare = bareBlock(text);
+    if (bare)
+        return (
+            text.slice(0, bare.index) +
+            repaired +
+            text.slice(bare.index + bare.length)
+        );
+    return text;
+}
+
+/** Quotes, backslashes and runs of whitespace dropped, lower-cased: for comparing wording regardless of escaping. */
+const flatten = (value: string) =>
+    value.replace(/["\\]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+/** The repaired JSON kept only the wording of the broken block: every question, header, label and description it yields
+ *  already appears in the original body. Guards against a model that rewrites or translates instead of fixing syntax —
+ *  wrong option text must never reach the card the user picks from. */
+export function keepsWording(rawBody: string, repaired: string): boolean {
+    const { questions } = parseQuestions(
+        '```agentdeck-ask\n' + repaired + '\n```',
+    );
+    if (!questions.length) return false;
+    const haystack = flatten(rawBody);
+    const texts: string[] = [];
+    for (const question of questions) {
+        texts.push(question.question);
+        if (question.header) texts.push(question.header);
+        for (const option of question.options) {
+            texts.push(option.label);
+            if (option.description) texts.push(option.description);
+        }
+    }
+    return texts.every((text) => {
+        const needle = flatten(text);
+        return needle.length === 0 || haystack.includes(needle);
+    });
 }
 
 /** The questions of an answer as one finished step, for the list of steps under the reply: its command line is the first
  *  question, its output all of them with their options. Null when the answer asks nothing. */
-export function askAsStep(text: string): { id: string; command: string; output: string } | null {
-  const { questions } = parseQuestions(text);
-  if (!questions.length) return null;
-  const output = questions
-    .map((question, index) => {
-      const options = question.options.map((option, at) => `   ${at + 1}. ${option.label}${option.description ? `: ${option.description}` : ''}`);
-      const mark = [question.multiSelect ? 'pick any' : '', question.required ? 'required' : ''].filter(Boolean).join(', ');
-      return [`${index + 1}. ${question.question}${mark ? ` (${mark})` : ''}`, ...options].join('\n');
-    })
-    .join('\n\n');
-  let hash = 0;
-  for (const char of output) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return { id: `ask-${(hash >>> 0).toString(36)}`, command: `AskUser  ${questions[0].question}`, output };
+export function askAsStep(
+    text: string,
+): { id: string; command: string; output: string } | null {
+    const { questions } = parseQuestions(text);
+    if (!questions.length) return null;
+    const output = questions
+        .map((question, index) => {
+            const options = question.options.map(
+                (option, at) =>
+                    `   ${at + 1}. ${option.label}${option.description ? `: ${option.description}` : ''}`,
+            );
+            const mark = [
+                question.multiSelect ? 'pick any' : '',
+                question.required ? 'required' : '',
+            ]
+                .filter(Boolean)
+                .join(', ');
+            return [
+                `${index + 1}. ${question.question}${mark ? ` (${mark})` : ''}`,
+                ...options,
+            ].join('\n');
+        })
+        .join('\n\n');
+    let hash = 0;
+    for (const char of output) hash = (hash * 31 + char.charCodeAt(0)) | 0;
+    return {
+        id: `ask-${(hash >>> 0).toString(36)}`,
+        command: `AskUser  ${questions[0].question}`,
+        output,
+    };
 }
 
 /** While the answer streams, a block not closed yet is hidden instead of showing half a JSON. */
 export const withoutOpenBlock = (text: string) => {
-  const at = text.search(/```(?:questions|agentdeck-questions|agentdeck-ask)/);
-  return at >= 0 && !FENCE.test(text) ? text.slice(0, at).trimEnd() : text;
+    const at = text.search(
+        /```(?:questions|agentdeck-questions|agentdeck-ask)/,
+    );
+    return at >= 0 && !FENCE.test(text) ? text.slice(0, at).trimEnd() : text;
 };
 
 /** An answer as it is read in the chat: the questions block never shows as text, whether it is still being written (not
  *  closed yet), complete but with more text after it, or finished. The questions have their own card and step. */
 export function withoutQuestions(text: string): string {
-  const { questions, rest } = parseQuestions(text);
-  return withoutOpenBlock(questions.length ? rest.replace(/\n{3,}/g, '\n\n') : text);
+    const { questions, rest } = parseQuestions(text);
+    return withoutOpenBlock(
+        questions.length ? rest.replace(/\n{3,}/g, '\n\n') : text,
+    );
 }
 
 /** The answers as the message sent back: short, one line per question, so any agent reads them at a glance. */
-export function formatAnswers(questions: Question[], answers: Answer[]): string {
-  const lines = questions.map((question, index) => {
-    const answer = answers[index] ?? { picked: [], text: '' };
-    const parts = [...answer.picked, ...(answer.text.trim() ? [answer.text.trim()] : [])];
-    // An ordinary question left open is a preference the agent may settle; a required one is not.
-    const none = question.required ? '(not answered: this one is required, do not guess it)' : '(no preference, decide yourself)';
-    return `${index + 1}. ${question.question}\n   → ${parts.length ? parts.join('; ') : none}`;
-  });
-  return `My answers:\n${lines.join('\n')}`;
+export function formatAnswers(
+    questions: Question[],
+    answers: Answer[],
+): string {
+    const lines = questions.map((question, index) => {
+        const answer = answers[index] ?? { picked: [], text: '' };
+        const parts = [
+            ...answer.picked,
+            ...(answer.text.trim() ? [answer.text.trim()] : []),
+        ];
+        // An ordinary question left open is a preference the agent may settle; a required one is not.
+        const none = question.required
+            ? '(not answered: this one is required, do not guess it)'
+            : '(no preference, decide yourself)';
+        return `${index + 1}. ${question.question}\n   → ${parts.length ? parts.join('; ') : none}`;
+    });
+    return `My answers:\n${lines.join('\n')}`;
 }
 
 /** Told to an agent so it asks this way instead of guessing (flows, and chats whose agent supports no questions). */
 export const QUESTION_RULE =
-  'Unclear request where a wrong guess wastes work: before planning or editing, ask the user: one why-line, then ```agentdeck-ask {"questions":[{"id":"","header":"<=12ch","question":"?","multi":false,"options":[{"label":"1-5 words (Recommended)","description":""}]}]} ``` (1-3 questions, 2-4 options, best first, no "Other"), then stop. Never ask what code or sense can answer.';
+    'Unclear request where a wrong guess wastes work: before planning or editing, ask the user: one why-line, then ```agentdeck-ask {"questions":[{"id":"","header":"<=12ch","question":"?","multi":false,"options":[{"label":"1-5 words (Recommended)","description":""}]}]} ``` (1-3 questions, 2-4 options, best first, no "Other"), then stop. Never ask what code or sense can answer.';

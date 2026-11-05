@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-suggest"
+description = "Enables the chat_suggest command without any pre-configured scope."
+commands.allow = ["chat_suggest"]
+
+[[permission]]
+identifier = "deny-chat-suggest"
+description = "Denies the chat_suggest command without any pre-configured scope."
+commands.deny = ["chat_suggest"]

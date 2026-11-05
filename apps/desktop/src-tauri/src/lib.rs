@@ -6,6 +6,7 @@ mod agent_runs;
 mod agents;
 mod answers;
 mod awake;
+mod background_stop;
 mod bridge;
 mod browser;
 mod browser_extensions;
@@ -14,6 +15,7 @@ mod cdp;
 mod changes;
 mod channel;
 mod chat_index;
+mod chat_suggest;
 mod claude_bash;
 mod computer;
 mod connectors;
@@ -48,6 +50,7 @@ mod project_activity;
 mod project_memory;
 mod providers;
 mod pty;
+mod question_repair;
 mod servers;
 mod slash_commands;
 mod store;
@@ -2803,6 +2806,7 @@ pub fn run() {
             agent_runs::agent_notify,
             agent_runs::agent_send_while_waiting,
             caller::worker_descendant_activity,
+            background_stop::stop_background_command,
             delegate::delegate_reply,
             delegate::delegate_ready,
             delegate::delegate_enter,
@@ -2820,8 +2824,10 @@ pub fn run() {
             read_image_data_url,
             read_file_bytes,
             image_gen::image_generate,
+            chat_suggest::chat_suggest,
             image_gen::image_prompt_suggest,
             image_gen::image_stop,
+            question_repair::repair_question_json,
             image_history::image_history_list,
             detect::detect_run_targets,
             servers::servers_list,

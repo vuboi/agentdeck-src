@@ -408,6 +408,9 @@ export function applyAgentEvent(
         case 'raw':
             // Only for the Audit log: the chat shows nothing of it.
             return { blocks: current, finished: false };
+        case 'suggestion':
+            // Shown as a button under the answer, not in the reply (see events.svelte.ts).
+            return { blocks: current, finished: false };
     }
 }
 

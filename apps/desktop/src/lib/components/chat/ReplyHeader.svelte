@@ -20,8 +20,14 @@
         message,
         agent,
         usage,
-    }: { message: Message; agent: string; usage: RunUsage | undefined } =
-        $props();
+        sessionId,
+    }: {
+        message: Message;
+        agent: string;
+        usage: RunUsage | undefined;
+        /** The chat the reply belongs to; the open chat when left out. */
+        sessionId?: string;
+    } = $props();
 </script>
 
 {#if message.autoTurn && message.taskTitle}
@@ -94,7 +100,7 @@
         {/snippet}
         <!-- The figures roll only while the reply is being written; a loaded chat shows them plainly. -->
         {@const rolling =
-            Boolean(message.live) && isRunning(workspace.activeId)}
+            Boolean(message.live) && isRunning(sessionId ?? workspace.activeId)}
         <!-- Tokens and cost, quiet and on the right; hover for the breakdown. -->
         <span
             class="ml-auto flex items-baseline gap-1.5 text-[0.6875rem] tabular-nums"

@@ -14,6 +14,8 @@ export type AgentEvent =
     | { kind: 'notice'; text: string }
     /** The streamed text is complete: a tool call has started and its input is being written. */
     | { kind: 'text_end' }
+    /** A prompt the user may send next, predicted after the turn (shown as a button under the answer). */
+    | { kind: 'suggestion'; text: string }
     | {
           kind: 'tool_call';
           id: string;
@@ -500,6 +502,38 @@ export async function suggestImagePrompts(args: {
                 : null,
             reference_paths: args.referencePaths ?? [],
             config: args.settings ?? {},
+        },
+    });
+}
+
+/** Last resort when a question block's JSON is too broken for the deterministic repair in `questions.ts`: the session's
+ *  own model is asked, in one stateless pass, to return valid JSON without changing any wording. Returns the repaired
+ *  JSON object as text; the caller validates it. */
+export async function repairQuestionJson(args: {
+    provider: string | null;
+    model: string;
+    body: string;
+    custom?: {
+        kind: string;
+        baseUrl: string;
+        apiKey: string | null;
+        keyEnv: string | null;
+    };
+}): Promise<string> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string>('repair_question_json', {
+        request: {
+            provider: args.provider,
+            model: args.model,
+            body: args.body,
+            custom: args.custom
+                ? {
+                      kind: args.custom.kind,
+                      base_url: args.custom.baseUrl,
+                      api_key: args.custom.apiKey,
+                      key_env: args.custom.keyEnv,
+                  }
+                : null,
         },
     });
 }

@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use super::{
     allow_entry, summarize_tool_input, AgentEvent, FileSnapshot, PermissionRequest, Provider,
-    TurnRequest, SERVE_CONTEXT,
+    TaskStatus, TurnRequest, SERVE_CONTEXT,
 };
 
 #[derive(Default)]
@@ -20,6 +20,10 @@ pub struct CommandCode {
     root: Mutex<Option<PathBuf>>,
     /// Before-images of file writes whose start event only had a path, keyed by tool call id.
     file_snapshots: Mutex<HashMap<String, FileSnapshot>>,
+    /// `agent` calls started with `run_in_background`, by tool call id, with their description.
+    background_calls: Mutex<HashMap<String, String>>,
+    /// Background agents still running: their `agent_id` and the tool call that started them.
+    open_agents: Mutex<Vec<(String, String)>>,
 }
 
 const LANGUAGE_CONTEXT: &str =
@@ -133,7 +137,12 @@ impl Provider for CommandCode {
         };
         match value["type"].as_str() {
             Some("event") => self.parse_event(&value["event"]),
-            Some("result") => parse_result(&value),
+            Some("result") => {
+                // `-p` exits with its turn: a background agent nobody reported on ends with it.
+                let mut events = self.stop_open_agents();
+                events.extend(parse_result(&value));
+                events
+            }
             _ => Vec::new(),
         }
     }
@@ -192,6 +201,13 @@ impl CommandCode {
         let id = text_field(event, "toolCallId").unwrap_or_default();
         let name = canonical_tool(&text_field(event, "toolName").unwrap_or_default()).to_owned();
         let input = &event["input"];
+        let background = input["run_in_background"].as_bool().unwrap_or(false);
+        if background && name == "Agent" {
+            if let Ok(mut calls) = self.background_calls.lock() {
+                let label = input["description"].as_str().unwrap_or("Background agent");
+                calls.insert(id.clone(), label.to_owned());
+            }
+        }
         let root = self.root.lock().ok().and_then(|root| root.clone());
         let snapshot = super::begin_file_snapshot(root.as_deref(), &name, input);
         let change = match snapshot {
@@ -209,8 +225,85 @@ impl CommandCode {
             name,
             change,
             // A shell call the agent started with `run_in_background` keeps running after its call returns.
-            background: input["run_in_background"].as_bool().unwrap_or(false),
+            background,
         }]
+    }
+
+    /// Command Code reports a background agent only in text: its launch result names the `agent_id`, and
+    /// `agent_output` lists `<agent_id> [<status>] ...`. These become task events, the only thing that ends its row.
+    fn background_tasks(&self, call_id: &str, output: &str, is_error: bool) -> Vec<AgentEvent> {
+        let mut events = Vec::new();
+        let label = self
+            .background_calls
+            .lock()
+            .ok()
+            .and_then(|mut calls| calls.remove(call_id));
+        let Ok(mut open) = self.open_agents.lock() else {
+            return events;
+        };
+        if let (Some(label), false) = (label, is_error) {
+            let agent_id = output
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("agent_id:"))
+                .map(str::trim)
+                .filter(|id| !id.is_empty());
+            if let Some(agent_id) = agent_id {
+                open.push((agent_id.to_owned(), call_id.to_owned()));
+                events.push(AgentEvent::Task {
+                    id: agent_id.to_owned(),
+                    tool_use_id: Some(call_id.to_owned()),
+                    status: TaskStatus::Started,
+                    label: Some(label),
+                    summary: None,
+                    tools: None,
+                });
+            }
+        }
+        if is_error {
+            return events;
+        }
+        for line in output.lines() {
+            let line = line.trim();
+            let Some(index) = open
+                .iter()
+                .position(|(id, _)| line.starts_with(&format!("{id} [")))
+            else {
+                continue;
+            };
+            let rest = &line[open[index].0.len() + 2..];
+            let status = match rest.split(']').next().unwrap_or_default() {
+                "completed" | "done" => TaskStatus::Done,
+                "failed" | "error" => TaskStatus::Failed,
+                "stopped" | "cancelled" | "killed" => TaskStatus::Stopped,
+                _ => continue,
+            };
+            let (id, tool_use_id) = open.remove(index);
+            events.push(AgentEvent::Task {
+                id,
+                tool_use_id: Some(tool_use_id),
+                status,
+                label: None,
+                summary: None,
+                tools: None,
+            });
+        }
+        events
+    }
+
+    fn stop_open_agents(&self) -> Vec<AgentEvent> {
+        let Ok(mut open) = self.open_agents.lock() else {
+            return Vec::new();
+        };
+        open.drain(..)
+            .map(|(id, tool_use_id)| AgentEvent::Task {
+                id,
+                tool_use_id: Some(tool_use_id),
+                status: TaskStatus::Stopped,
+                label: None,
+                summary: None,
+                tools: None,
+            })
+            .collect()
     }
 
     fn tool_finished(&self, event: &Value, is_error: bool) -> Vec<AgentEvent> {
@@ -231,13 +324,16 @@ impl CommandCode {
         let change = snapshot
             .filter(|_| !is_error)
             .and_then(super::finish_file_snapshot);
-        vec![AgentEvent::ToolResult {
+        let tasks = self.background_tasks(&id, &output, is_error);
+        let mut events = vec![AgentEvent::ToolResult {
             id,
             output,
             is_error,
             image,
             change,
-        }]
+        }];
+        events.extend(tasks);
+        events
     }
 }
 
@@ -402,6 +498,82 @@ mod tests {
                 message: "Command Code stopped: max_turns".into()
             }]
         );
+    }
+
+    fn tasks(events: &[AgentEvent]) -> Vec<(String, Option<String>, TaskStatus)> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::Task {
+                    id,
+                    tool_use_id,
+                    status,
+                    ..
+                } => Some((id.clone(), tool_use_id.clone(), *status)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const LAUNCH: &str = r#"{"type":"event","event":{"type":"tool_queued","toolCallId":"c1","toolName":"agent","input":{"description":"Probe","prompt":"hi","run_in_background":true}}}"#;
+    const LAUNCHED: &str = r#"{"type":"event","event":{"type":"tool_completed","toolCallId":"c1","toolName":"agent","result":"Background agent launched.\nagent_id: bg-1-abc\nThe agent is working in the background."}}"#;
+
+    #[test]
+    fn background_agent_ends_when_agent_output_reports_it() {
+        let provider = CommandCode::default();
+        provider.parse_line(LAUNCH);
+        assert_eq!(
+            tasks(&provider.parse_line(LAUNCHED)),
+            vec![("bg-1-abc".into(), Some("c1".into()), TaskStatus::Started)]
+        );
+        let running = provider.parse_line(
+            r#"{"type":"event","event":{"type":"tool_completed","toolCallId":"c2","toolName":"agent_output","result":"bg-1-abc [running] general: Probe"}}"#,
+        );
+        assert!(tasks(&running).is_empty());
+        let done = provider.parse_line(
+            r#"{"type":"event","event":{"type":"tool_completed","toolCallId":"c3","toolName":"agent_output","result":"bg-1-abc [completed] general: Probe"}}"#,
+        );
+        assert_eq!(
+            tasks(&done),
+            vec![("bg-1-abc".into(), Some("c1".into()), TaskStatus::Done)]
+        );
+        // Already ended: the turn's end stops nothing more.
+        let end = provider.parse_line(
+            r#"{"type":"result","subtype":"success","sessionId":"s1","finalText":"ok"}"#,
+        );
+        assert!(tasks(&end).is_empty());
+    }
+
+    #[test]
+    fn background_agent_left_open_stops_with_the_turn() {
+        let provider = CommandCode::default();
+        provider.parse_line(LAUNCH);
+        provider.parse_line(LAUNCHED);
+        let end = provider.parse_line(
+            r#"{"type":"result","subtype":"success","sessionId":"s1","finalText":"ok"}"#,
+        );
+        assert_eq!(
+            tasks(&end),
+            vec![("bg-1-abc".into(), Some("c1".into()), TaskStatus::Stopped)]
+        );
+        assert!(matches!(end.last(), Some(AgentEvent::Done { .. })));
+    }
+
+    #[test]
+    fn foreground_agent_and_failed_launch_start_no_task() {
+        let provider = CommandCode::default();
+        provider.parse_line(
+            r#"{"type":"event","event":{"type":"tool_queued","toolCallId":"f1","toolName":"agent","input":{"description":"Probe","prompt":"hi"}}}"#,
+        );
+        let result = provider.parse_line(
+            r#"{"type":"event","event":{"type":"tool_completed","toolCallId":"f1","toolName":"agent","result":"agent_id: bg-9"}}"#,
+        );
+        assert!(tasks(&result).is_empty());
+        provider.parse_line(LAUNCH);
+        let failed = provider.parse_line(
+            r#"{"type":"event","event":{"type":"tool_errored","toolCallId":"c1","toolName":"agent","error":"agent_id: bg-1-abc"}}"#,
+        );
+        assert!(tasks(&failed).is_empty());
     }
 
     #[test]

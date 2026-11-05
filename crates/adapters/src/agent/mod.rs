@@ -71,6 +71,9 @@ pub enum AgentEvent {
     PermissionDenied { requests: Vec<PermissionRequest> },
     /// The provider has created or resumed the conversation. Emitted before the turn ends so a stopped turn can resume.
     Session { session_id: String },
+    /// A prompt the user may send next, predicted by the CLI after a turn. It comes after [`AgentEvent::Done`]; the chat
+    /// shows it as a button under the answer.
+    Suggestion { text: String },
     /// The turn finished. `session_id` is the CLI's id for the conversation, to resume next turn.
     Done {
         session_id: Option<String>,
@@ -134,6 +137,20 @@ impl TaskStatus {
     pub fn is_end(self) -> bool {
         matches!(self, Self::Done | Self::Failed | Self::Stopped)
     }
+}
+
+/// How long a finished turn waits for its [`AgentEvent::Suggestion`] before its process is handed on. The answer is already
+/// out by then; the wait only keeps the next message from being read before the CLI's prediction is.
+pub const SUGGESTION_GRACE: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_millis(300)
+} else {
+    std::time::Duration::from_secs(4)
+};
+
+/// Whether a turn waits for a suggestion after its `Done`: only a turn that continues a conversation gets one (the CLI
+/// predicts nothing after the first answer).
+pub fn predicts_next_prompt(provider: &dyn Provider, req: &TurnRequest) -> bool {
+    provider.predicts_next_prompt() && req.resume
 }
 
 /// The address of the browser's MCP server for one chat: `/mcp?chat=<id>&root=<folder>`. The bridge reads both from it.
@@ -241,6 +258,10 @@ pub trait Provider: Send + Sync {
     /// How long a turn may print nothing before it is ended as stuck (see `stall.rs`). Any output line resets it.
     fn stall_limit(&self) -> std::time::Duration {
         stall::DEFAULT_STALL_LIMIT
+    }
+    /// `true` when the CLI predicts the next prompt after a turn, as [`AgentEvent::Suggestion`]. See [`predicts_next_prompt`].
+    fn predicts_next_prompt(&self) -> bool {
+        false
     }
     /// Emits a terminal event when a CLI exits without one in its stream.
     fn finish(&self, _req: &TurnRequest) -> Option<AgentEvent> {

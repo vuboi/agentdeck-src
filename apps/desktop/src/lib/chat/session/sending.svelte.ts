@@ -171,8 +171,12 @@ export function sendMessage(
     mentions: Mention[] = [],
     whileRunning: 'queue' | 'next' | 'interrupt' = 'queue',
     files: FileAttachment[] = [],
+    /** The chat the message goes to; the open chat when left out (a worker's chat in the side view passes its own). */
+    targetId?: string,
 ) {
-    const session = activeSession();
+    const session = targetId
+        ? workspace.sessions.find((item) => item.id === targetId)
+        : activeSession();
     // A mention only applies while its inline token is still present in the draft.
     mentions = mentions.filter((mention) =>
         text.includes(

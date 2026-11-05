@@ -27,6 +27,16 @@ export function writeNotice(input: {
     ].join('\n');
 }
 
+/** The user wrote to a delegated worker in its own chat: only this line reaches the parent, not the message itself. */
+export function workerUpdatedNotice(label: string): string {
+    return `[AgentDeck] The user sent the worker "${label.trim().slice(0, 200)}" an update directly in its own chat. Its report will follow the updated request: wait for it, and do not delegate the same work again.`;
+}
+
+/** A background command the user stopped from the Work tray or the Sub agents panel: its process was ended. */
+export function backgroundStoppedNotice(command: string): string {
+    return `[AgentDeck] The user stopped the background command "${command.trim().slice(0, 300)}". Its process was ended, so no more output will come from it. Do not wait for it or start it again unless the user asks; carry on with the rest of your work and report as usual.`;
+}
+
 /** A message the user sent to a side run while this run is still working (plan 6.3, trigger 1). */
 export function userAskedMeanwhileNotice(text: string): string {
     return `[AgentDeck] The user also asked meanwhile: "${text.trim().slice(0, 300)}". A side run handles it. Do not undo its result; keep working on your own task and read the files again before you edit them.`;

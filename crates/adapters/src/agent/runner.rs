@@ -265,6 +265,10 @@ pub async fn drive_turn(
 
     let mut finished = false;
     let mut stalled = false;
+    // A turn that continues a conversation may get the CLI's predicted next prompt after its result: it is read for a while.
+    let mut suggestion_wait = super::predicts_next_prompt(provider, req);
+    let mut suggested = false;
+    let mut drain: Option<tokio::time::Instant> = None;
     // A sub-agent is still open, and the result the CLI printed before it ended (kept, in case nothing follows).
     let mut agents_open = false;
     let mut early_done: Option<AgentEvent> = None;
@@ -282,8 +286,12 @@ pub async fn drive_turn(
         // the CLI blocked on a pipe nobody reads.
         let mut lines = BufReader::new(stdout).split(b'\n');
         loop {
-            let next = match &exited {
-                Some((_, deadline)) => tokio::time::timeout_at(*deadline, lines.next_segment())
+            let until = match &exited {
+                Some((_, deadline)) => Some(*deadline),
+                None => drain,
+            };
+            let next = match until {
+                Some(deadline) => tokio::time::timeout_at(deadline, lines.next_segment())
                     .await
                     .unwrap_or(Ok(None)),
                 None => tokio::select! {
@@ -349,13 +357,22 @@ pub async fn drive_turn(
                     early_done = Some(event);
                     continue;
                 }
+                if matches!(event, AgentEvent::Suggestion { .. }) {
+                    suggested = true;
+                }
+                if matches!(event, AgentEvent::Error { .. }) {
+                    suggestion_wait = false;
+                }
                 finished |= matches!(event, AgentEvent::Done { .. } | AgentEvent::Error { .. });
                 emit(event);
             }
             // The turn is over once its result is out. The CLI may still hold the pipe open (a dev server it
             // started in the background does), so do not wait for the stream to end.
             if finished {
-                break;
+                if !suggestion_wait || suggested {
+                    break;
+                }
+                drain.get_or_insert(tokio::time::Instant::now() + super::SUGGESTION_GRACE);
             }
         }
     }
@@ -748,5 +765,88 @@ echo '{"type":"result","subtype":"success","session_id":"s1","result":"only answ
             matches!(events.last(), Some(AgentEvent::Done { text, .. }) if text == "only answer"),
             "{events:?}"
         );
+    }
+
+    /// `Fake` that predicts the next prompt, as Claude does.
+    struct Predicting(String);
+    impl Provider for Predicting {
+        fn id(&self) -> &'static str {
+            "fakepredicting"
+        }
+        fn binary(&self) -> &'static str {
+            "sh"
+        }
+        fn candidates(&self) -> Vec<std::path::PathBuf> {
+            Vec::new()
+        }
+        fn args(&self, _req: &TurnRequest) -> Vec<String> {
+            vec![self.0.clone()]
+        }
+        fn parse_line(&self, line: &str) -> Vec<AgentEvent> {
+            Claude.parse_line(line)
+        }
+        fn predicts_next_prompt(&self) -> bool {
+            true
+        }
+    }
+
+    /// One turn of a `Predicting` stand-in running `body`: its events, and how long the turn took.
+    async fn predicting_run(
+        name: &str,
+        body: &str,
+        resume: bool,
+    ) -> (Vec<AgentEvent>, std::time::Duration) {
+        let path =
+            std::env::temp_dir().join(format!("agentdeck-worker-{name}-{}.sh", std::process::id()));
+        std::fs::write(&path, body).unwrap();
+        let provider = Predicting(path.to_string_lossy().replace('\\', "/"));
+        let mut turn = request();
+        turn.resume = resume;
+        let mut events = Vec::new();
+        let began = std::time::Instant::now();
+        drive_turn("sh".into(), &provider, &turn, |event| events.push(event)).await;
+        let _ = std::fs::remove_file(&path);
+        (events, began.elapsed())
+    }
+
+    #[tokio::test]
+    async fn a_continued_turn_reads_the_predicted_next_prompt_after_its_result() {
+        let (events, elapsed) = predicting_run(
+            "predict",
+            r#"echo '{"type":"result","is_error":false,"result":"pong","session_id":"s1"}'
+echo '{"type":"prompt_suggestion","suggestion":"run the tests","uuid":"u","session_id":"s1"}'
+sleep 10
+"#,
+            true,
+        )
+        .await;
+        assert!(elapsed < std::time::Duration::from_secs(8), "{elapsed:?}");
+        assert_eq!(
+            events,
+            vec![
+                AgentEvent::Done {
+                    session_id: Some("s1".into()),
+                    text: "pong".into(),
+                    cost_usd: None
+                },
+                AgentEvent::Suggestion {
+                    text: "run the tests".into()
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_conversation_does_not_wait_for_a_suggestion() {
+        let (events, elapsed) = predicting_run(
+            "nowait",
+            r#"echo '{"type":"result","is_error":false,"result":"pong","session_id":"s1"}'
+sleep 10
+"#,
+            false,
+        )
+        .await;
+        assert!(elapsed < std::time::Duration::from_secs(3), "{elapsed:?}");
+        assert_eq!(events.len(), 1, "{events:?}");
     }
 }

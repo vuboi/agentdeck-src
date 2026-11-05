@@ -30,6 +30,7 @@
         draftFiles,
         draftMentions,
         drafts,
+        promptSuggestions,
         replies,
         isRunning,
         messagesView,
@@ -111,8 +112,22 @@
         setSessionContextLimit,
     } from '../../chat/session/state.svelte';
 
+    // `sessionId`: the chat this box writes to, the open one when left out (a worker's chat in the side view passes its
+    // own). `compact`: the side view's box, without the model picker, the work tray and the bars under it; it never
+    // changes that chat's saved picker.
+    let {
+        sessionId: forSession,
+        compact = false,
+        onsent,
+    }: {
+        sessionId?: string;
+        compact?: boolean;
+        /** After a message left this box for its chat. */
+        onsent?: (text: string) => void;
+    } = $props();
+
     // What is typed belongs to the open session: switch away and back and it is still there.
-    const sessionId = $derived(workspace.activeId);
+    const sessionId = $derived(forSession ?? workspace.activeId);
     const voice = $derived(voiceOf(sessionId));
     const draft = $derived(drafts[sessionId] ?? '');
     const mentions = $derived(draftMentions[sessionId] ?? []);
@@ -432,13 +447,12 @@
                 effort: picked.effort,
             };
         pickersLoaded = true;
-        if (workspace.activeId)
-            untrack(() => applyPickerFor(workspace.activeId));
+        if (sessionId) untrack(() => applyPickerFor(sessionId));
     });
 
     // Switching session: show that session's picker.
     $effect(() => {
-        const id = workspace.activeId;
+        const id = sessionId;
         if (id) untrack(() => applyPickerFor(id));
     });
 
@@ -461,8 +475,9 @@
             ).detail;
             // The fallback's effort comes with its model: it is applied to the picker and saved with the chat (D8).
             const level = nextEffort as Effort | undefined;
-            // Saved only once the pickers have loaded: an earlier save would overwrite every chat's picker.
-            if (pickersLoaded) {
+            // Saved only once the pickers have loaded: an earlier save would overwrite every chat's picker. The side view's
+            // box keeps no copy of its own to save, so it never overwrites what the main box saved.
+            if (pickersLoaded && !compact) {
                 const saved = pickers[id];
                 pickers[id] = {
                     ...(saved ?? {
@@ -478,7 +493,7 @@
                 };
                 setPref('composer.pickers', pickers);
             }
-            if (id === workspace.activeId) {
+            if (id === sessionId) {
                 agent = next;
                 model = nextModel;
                 if (level) effort = level;
@@ -491,9 +506,10 @@
     // Any change of the picker: remember it for this session and make it the session's model.
     $effect(() => {
         const current: Picker = { agent, model, effort, fast, permission };
-        const id = workspace.activeId;
-        // Only the picker's own chat is saved: on a switch the fields still hold the previous chat (B8).
-        if (!pickersLoaded || !id || pickerOf !== id) return;
+        const id = sessionId;
+        // Only the picker's own chat is saved: on a switch the fields still hold the previous chat (B8). The side view's
+        // box has no picker: it never changes the chat's route or saved picker.
+        if (compact || !pickersLoaded || !id || pickerOf !== id) return;
         untrack(() => {
             const session = workspace.sessions.find((item) => item.id === id);
             // A chat whose turn runs keeps the route of that turn: a new agent or model waits for the turn to end (D3).
@@ -964,15 +980,31 @@
         if (!hasInput) return;
         // The message goes to the agent and model shown in the picker. A pick still waiting from earlier is replaced by
         // what the picker shows now (or dropped when it matches the chat): an old pending pick must not win later.
-        const target = workspace.sessions.find((item) => item.id === sessionId);
-        if (target && (target.agent !== agent || target.model !== model))
-            pendingSwitch[sessionId] = { agent, model };
-        else delete pendingSwitch[sessionId];
+        // The side view's box has no picker: its message keeps the chat's own agent and model.
+        if (!compact) {
+            const target = workspace.sessions.find(
+                (item) => item.id === sessionId,
+            );
+            if (target && (target.agent !== agent || target.model !== model))
+                pendingSwitch[sessionId] = { agent, model };
+            else delete pendingSwitch[sessionId];
+        }
         delete manuallyStopped[sessionId];
-        sendMessage(draft, images, elements, mentions, whileRunning, attached);
+        const text = draft;
+        sendMessage(
+            draft,
+            images,
+            elements,
+            mentions,
+            whileRunning,
+            attached,
+            sessionId,
+        );
+        onsent?.(text);
         draftElements[sessionId] = [];
         detail = null;
         setDraft('', { sent: true });
+        delete promptSuggestions[sessionId];
         setMentions([]);
         setImages([]);
         setFiles([]);
@@ -1019,7 +1051,7 @@
 </script>
 
 <svelte:window bind:innerWidth={innerW} />
-{#if backgroundWork.length > 0 && (waiting.length > 0 || queuePaused[sessionId])}
+{#if !compact && backgroundWork.length > 0 && (waiting.length > 0 || queuePaused[sessionId])}
     <!-- Work and queue share one tray, so its sides run down to the composer like the queue's do. -->
     <div
         class="mx-2 -mb-4 overflow-hidden rounded-t-2xl border border-b-0 border-border bg-card pb-4 shadow-md"
@@ -1034,7 +1066,7 @@
         />
     </div>
 {:else}
-    {#if backgroundWork.length > 0}
+    {#if !compact && backgroundWork.length > 0}
         <BackgroundTasks items={backgroundWork} {sessionId} layer />
     {/if}
     {#if waiting.length > 0 || queuePaused[sessionId]}
@@ -1203,13 +1235,15 @@
                     event.currentTarget.value = '';
                 }}
             />
-            <ModelPicker
-                bind:agent
-                bind:model
-                bind:effort
-                bind:fast
-                bind:permission
-            />
+            {#if !compact}
+                <ModelPicker
+                    bind:agent
+                    bind:model
+                    bind:effort
+                    bind:fast
+                    bind:permission
+                />
+            {/if}
         </div>
         <!-- Composer and workers share a control whose icons never enter the flex layout. -->
         {#if contextTokens > 0}
@@ -1428,8 +1462,10 @@
         />
     </div>
 </form>
-<ComposerQuota {agent} {model} />
-<ProjectBar />
+{#if !compact}
+    <ComposerQuota {agent} {model} />
+    <ProjectBar />
+{/if}
 
 <!-- The pickers open over the message box, left-aligned to it, and follow what is typed after `@` or `/`. One at a
      time is mounted, so `picker` is always the open one. -->

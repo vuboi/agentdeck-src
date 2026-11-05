@@ -1,15 +1,24 @@
 import { untrack } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { getPref, setPref } from '../../app/platform/prefs';
-import { activity } from '../runs/activity.svelte';
+import {
+    activity,
+    stopBackgroundCommand,
+    stopProjectRun,
+} from '../runs/activity.svelte';
+import { backgroundStoppedNotice } from '../runs/notices';
+import { notifyRun } from '../runs/notices.svelte';
+import { toast } from '../../app/platform/toast';
 import {
     isWorkActive,
     projectChatWork,
+    stopTarget,
     type ChatWork,
 } from '../runs/chat-work';
-import { delegateTasks } from './delegate-task.svelte';
+import { delegateTasks, stopDelegateTask } from './delegate-task.svelte';
 import { delegateRuns } from './delegation.svelte';
 import { manuallyStopped } from './events.svelte';
+import { stopTurn } from './turns.svelte';
 
 const KEY = 'chat.background-work.v1';
 const restored = $state<ChatWork[]>([]);
@@ -44,6 +53,40 @@ void getPref<ChatWork[]>(KEY)
     .finally(() => {
         ready = true;
     });
+
+/** Stop ends what the work runs: an AgentDeck-owned project server, a worker task, or a child chat's turn. */
+export function stopWork(item: ChatWork) {
+    switch (stopTarget(item)) {
+        case 'project':
+            void stopProjectRun(item.activityKey!);
+            break;
+        case 'delegate':
+            stopDelegateTask(item.delegateId!);
+            break;
+        case 'child':
+            stopTurn(item.childId!);
+            break;
+        case 'native':
+            void stopNative(item);
+            break;
+    }
+}
+
+/** Ends a background command alone and tells the chat's model, which keeps working. */
+async function stopNative(item: ChatWork) {
+    const command = item.command!;
+    if (!(await stopBackgroundCommand(item.activityKey!, command))) {
+        toast.error(
+            'Could not stop that background command: its process was not found.',
+        );
+        return;
+    }
+    await notifyRun(
+        item.sessionId,
+        backgroundStoppedNotice(command),
+        'background-stop',
+    );
+}
 
 /** Work survives transcript eviction and chat switching; restored work never claims to be live without fresh events. */
 export function chatWork(sessionId?: string): ChatWork[] {

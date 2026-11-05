@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -1111,6 +1111,12 @@ async fn connector_login_inner(app: AppHandle, id: String) -> Result<(), String>
             };
             match (auth, codex) {
                 (Some(auth), _) => {
+                    // `codex-auth login` writes the registry and account snapshots once the browser step ends. Hold
+                    // the store lock so a background `list` cannot replace them mid-write (it shows as FileNotFound).
+                    // The flag is set after the lock is held, so an aborted earlier sign-in cannot clear it late.
+                    let _auth_lock = CODEX_AUTH_LOCK.lock().await;
+                    CODEX_LOGIN_ACTIVE.store(true, Ordering::Relaxed);
+                    let _login_flag = CodexLoginFlag;
                     run_logged_with_idle_timeout(
                         &app,
                         &id,
@@ -1230,6 +1236,19 @@ static CODEX_EXPIRED: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::
 /// that touches that store so `list` cannot observe a transient missing file.
 static CODEX_AUTH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Set while `codex-auth login` holds `CODEX_AUTH_LOCK`. That can last minutes (the browser step), so account reads
+/// skip `codex-auth list` and use the registry instead of waiting for the lock.
+static CODEX_LOGIN_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Clears `CODEX_LOGIN_ACTIVE` when the sign-in ends, including when its task is aborted.
+struct CodexLoginFlag;
+
+impl Drop for CodexLoginFlag {
+    fn drop(&mut self) {
+        CODEX_LOGIN_ACTIVE.store(false, Ordering::Relaxed);
+    }
+}
+
 /// `cswap` rewrites its account list while adding, switching, or removing an account.
 /// Serialize AgentDeck's reads and writes so Settings cannot parse a half-written list.
 static CSWAP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -1297,7 +1316,10 @@ pub async fn accounts_list(
                 .lock()
                 .map(|known| known.is_none())
                 .unwrap_or(true);
-            if account_id.is_none() && (refresh || status_not_checked) {
+            if account_id.is_none()
+                && (refresh || status_not_checked)
+                && !CODEX_LOGIN_ACTIVE.load(Ordering::Relaxed)
+            {
                 if let Some(auth) = &manager {
                     let _auth_lock = CODEX_AUTH_LOCK.lock().await;
                     // `list` refreshes usage and is the only source for 401 status, which is absent from the registry.

@@ -267,7 +267,10 @@ fn far() -> Instant {
 fn is_content(event: &AgentEvent) -> bool {
     !matches!(
         event,
-        AgentEvent::Usage { .. } | AgentEvent::Raw { .. } | AgentEvent::Task { .. }
+        AgentEvent::Usage { .. }
+            | AgentEvent::Raw { .. }
+            | AgentEvent::Task { .. }
+            | AgentEvent::Suggestion { .. }
     )
 }
 

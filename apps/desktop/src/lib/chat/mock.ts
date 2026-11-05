@@ -167,6 +167,10 @@ export type Message = {
     taskIds?: string[];
     /** Workflow whose background reports this reply integrates, if any. */
     workflowRunId?: string;
+    /** A model repair of this reply's broken question block has already been attempted: it runs at most once. */
+    questionsRepairTried?: boolean;
+    /** The question block's JSON was broken and the session's model fixed it: the card shows a "format fixed" note. */
+    questionsRepaired?: boolean;
 };
 
 export const sessions: Session[] = [

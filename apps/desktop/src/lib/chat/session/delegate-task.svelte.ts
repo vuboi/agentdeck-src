@@ -30,6 +30,7 @@ import {
     connectors,
     roomLine,
     agentHasRoom,
+    refreshDetect,
     usagePct,
 } from '../../agents/connectors.svelte';
 import { elapsed } from '../content/blocks';
@@ -1826,7 +1827,17 @@ export function maybeAutoReview(sessionId: string, reply: Message) {
 }
 
 /** A call of one of the delegation tools, from the Rust side. */
-export function onDelegateCall(call: DelegateCall) {
+export function onDelegateCall(call: DelegateCall, checked = false) {
+    // The installed CLIs are checked when Settings opens, not at start: a call that needs the agent list before then
+    // checks them first, or it finds no agent to hand work to. One check only, so a failed check does not loop.
+    if (
+        !checked &&
+        !connectors.detected &&
+        (call.tool === 'list_agents' || call.tool === 'delegate_task')
+    ) {
+        void refreshDetect().finally(() => onDelegateCall(call, true));
+        return;
+    }
     const reply = (text: string, isError = false) =>
         void replyDelegateCall(call.callId, text, isError).catch(
             () => undefined,

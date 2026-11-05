@@ -140,6 +140,7 @@ fn sdk_args(req: &TurnRequest, mode: &str) -> Vec<String> {
             .collect::<Vec<_>>(),
         "systemPrompt": system_prompt,
         "mcpServers": mcp_servers,
+        "promptSuggestions": true,
     });
     if let Some(id) = &req.session_id {
         if req.resume {
@@ -173,6 +174,10 @@ impl Provider for Claude {
     }
 
     fn prompt_on_stdin(&self) -> bool {
+        true
+    }
+
+    fn predicts_next_prompt(&self) -> bool {
         true
     }
 
@@ -437,6 +442,16 @@ impl Claude {
                     line: line.to_string(),
                 }]
             }
+            // The CLI's prediction of the next prompt, after the result of the turn.
+            Some("prompt_suggestion") => value["suggestion"]
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(|text| AgentEvent::Suggestion {
+                    text: text.to_string(),
+                })
+                .into_iter()
+                .collect(),
             Some("result") => {
                 let denied: Vec<PermissionRequest> = value["permission_denials"]
                     .as_array()
@@ -542,6 +557,19 @@ mod tests {
         let later = sdk_config(&Claude.args(&req(true)));
         assert_eq!(later["resume"], "abc");
         assert!(later.get("sessionId").is_none());
+    }
+
+    #[test]
+    fn a_predicted_next_prompt_is_a_suggestion_and_an_empty_one_is_none() {
+        let line = r#"{"type":"prompt_suggestion","suggestion":"  run the tests  ","uuid":"u","session_id":"s"}"#;
+        assert_eq!(
+            Claude.parse_line(line),
+            vec![AgentEvent::Suggestion {
+                text: "run the tests".into()
+            }]
+        );
+        let empty = r#"{"type":"prompt_suggestion","suggestion":"  ","uuid":"u","session_id":"s"}"#;
+        assert!(Claude.parse_line(empty).is_empty());
     }
 
     #[test]

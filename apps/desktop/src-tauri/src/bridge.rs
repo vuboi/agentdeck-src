@@ -411,30 +411,15 @@ async fn serve(mut stream: TcpStream, app: AppHandle) -> std::io::Result<()> {
                 return stream_answer(stream, &app, &body, &chat).await;
             }
             match crate::mcp::handle(&app, &body, &chat).await {
+                // Explicit CRLF: Node's fetch (Command Code) rejects a response whose lines end in a bare LF.
                 Some(text) => format!(
-                    "HTTP/1.1 200 OK
-Content-Type: application/json
-{session_header}Content-Length: {}
-Connection: close
-
-{text}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{session_header}Content-Length: {}\r\nConnection: close\r\n\r\n{text}",
                     text.len()
                 ),
-                None => "HTTP/1.1 202 Accepted
-Content-Length: 0
-Connection: close
-
-"
-                .to_string(),
+                None => "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
             }
         } else {
-            "HTTP/1.1 405 Method Not Allowed
-Allow: POST
-Content-Length: 0
-Connection: close
-
-"
-            .to_string()
+            "HTTP/1.1 405 Method Not Allowed\r\nAllow: POST\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
         };
         stream.write_all(reply.as_bytes()).await?;
         return stream.shutdown().await;

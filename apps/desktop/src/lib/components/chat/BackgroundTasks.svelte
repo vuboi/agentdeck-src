@@ -24,11 +24,11 @@
     import { stripAnsi } from '../../app/text/ansi';
     import { showSession } from '../../app/ui/content-tabs.svelte';
     import { elapsed } from '../../chat/content/blocks';
+    import { openAgentView } from '../../chat/runs/child-agents.svelte';
+    import { toChildAgent } from '../../chat/runs/child-agents';
+    import { stopWork } from '../../chat/session/work.svelte';
     import { requestFocusMessage } from '../../chat/content/focus-message.svelte';
-    import {
-        refreshProjectRun,
-        stopProjectRun,
-    } from '../../chat/runs/activity.svelte';
+    import { refreshProjectRun } from '../../chat/runs/activity.svelte';
     import {
         isWorkActive,
         stopTarget,
@@ -38,13 +38,11 @@
         returnTaskResult,
         pauseDelegateTask,
         resumeDelegateTask,
-        stopDelegateTask,
     } from '../../chat/session/delegate-task.svelte';
     import {
         stopTurnForResume,
         resumeStoppedTurn,
     } from '../../chat/session/events.svelte';
-    import { stopTurn } from '../../chat/session/turns.svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
 
@@ -153,22 +151,8 @@
         const timer = window.setInterval(refresh, 1000);
         return () => window.clearInterval(timer);
     });
-    // Stop ends what the row runs: an AgentDeck-owned project server, a worker task, or a child chat's turn.
-    function stopItem(item: ChatWork) {
-        switch (stopTarget(item)) {
-            case 'project':
-                void stopProjectRun(item.activityKey!);
-                break;
-            case 'delegate':
-                stopDelegateTask(item.delegateId!);
-                break;
-            case 'child':
-                stopTurn(item.childId!);
-                break;
-        }
-    }
     function stopAll() {
-        for (const item of stoppable) stopItem(item);
+        for (const item of stoppable) stopWork(item);
     }
 </script>
 
@@ -450,7 +434,7 @@
                                         content: 'Stop this task',
                                         position: 'top',
                                     })}
-                                    onclick={() => stopItem(item)}
+                                    onclick={() => stopWork(item)}
                                 >
                                     <svg
                                         class="size-3"
@@ -465,6 +449,20 @@
                                             fill="currentColor"
                                         /></svg
                                     >
+                                </button>
+                            {/if}
+                            {#if toChildAgent(item)}
+                                <button
+                                    type="button"
+                                    class={ICON_BUTTON}
+                                    aria-label="Show beside chat"
+                                    title="Show beside chat"
+                                    onclick={() => openAgentView(item.id)}
+                                >
+                                    <ZIcon
+                                        zType={'lucideColumns3' as ZIconName}
+                                        class="size-3.5"
+                                    />
                                 </button>
                             {/if}
                             {#if item.childId}

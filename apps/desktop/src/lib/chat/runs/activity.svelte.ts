@@ -779,6 +779,30 @@ export async function stopProjectRun(activityKey: string): Promise<boolean> {
 }
 
 /**
+ * Ends one background command a provider started (`run_in_background`) and settles its Work entry. Only that command's
+ * process ends: the chat's reply keeps running, and its CLI reports the ended command to the model itself.
+ */
+export async function stopBackgroundCommand(
+    activityKey: string,
+    command: string,
+): Promise<boolean> {
+    if (!inTauri()) return false;
+    const item = activity.find((entry) => entry.key === activityKey);
+    if (!item || (item.status !== 'running' && item.status !== 'background'))
+        return false;
+    const { invoke } = await import('@tauri-apps/api/core');
+    const stopped = await invoke<boolean>('stop_background_command', {
+        chat: item.sessionId,
+        command,
+    }).catch(() => false);
+    if (!stopped) return false;
+    item.status = 'stopped';
+    item.endedAt = Date.now();
+    record(item);
+    return true;
+}
+
+/**
  * Keeps a Terminal entry's `output` in step with what its tab prints: the terminal pushes the tail whenever the shell
  * writes (throttled there), nothing is read on a timer. Returns the function that stops it.
  */

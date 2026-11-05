@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-repair-question-json"
+description = "Enables the repair_question_json command without any pre-configured scope."
+commands.allow = ["repair_question_json"]
+
+[[permission]]
+identifier = "deny-repair-question-json"
+description = "Denies the repair_question_json command without any pre-configured scope."
+commands.deny = ["repair_question_json"]

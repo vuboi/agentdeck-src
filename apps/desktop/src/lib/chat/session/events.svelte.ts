@@ -52,6 +52,11 @@ import {
 import { notifyRun, queueNotice } from '../runs/notices.svelte';
 import { projectOf } from './state.svelte';
 import {
+    addPromptSuggestion,
+    mergePromptSuggestions,
+} from '../prompt-suggestions';
+import { replyStyle } from '../content/reply-style.svelte';
+import {
     activity,
     promoteShellCall,
     trackActivity,
@@ -76,6 +81,7 @@ import {
     advanceRun,
     nextId,
     persistLocal,
+    promptSuggestions,
     runEpochs,
     workspace,
     type Agent,
@@ -104,6 +110,7 @@ import {
     NO_HANDOUT,
     RENDER_WAIT_LIMIT_MS,
     askText,
+    fetchQuestionRepair,
     liveAsks,
     liveHandouts,
     liveReplies,
@@ -1406,6 +1413,54 @@ function recordAgentEvent(sessionId: string, event: AgentEvent) {
 }
 
 /**
+ * After a finished answer, when Settings > Replies allows it: a short extra run of the same CLI proposes next prompts
+ * (`chat_suggest`). They are merged after the CLI's own (Claude's, which come first) and dropped if the chat has moved on.
+ */
+function requestChatSuggestions(
+    sessionId: string,
+    turn: string,
+    answer: string,
+) {
+    if (!replyStyle.chatSuggestions) return;
+    const session = workspace.sessions.find((item) => item.id === sessionId);
+    if (!session || (session.agent !== 'claude' && session.agent !== 'codex'))
+        return;
+    const asked = messagesOf(sessionId).findLast(
+        (item) => item.role === 'user',
+    );
+    const prompt = (asked?.blocks ?? [])
+        .flatMap((block) => (block.kind === 'response' ? [block.text] : []))
+        .join('\n');
+    if (!prompt.trim() || !answer.trim()) return;
+    const model =
+        session.agent === 'claude' ? 'claude-haiku-5-5' : session.model;
+    const known = promptSuggestions[sessionId];
+    const existing = known?.turn === turn ? known.items : [];
+    void (async () => {
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const items = await invoke<string[]>('chat_suggest', {
+                provider: session.agent,
+                model,
+                prompt,
+                reply: answer,
+                existing,
+            });
+            if (turns[sessionId] !== turn) return;
+            const now = promptSuggestions[sessionId];
+            promptSuggestions[sessionId] = {
+                turn,
+                items: mergePromptSuggestions(
+                    now?.turn === turn ? now.items : [],
+                    items,
+                ),
+            };
+        } catch (error) {
+            logError('turn', 'prompt suggestions failed', error);
+        }
+    })();
+}
+/**
  * The CLI went on by itself (a sub-agent or a background job ended and it reports on it): that is a new reply in the
  * chat with no message of the user above it. A CLI that says so while a reply is already live (Copilot, mid-turn) just
  * goes on writing that reply.
@@ -1474,6 +1529,7 @@ function beginAutoTurn(sessionId: string, turn: string, messageId?: string) {
     liveReplies[sessionId] = reply; // the stored (reactive) object
     replies[sessionId] = reply.id;
     turns[sessionId] = turn;
+    delete promptSuggestions[sessionId];
     session.status = 'working';
     const epoch = (runEpochs[sessionId] = (runEpochs[sessionId] ?? 0) + 1);
     advanceRun(sessionId, { type: 'spawn', epoch });
@@ -1604,6 +1660,20 @@ function handleEventNow(
                 'event dropped',
                 `turn=${turn} is not the current turn (${turns[sessionId] ?? '-'}) kind=${event.kind}`,
             );
+        }
+        return;
+    }
+    // The CLI's prediction of the next prompt comes after the answer: it is kept under that answer, not in the reply.
+    if (event.kind === 'suggestion') {
+        if (turn !== undefined) {
+            const current = promptSuggestions[sessionId];
+            promptSuggestions[sessionId] = {
+                turn,
+                items: addPromptSuggestion(
+                    current?.turn === turn ? current.items : [],
+                    event.text,
+                ),
+            };
         }
         return;
     }
@@ -1837,6 +1907,8 @@ function handleEventNow(
         reply.cost = (reply.cost ?? 0) + event.cost_usd;
     if (event.kind === 'done' || event.kind === 'error')
         reply.compacting = false;
+    if (event.kind === 'done' && turn && !reply.compressed)
+        requestChatSuggestions(sessionId, turn, event.text);
     const update = applyAgentEvent(reply.blocks, event);
     reply.blocks = update.blocks;
     reply.notice = update.notice;
@@ -1952,6 +2024,26 @@ function handleEventNow(
     if (update.finished && event.kind !== 'error' && !ownedRun?.listener) {
         session.syncedSeq ??= {};
         session.syncedSeq[agent] = messagesOf(sessionId).length;
+    }
+    // A finished reply whose question block was too broken for the deterministic parser: ask the session's own model to
+    // repair the JSON, once, before the card would otherwise fall back to showing the raw block as text.
+    if (
+        update.finished &&
+        event.kind === 'done' &&
+        !ownedRun?.listener &&
+        !reply.questionsRepairTried
+    ) {
+        reply.questionsRepairTried = true;
+        void fetchQuestionRepair(reply, session).then((fix) => {
+            if (!fix) return;
+            reply.blocks = reply.blocks.map((block, at) =>
+                at === fix.index && block.kind === 'response'
+                    ? { ...block, text: fix.text }
+                    : block,
+            );
+            reply.questionsRepaired = true;
+            persistLocal();
+        });
     }
     // A failed turn that can be carried on (retry, another account, the next agent) does not end the work: the chat
     // gets a line saying what happens, and the steps below that close the work (failure, reports) are skipped.

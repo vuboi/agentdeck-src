@@ -7,10 +7,24 @@
         toggleTools,
     } from '../../app/ui/layout.svelte';
     import { terminal, toggleTerminal } from '../../terminal/terminal.svelte';
+    import { workspace } from '../../chat/sessions.svelte';
+    import {
+        AGENTS_TOOL,
+        childAgents,
+        toggleAgentsPanel,
+    } from '../../chat/runs/child-agents.svelte';
+    import { isAway } from '../../app/ui/layout.svelte';
     import Menu from '../ui/Menu.svelte';
 
     // The divider only makes sense when other actions come before this group.
     let { divider = true }: { divider?: boolean } = $props();
+
+    // The sub agents of the open chat: the button shows only while there are some.
+    const agents = $derived(childAgents(workspace.activeId));
+    const agentsRunning = $derived({
+        total: agents.length,
+        running: agents.filter((agent) => agent.state === 'running').length,
+    });
 
     // On a narrow window the three actions fold into one menu button, like the other toolbars do.
     let narrow = $state(false);
@@ -90,6 +104,30 @@
             label="Panels and terminal"
         />
     {:else}
+        {#if agentsRunning.total > 0}
+            <ZButton
+                zWave={false}
+                zType="ghost"
+                zSize="sm"
+                class="h-8! gap-1 px-2! {layout.toolsOpen &&
+                layout.activeTool === AGENTS_TOOL
+                    ? '!bg-primary/15 !text-primary hover:!bg-primary/20 hover:!text-primary'
+                    : '!bg-transparent !text-muted-foreground hover:!bg-primary/10 hover:!text-primary'}"
+                aria-label="Sub agents"
+                aria-pressed={layout.toolsOpen &&
+                    layout.activeTool === AGENTS_TOOL &&
+                    !isAway(AGENTS_TOOL)}
+                title="Sub agents ({agentsRunning.running} running)"
+                onclick={toggleAgentsPanel}
+            >
+                <ZIcon zType={'lucideListChecks' as ZIconName} class="size-4" />
+                <span class="text-xs tabular-nums"
+                    >{agentsRunning.running > 0
+                        ? agentsRunning.running
+                        : agentsRunning.total}</span
+                >
+            </ZButton>
+        {/if}
         <ZButton
             zWave={false}
             zType="ghost"

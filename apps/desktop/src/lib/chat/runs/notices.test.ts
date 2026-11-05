@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    backgroundStoppedNotice,
+    workerUpdatedNotice,
     userEditNotice,
     noticeBlock,
     previewText,
@@ -51,4 +53,16 @@ test("W5 trigger 6: a user edit says the user's text is the newest version", () 
     const notice = userEditNotice({ path: 'en.json', after: 'nhãn mới' });
     assert.ok(notice.includes('The user edited en.json by hand'));
     assert.ok(notice.includes('nhãn mới'));
+});
+
+test('a stopped background command tells the model it ended and to carry on', () => {
+    const text = backgroundStoppedNotice('  sleep 60; echo noop ');
+    assert.match(text, /stopped the background command "sleep 60; echo noop"/);
+    assert.match(text, /carry on/);
+});
+
+test('a worker updated in its own chat tells the parent to wait, without the message', () => {
+    const text = workerUpdatedNotice(' Review the API ');
+    assert.match(text, /worker "Review the API"/);
+    assert.match(text, /do not delegate the same work again/);
 });

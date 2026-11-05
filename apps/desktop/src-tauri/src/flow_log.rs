@@ -383,6 +383,7 @@ fn describe(event: &AgentEvent) -> (&'static str, String) {
             ),
         ),
         AgentEvent::AutoTurn { reason } => ("auto_turn", clip(reason, 120)),
+        AgentEvent::Suggestion { text } => ("suggestion", clip(text, 120)),
     }
 }
 

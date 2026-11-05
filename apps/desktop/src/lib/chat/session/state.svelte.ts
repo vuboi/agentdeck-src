@@ -354,6 +354,10 @@ export function advanceRun(sessionId: string, event: RunEvent) {
 /** What was typed but not sent, per session: switch away and back and it is still there. */
 export const drafts = $state<Record<string, string>>({});
 export const draftMentions = $state<Record<string, Mention[]>>({});
+/** Prompts the CLI predicted after the last answer of a chat, shown as buttons under it. Cleared when the next turn starts. */
+export const promptSuggestions = $state<
+    Record<string, { turn: string; items: string[] }>
+>({});
 
 /** An image waiting to be sent: a data URL, already scaled down. */
 export type Attachment = {

@@ -49,6 +49,8 @@ export type ChatWork = {
     detail: string;
     /** Stable command and folder identity used to collapse repeated Run project calls. */
     projectKey?: string;
+    /** The shell command of a provider's background command (`run_in_background`): Stop ends that process alone. */
+    command?: string;
 };
 
 /** Terminal results remain available in the tray instead of disappearing at completion. */
@@ -56,15 +58,34 @@ export const isWorkActive = (work: ChatWork) =>
     ['queued', 'running', 'paused', 'waiting', 'input'].includes(work.state);
 
 /** The only independent Stop targets a Work row may own. There is deliberately no main-chat fallback. */
-export type WorkStopTarget = 'project' | 'delegate' | 'child' | null;
+export type WorkStopTarget = 'project' | 'delegate' | 'child' | 'native' | null;
 export function stopTarget(
-    work: Pick<ChatWork, 'activityKey' | 'delegateId' | 'childId' | 'canStop'>,
+    work: Pick<
+        ChatWork,
+        'activityKey' | 'delegateId' | 'childId' | 'canStop' | 'command'
+    >,
 ): WorkStopTarget {
     if (!work.canStop) return null;
+    // A provider's background command: its own process is ended, the chat's reply keeps running.
+    if (work.command) return 'native';
     if (work.activityKey) return 'project';
     if (work.delegateId) return 'delegate';
     if (work.childId) return 'child';
     return null;
+}
+
+/** The shell command in a tool call's input (`command`, `cmd`), for a call that runs one. */
+function shellCommand(input: string): string | undefined {
+    try {
+        const value = JSON.parse(input) as Record<string, unknown>;
+        for (const key of ['command', 'cmd']) {
+            if (typeof value?.[key] === 'string' && value[key])
+                return String(value[key]);
+        }
+    } catch {
+        /* Plain tool arguments carry no separate command. */
+    }
+    return undefined;
 }
 
 /** Prefer the provider's human description to raw tool JSON in the always-visible task title. */
@@ -103,6 +124,18 @@ export function projectChatWork(
         const subagent = providerOfSubagent(type);
         const foreign = subagent !== null && subagent !== event.agent;
         const titled = event.taskLabel || workTitle(event.input) || event.name;
+        const live = ['running', 'background'].includes(event.status);
+        const kind =
+            event.nativeTaskId || /agent|task|spawn/i.test(event.name)
+                ? 'agent'
+                : 'command';
+        // A background command of the provider: AgentDeck can end its process without stopping the chat's reply.
+        const command =
+            kind === 'command' &&
+            event.background &&
+            event.name !== 'Run project'
+                ? shellCommand(event.input)
+                : undefined;
         work.push({
             id: `native:${event.key}`,
             sessionId: event.sessionId,
@@ -123,17 +156,14 @@ export function projectChatWork(
                         : 'running',
             agent: foreign ? subagent : event.agent,
             model: foreign ? undefined : event.model,
-            kind:
-                event.nativeTaskId || /agent|task|spawn/i.test(event.name)
-                    ? 'agent'
-                    : 'command',
+            kind,
             sourceMessageId: event.sourceMessageId,
             sourceTitle: event.sourceTitle,
-            // AgentDeck owns project servers started by browser_serve, so they can stop independently of the chat turn.
-            // Other provider-native tasks still have no per-task cancellation API and must not stop the whole reply.
-            canStop:
-                event.name === 'Run project' &&
-                ['running', 'background'].includes(event.status),
+            // AgentDeck owns project servers started by browser_serve, and a background command's process can be ended on
+            // its own, so both stop independently of the chat turn. Other provider-native tasks (a sub agent) have no
+            // per-task cancellation and must not stop the whole reply.
+            canStop: live && (event.name === 'Run project' || Boolean(command)),
+            ...(command ? { command } : {}),
             startedAt: event.startedAt,
             endedAt: event.endedAt,
             detail: event.output ?? '',

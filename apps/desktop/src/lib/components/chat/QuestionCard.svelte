@@ -20,12 +20,15 @@
         questions,
         answered = false,
         from = '',
+        repaired = false,
         onsubmit,
         oncancel,
     }: {
         questions: Question[];
         answered?: boolean;
         from?: string;
+        /** The agent's JSON was broken and the session's model fixed it: a small note tells the user. */
+        repaired?: boolean;
         /** Cancels the questions: nothing is sent to the agent. */ oncancel?: () => void;
         /** Sends the answers; false when they could not go out now (the card then stays open). */ onsubmit: (
             text: string,
@@ -157,6 +160,11 @@
             />
             <span class="min-w-0">{current.question}</span>
         </p>
+        {#if repaired && !done}
+            <p class="m-0 mt-1 pl-5 text-[0.6875rem] text-muted-foreground">
+                Format fixed automatically
+            </p>
+        {/if}
         {#if done}
             <p class="m-0 mt-1 pl-5 text-sm text-muted-foreground">
                 {chosenLabel || 'Answered'}
@@ -302,6 +310,11 @@
         </header>
 
         <div class="flex flex-col gap-2 p-2.5">
+            {#if repaired && !done}
+                <span class="text-[0.6875rem] text-muted-foreground"
+                    >Format fixed automatically</span
+                >
+            {/if}
             <div class="flex flex-col gap-1">
                 {#if current.header}<span
                         class="w-fit rounded bg-primary/10 px-1.5 py-px text-[10px] font-medium tracking-wide text-primary uppercase"

@@ -670,9 +670,32 @@ export function effortFor(session: SessionItem): Effort | null {
     const model = picked.model;
     const known = model ? findModel(session.agent, model) : undefined;
     // Antigravity sends a level only when its own list gives this model levels: `agy` refuses --effort for the rest.
-    if (session.agent === 'antigravity')
-        return known?.efforts?.length ? level : null;
-    return known && !known.efforts?.length ? null : level;
+    if (session.agent === 'antigravity' && !known?.efforts?.length) return null;
+    if (known && !known.efforts?.length) return null;
+    return known?.efforts ? fitEffort(level, known.efforts) : level;
+}
+
+const EFFORT_RANK: Effort[] = [
+    'off',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+    'ultra',
+];
+
+/** A level the model does not list (a worker inheriting its caller's `max` on a model with only low/medium/high) drops
+ *  to the highest listed level at or below it, else the lowest listed one: the CLI refuses an unlisted level. */
+function fitEffort(level: Effort, listed: string[]): Effort {
+    if (listed.includes(level)) return level;
+    const ranked = EFFORT_RANK.filter((value) => listed.includes(value));
+    const at = EFFORT_RANK.indexOf(level);
+    return (
+        ranked.filter((value) => EFFORT_RANK.indexOf(value) <= at).at(-1) ??
+        ranked[0] ??
+        level
+    );
 }
 
 /** The model a turn runs on (see chatModel); null when the saved one is no longer offered, so callers check chatModel first. */

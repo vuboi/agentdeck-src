@@ -16,8 +16,7 @@ export const agentName = (agent: string) =>
     AGENTS.find((item) => item.value === agent)?.label ?? agent;
 
 /** What the speaker button reads: the replies of the agent that run up to this one (no message of yours between). */
-export function spokenRun(index: number) {
-    const list = chat.messages;
+export function spokenRun(index: number, list = chat.messages) {
     let from = index;
     while (from > 0 && list[from - 1].role === 'assistant') from--;
     return list

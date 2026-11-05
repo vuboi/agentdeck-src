@@ -74,6 +74,7 @@
         placeholder = 'Search…',
         label = placeholder,
         empty = 'Nothing found',
+        emptyIcon,
         footer = '',
         loading = false,
         position = 'bottom-left',
@@ -89,6 +90,7 @@
         onhover,
         onrowleave,
         onenter,
+        tooltip = 'right',
     }: {
         anchor: HTMLElement | null | undefined;
         open?: boolean;
@@ -113,6 +115,8 @@
         /** What the list is, for screen readers (the placeholder when there is a search box). */
         label?: string;
         empty?: string;
+        /** An icon over the empty text. */
+        emptyIcon?: ZIconName;
         footer?: string;
         loading?: boolean;
         position?: ZPopoverPosition;
@@ -134,6 +138,8 @@
         onhover?: (item: PickerItem<T>, element: HTMLElement) => void;
         onrowleave?: (item: PickerItem<T>) => void;
         onenter?: () => void;
+        /** The side a truncated row's full name shows on; a popover at the right edge of the window uses `left`. */
+        tooltip?: 'left' | 'right';
     } = $props();
 
     const SIZE = {
@@ -187,6 +193,8 @@
                 heightReduction,
         );
         if (fitContent && local) {
+            // An empty list is as tall as its message (min-h-20 plus the list's padding), so it does not scroll.
+            if (all.length === 0) return 88;
             const groups = new Set(all.map((item) => item.group ?? '')).size;
             const content =
                 all.length * rowPx +
@@ -465,7 +473,7 @@
                 {#if items.length === 0}
                     <!-- In the fixed height: the box does not change size whether it is waiting, empty or full. -->
                     <div
-                        class="grid h-full min-h-20 place-items-center px-2 text-center text-sm text-muted-foreground"
+                        class="flex h-full min-h-20 flex-col items-center justify-center gap-2 px-2 text-center text-sm text-muted-foreground"
                     >
                         {#if loading}
                             <ZIcon
@@ -474,6 +482,10 @@
                                 aria-label="Loading"
                             />
                         {:else}
+                            {#if emptyIcon}<ZIcon
+                                    zType={emptyIcon}
+                                    class="size-5 shrink-0 opacity-60"
+                                />{/if}
                             <p class="m-0">{empty}</p>
                         {/if}
                     </div>
@@ -541,6 +553,12 @@
                                         }}
                                         onpointerleave={() =>
                                             onrowleave?.(item)}
+                                        {@attach zTooltip({
+                                            content: item.label,
+                                            position: tooltip,
+                                            autoDetect: true,
+                                            offset: 6,
+                                        })}
                                     >
                                         {#if item.agent}<AgentLogo
                                                 agent={item.agent}
@@ -574,14 +592,7 @@
                                                     ? 'text-destructive'
                                                     : 'text-muted-foreground'}"
                                             />{/if}
-                                        <span
-                                            class="min-w-0 shrink truncate"
-                                            {@attach zTooltip({
-                                                content: item.label,
-                                                position: 'right',
-                                                autoDetect: true,
-                                                offset: 6,
-                                            })}
+                                        <span class="min-w-0 shrink truncate"
                                             >{#each marked(item.label) as part, at (at)}{#if part.match}<span
                                                         class="font-semibold text-primary"
                                                         >{part.text}</span

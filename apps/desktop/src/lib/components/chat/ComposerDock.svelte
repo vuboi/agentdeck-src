@@ -27,6 +27,7 @@
         messageId: string;
         questions: Question[];
         agent: Agent | undefined;
+        repaired?: boolean;
     };
     let {
         pendingApproval,
@@ -63,6 +64,7 @@
         <QuestionCard
             questions={pendingQuestion.questions}
             from={pendingQuestion.agent ? agentName(pendingQuestion.agent) : ''}
+            repaired={pendingQuestion.repaired ?? false}
             onsubmit={(text) => answerQuestions(workspace.activeId, text)}
             oncancel={() => cancelPending(workspace.activeId)}
         />

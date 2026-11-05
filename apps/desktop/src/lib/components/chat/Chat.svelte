@@ -44,6 +44,7 @@
     } from '../../chat/content/chat-dividers';
     import { focusMessage } from '../../chat/content/focus-message.svelte';
     import { askText } from '../../chat/session/run.svelte';
+    import { drafts, promptSuggestions } from '../../chat/session/state.svelte';
     import {
         preview,
         releasePreview,
@@ -56,6 +57,7 @@
     import ChatHeader from './ChatHeader.svelte';
     import WorktreeBar from './WorktreeBar.svelte';
     import SubChatBar from './SubChatBar.svelte';
+    import PromptSuggestions from './PromptSuggestions.svelte';
     import DelegateList from '../tasks/DelegateList.svelte';
     import JumpButton from './JumpButton.svelte';
     import UserMessage from './UserMessage.svelte';
@@ -586,6 +588,7 @@
                     return {
                         messageId: message.id,
                         questions,
+                        repaired: message.questionsRepaired ?? false,
                         agent:
                             message.agent ??
                             activeSession()?.source ??
@@ -1043,6 +1046,22 @@
                                                 />
                                             {/if}
                                         </article>
+                                        {#if !mine && row.index + from === chat.messages.length - 1 && promptSuggestions[workspace.activeId]?.items.length && !drafts[workspace.activeId]?.trim()}
+                                            <div
+                                                class="mx-auto flex w-full min-w-0 max-w-[52rem] flex-col items-start px-3 pb-2.5 min-[720px]:px-8"
+                                            >
+                                                <PromptSuggestions
+                                                    items={promptSuggestions[
+                                                        workspace.activeId
+                                                    ]?.items ?? []}
+                                                    onpick={(text) => {
+                                                        drafts[
+                                                            workspace.activeId
+                                                        ] = text;
+                                                    }}
+                                                />
+                                            </div>
+                                        {/if}
                                         <!-- Delegated agents are shown as their own row, apart from
                    the user's bubble, so hovering one does not light up the other. -->
                                         {#if mine && message.blocks.some((block) => block.kind === 'delegate')}

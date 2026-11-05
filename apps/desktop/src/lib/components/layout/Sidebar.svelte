@@ -1062,7 +1062,7 @@
     zWidth={200}
 >
     <div
-        class="max-w-[200px] px-2 py-1.5 text-xs leading-snug break-words whitespace-normal"
+        class="max-w-[200px] px-2 py-1.5 text-[13.5px] leading-snug break-words whitespace-normal"
     >
         {tipText}
     </div>

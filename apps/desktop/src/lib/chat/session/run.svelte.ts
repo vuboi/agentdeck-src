@@ -13,6 +13,7 @@ import {
     prehandleAttachments,
     prehandleOpencode,
     prewarmAgent,
+    repairQuestionJson,
     saveAttachment,
     sendCustomTurn,
     sendAgentTurn,
@@ -68,7 +69,13 @@ import { setPref } from '../../app/platform/prefs';
 import { type RunLane, deliveryFor } from '../runs/run-lanes';
 import { userAskedMeanwhileNotice } from '../runs/notices';
 import { notifyRun, takeNoticeBlock } from '../runs/notices.svelte';
-import { parseQuestions, type Question } from '../recovery/questions';
+import {
+    keepsWording,
+    parseQuestions,
+    unparsedQuestionBody,
+    withRepairedBody,
+    type Question,
+} from '../recovery/questions';
 import { dequeue, enqueueNext } from '../runs/queue';
 import {
     MODELS,
@@ -1550,6 +1557,88 @@ export function openQuestions(sessionId: string): Question[] {
     }
     return [];
 }
+/** How the session's model is reached for a one-shot JSON repair: `custom` carries the provider's address and key, the CLI
+ *  providers just their name. Null for a provider that has no supported one-shot path (the deterministic text is kept). */
+function repairRoute(
+    reply: Message,
+    session: { agent: string; model?: string },
+): {
+    provider: string | null;
+    model: string;
+    custom?: {
+        kind: string;
+        baseUrl: string;
+        apiKey: string | null;
+        keyEnv: string | null;
+    };
+} | null {
+    const agent = (reply.agent ?? session.agent) as string;
+    const model = reply.model ?? session.model ?? '';
+    const target = parseCustomModel(model);
+    const provider = target
+        ? connectors.custom.find((item) => item.id === target.providerId)
+        : undefined;
+    if (agent === 'custom' || provider) {
+        if (!provider || !target) return null;
+        return {
+            provider: 'custom',
+            model: target.model,
+            custom: {
+                kind: provider.kind,
+                baseUrl: provider.baseUrl,
+                apiKey: activeProviderKey(provider)?.apiKey || null,
+                keyEnv: providerKeyEnv(provider) || null,
+            },
+        };
+    }
+    if (agent === 'claude' || agent === 'opencode' || agent === 'antigravity') {
+        return model ? { provider: agent, model } : null;
+    }
+    if (model.startsWith('claude-')) return { provider: 'claude', model };
+    return null;
+}
+
+/** Ask the session's model to repair a question block whose JSON the deterministic parser could not fix. Returns the
+ *  response block's index and its new text, or null when there is nothing to fix, no supported provider, the model
+ *  failed, or the repair changed the wording (which `keepsWording` rejects, so wrong options never reach the card). It
+ *  does not mutate the reply: the caller applies the fix once and marks it. */
+export async function fetchQuestionRepair(
+    reply: Message,
+    session: { agent: string; model?: string; id: string },
+): Promise<{ index: number; text: string } | null> {
+    const index = reply.blocks.findIndex(
+        (block) =>
+            block.kind === 'response' &&
+            unparsedQuestionBody(block.text) !== null,
+    );
+    if (index < 0) return null;
+    const block = reply.blocks[index];
+    if (block.kind !== 'response') return null;
+    const body = unparsedQuestionBody(block.text);
+    if (!body) return null;
+    const route = repairRoute(reply, session);
+    if (!route) return null;
+    let repaired: string;
+    try {
+        repaired = (
+            await repairQuestionJson({
+                provider: route.provider,
+                model: route.model,
+                body,
+                custom: route.custom,
+            })
+        ).trim();
+    } catch (error) {
+        logError('turn', 'question JSON repair failed', error, {
+            chat: session.id,
+        });
+        return null;
+    }
+    if (!repaired || repaired === '{}' || !keepsWording(body, repaired))
+        return null;
+    return { index, text: withRepairedBody(block.text, repaired) };
+}
+
 /** Told to the agent with a message that was written instead of answering its permission request. */
 export const SKIPPED_PERMISSION =
     'The user did not answer your permission request and wrote this instead. The request was cancelled: the command or tool call was NOT run and nothing it would have changed was changed. Do not assume it ran; ask again only if it is still needed.';

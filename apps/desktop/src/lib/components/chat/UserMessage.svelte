@@ -28,7 +28,13 @@
     } from './chat-edit.svelte';
     import type { Message } from '../../chat/mock';
 
-    let { message }: { message: Message } = $props();
+    /** `sessionId` is the chat the message belongs to; the open chat when left out (a side view passes its own). */
+    /** `copyOnly`: the footer keeps Copy alone (a sub agent's chat in the side view: no fork, no edit). */
+    let {
+        message,
+        sessionId,
+        copyOnly = false,
+    }: { message: Message; sessionId?: string; copyOnly?: boolean } = $props();
 
     // "Copy all" on a message with attachments: its text, pictures, notes and files go on the clipboard together, and
     // pasting into the message box restores them all (see attachments.ts).
@@ -203,8 +209,10 @@
     <MessageFooter
         {message}
         end={theme.chatLayout === 'split'}
-        onfork={() => forkSession(workspace.activeId, message.id)}
-        onedit={() => startEdit(message)}
+        onfork={copyOnly
+            ? undefined
+            : () => forkSession(sessionId ?? workspace.activeId, message.id)}
+        onedit={copyOnly ? undefined : () => startEdit(message)}
         oncopyall={pictures.length +
             documents.length +
             message.blocks.filter((block) => block.kind === 'element').length >
