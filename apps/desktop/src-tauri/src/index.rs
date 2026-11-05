@@ -154,8 +154,8 @@ fn now_secs() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-/// Deletes the index files of folders that are gone, refused now, or unused for `STALE_AFTER`, and the files of
-/// indexes from before `meta` existed that were last written that long ago. Returns how many were deleted.
+/// Deletes the index files of folders that are gone or refused now, and of indexes from before `meta` existed that were
+/// last written more than `STALE_AFTER` ago. Returns how many were deleted.
 pub fn cleanup_stale(now: std::time::SystemTime) -> usize {
     let Ok(folder) = index_folder() else { return 0 };
     cleanup_in(&folder, now)
@@ -170,9 +170,6 @@ fn cleanup_in(folder: &Path, now: std::time::SystemTime) -> usize {
         .and_then(|all| all.lock().ok())
         .map(|all| all.keys().map(|root| db_name(root)).collect())
         .unwrap_or_default();
-    let now_s = now
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
@@ -189,34 +186,20 @@ fn cleanup_in(folder: &Path, now: std::time::SystemTime) -> usize {
             .ok()
             .and_then(|time| now.duration_since(time).ok())
             .map_or(0, |age| age.as_secs());
-        let stored = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .ok()
-            .and_then(|conn| {
-                let root: Option<String> = conn
-                    .query_row("SELECT value FROM meta WHERE key = 'root'", [], |row| {
+        // A project's index is kept as long as its folder exists: it is a cache of the project, and rebuilding it costs a
+        // full walk. Deleted only when the folder is gone or no longer counts as a project.
+        let stored: Option<String> =
+            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .ok()
+                .and_then(|conn| {
+                    conn.query_row("SELECT value FROM meta WHERE key = 'root'", [], |row| {
                         row.get(0)
                     })
-                    .ok();
-                let used: Option<u64> = conn
-                    .query_row(
-                        "SELECT value FROM meta WHERE key = 'last_used'",
-                        [],
-                        |row| row.get::<_, String>(0),
-                    )
                     .ok()
-                    .and_then(|value| value.parse().ok());
-                root.map(|root| (root, used))
-            });
+                });
         let stale = match stored {
-            Some((root, used)) => {
-                // Without `last_used` the file's age decides, as for an index with no record at all.
-                let unused = match used {
-                    Some(last) => now_s.saturating_sub(last) > STALE_AFTER,
-                    None => modified_age > STALE_AFTER,
-                };
-                unused || !Path::new(&root).is_dir() || refusal(&root).is_some()
-            }
-            // No record of its folder (written before this table): judged by age only.
+            Some(root) => !Path::new(&root).is_dir() || refusal(&root).is_some(),
+            // No record of its folder (written before the `meta` table): the file's age decides.
             None => modified_age > STALE_AFTER,
         };
         if !stale {
@@ -1303,7 +1286,7 @@ mod tests {
         std::fs::create_dir_all(folder.join("live-project")).expect("project");
         std::fs::write(folder.join("live-project").join("Cargo.toml"), "[package]")
             .expect("manifest");
-        // Unused for a long time: gone, even though its folder exists.
+        // Unused for a long time, but its folder exists: a project's index is kept.
         let old = folder.join("old.db");
         let conn = Connection::open(&old).expect("db");
         conn.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
@@ -1316,9 +1299,9 @@ mod tests {
         drop(conn);
 
         let removed = cleanup_in(&folder, now);
-        assert_eq!(removed, 2);
+        assert_eq!(removed, 1);
         assert!(!gone.exists());
-        assert!(!old.exists());
+        assert!(old.exists());
         assert!(live.exists());
         let _ = std::fs::remove_dir_all(&folder);
     }
