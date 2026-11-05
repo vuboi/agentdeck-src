@@ -2,12 +2,10 @@
 //! one insert; the dashboards read the rows they need. The log keeps the newest `KEEP` replies, as the IndexedDB array
 //! did.
 
-use std::sync::{Mutex, OnceLock};
-
 use rusqlite::{params, Connection, Transaction};
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_1: &str = "
+pub const SCHEMA_1: &str = "
 CREATE TABLE usage (
     id INTEGER PRIMARY KEY,
     at_ms INTEGER NOT NULL,
@@ -59,24 +57,7 @@ pub struct Record {
     pub estimated: bool,
 }
 
-static CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
-
-fn with_conn<T>(run: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
-    let shared = match CONN.get() {
-        Some(conn) => conn,
-        None => {
-            let folder = crate::home_folder()?.join(crate::channel::home_folder_name());
-            let conn = crate::sqlite::open(
-                &folder.join("app.db"),
-                crate::sqlite::Journal::Wal,
-                &[SCHEMA_1],
-            )?;
-            CONN.get_or_init(|| Mutex::new(conn))
-        }
-    };
-    let mut guard = shared.lock().map_err(|_| "usage log is busy".to_string())?;
-    run(&mut guard)
-}
+use crate::app_db::with_conn;
 
 fn insert(tx: &Transaction, record: &Record) -> Result<(), String> {
     tx.execute(
@@ -183,7 +164,13 @@ mod tests {
     use super::*;
 
     fn temp() -> std::path::PathBuf {
-        let folder = std::env::temp_dir().join(format!("agentdeck-usage-{}", std::process::id()));
+        // One folder per test: the tests run in parallel and must not remove each other's database.
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("t")
+            .replace("::", "-");
+        let folder =
+            std::env::temp_dir().join(format!("agentdeck-usage-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
         folder.join("app.db")
     }
