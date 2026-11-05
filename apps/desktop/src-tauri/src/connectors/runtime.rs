@@ -2,8 +2,10 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 fn search_path() -> Vec<PathBuf> {
@@ -118,25 +120,70 @@ pub(crate) async fn capture(
     limit: Duration,
 ) -> Result<Captured, String> {
     account_tool_allows(program, args)?;
-    let child = command(program)
+    let mut child = command(program)
         .args(args)
         .spawn()
         .map_err(|error| format!("could not start {}: {error}", program.display()))?;
-    let output = tokio::time::timeout(limit, child.wait_with_output())
-        .await
-        .map_err(|_| {
-            format!(
+    let stdout = Arc::new(Mutex::new(Vec::new()));
+    let stderr = Arc::new(Mutex::new(Vec::new()));
+    let mut readers = [
+        tokio::spawn(drain(child.stdout.take(), stdout.clone())),
+        tokio::spawn(drain(child.stderr.take(), stderr.clone())),
+    ];
+    let status = match tokio::time::timeout(limit, child.wait()).await {
+        Ok(status) => status.map_err(|error| error.to_string())?,
+        Err(_) => {
+            for reader in &readers {
+                reader.abort();
+            }
+            return Err(format!(
                 "{} took longer than {}s",
                 program.display(),
                 limit.as_secs()
-            )
-        })?
-        .map_err(|error| error.to_string())?;
-    Ok(Captured {
-        ok: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
+        }
+    };
+    // The process has ended, but its pipes can stay open: on Windows a process started at the same moment inherits
+    // them, and holds them for as long as it runs. Waiting for their end made every check of a detect run wait for its
+    // whole limit, so the output is read for a short while after the exit instead.
+    let _ = tokio::time::timeout(Duration::from_millis(300), async {
+        for reader in &mut readers {
+            let _ = reader.await;
+        }
     })
+    .await;
+    for reader in &readers {
+        reader.abort();
+    }
+    let text = |buffer: &Arc<Mutex<Vec<u8>>>| {
+        buffer
+            .lock()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .unwrap_or_default()
+    };
+    Ok(Captured {
+        ok: status.success(),
+        stdout: text(&stdout),
+        stderr: text(&stderr),
+    })
+}
+
+/// Copies a child's pipe into `into` until the pipe ends or the reader is stopped.
+async fn drain<R: AsyncRead + Unpin>(pipe: Option<R>, into: Arc<Mutex<Vec<u8>>>) {
+    let Some(mut pipe) = pipe else {
+        return;
+    };
+    let mut chunk = [0u8; 8192];
+    loop {
+        match pipe.read(&mut chunk).await {
+            Ok(0) | Err(_) => return,
+            Ok(read) => {
+                if let Ok(mut bytes) = into.lock() {
+                    bytes.extend_from_slice(&chunk[..read]);
+                }
+            }
+        }
+    }
 }
 
 pub(crate) async fn version_of(program: &Path) -> Option<String> {
