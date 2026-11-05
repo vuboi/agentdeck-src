@@ -2,6 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -14,6 +15,7 @@ const MAX_BODY: usize = 256 * 1024;
 
 const TOOLS: [&str; 4] = ["plan_list", "plan_read", "plan_write", "plan_step"];
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+static MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +60,21 @@ struct FrontMatter {
 
 fn now() -> String {
     format_system_time(SystemTime::now())
+}
+
+fn next_updated(previous: Option<&str>) -> String {
+    let current = timestamp_millis(&now()).unwrap_or_default();
+    let next = previous
+        .and_then(timestamp_millis)
+        .map_or(current, |previous| current.max(previous + 1));
+    format_system_time(
+        UNIX_EPOCH + std::time::Duration::from_millis(next.clamp(0, i64::MAX as i128) as u64),
+    )
+}
+
+fn touch_updated(fm: &mut FrontMatter) {
+    let updated = next_updated(key(fm, "updated"));
+    update_key(fm, "updated", &updated);
 }
 
 fn file_time(path: &Path) -> String {
@@ -457,6 +474,9 @@ pub fn read(root: &Path, id: &str) -> Result<(PlanInfo, String), String> {
 }
 
 pub fn write(root: &Path, mut req: WriteReq) -> Result<PlanInfo, String> {
+    let _mutation = MUTATION_LOCK
+        .lock()
+        .map_err(|_| "plan mutation lock is unavailable")?;
     if req.body.len() > MAX_BODY {
         return Err("plan body exceeds 256 KB".into());
     }
@@ -581,7 +601,7 @@ pub fn write(root: &Path, mut req: WriteReq) -> Result<PlanInfo, String> {
             update_key(&mut fm, k, v);
         }
     }
-    update_key(&mut fm, "updated", &now());
+    touch_updated(&mut fm);
     atomic_write(&path, &render_fm(&fm))?;
     Ok(info(&id, &path, false)?.0)
 }
@@ -605,11 +625,14 @@ fn ensure_frontmatter(path: &Path, text: &str, status: Option<&str>) -> FrontMat
     } else if key(&fm, "status").is_none() {
         update_key(&mut fm, "status", "unknown");
     }
-    update_key(&mut fm, "updated", &now());
+    touch_updated(&mut fm);
     fm
 }
 
 pub fn set_status(root: &Path, id: &str, status: &str) -> Result<PlanInfo, String> {
+    let _mutation = MUTATION_LOCK
+        .lock()
+        .map_err(|_| "plan mutation lock is unavailable")?;
     if !["draft", "approved", "doing", "done", "dropped"].contains(&status) {
         return Err("invalid plan status".into());
     }
@@ -621,6 +644,9 @@ pub fn set_status(root: &Path, id: &str, status: &str) -> Result<PlanInfo, Strin
 }
 
 pub fn set_step(root: &Path, id: &str, step: StepRef, done: bool) -> Result<PlanInfo, String> {
+    let _mutation = MUTATION_LOCK
+        .lock()
+        .map_err(|_| "plan mutation lock is unavailable")?;
     let (path, _) = path_for(root, id, true)?;
     let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let mut fm = ensure_frontmatter(&path, &text, None);
@@ -676,7 +702,7 @@ pub fn set_step(root: &Path, id: &str, step: StepRef, done: bool) -> Result<Plan
             update_key(&mut fm, "status", "doing");
         }
     }
-    update_key(&mut fm, "updated", &now());
+    touch_updated(&mut fm);
     atomic_write(&path, &render_fm(&fm))?;
     Ok(info(id, &path, false)?.0)
 }
@@ -898,6 +924,76 @@ mod tests {
         assert!(write(&root, conflict)
             .expect_err("conflict")
             .contains("plan changed since you read it"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn concurrent_writes_with_same_base_updated_have_one_winner() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let root = temp();
+        let original = write(&root, req("Plan", "initial")).expect("create");
+        let barrier = Arc::new(Barrier::new(3));
+        let mut workers = Vec::new();
+        for body in ["first write", "second write"] {
+            let root = root.clone();
+            let id = original.id.clone();
+            let base_updated = original.updated.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                let mut request = req("Plan", body);
+                request.id = Some(id);
+                request.base_updated = Some(base_updated);
+                barrier.wait();
+                write(&root, request)
+            }));
+        }
+        barrier.wait();
+        let results: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("worker should not panic"))
+            .collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
+        assert!(results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .any(|error| error.contains("plan changed since you read it")));
+        let current = read(&root, &original.id).expect("read current").0;
+        assert_ne!(current.updated, original.updated);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn concurrent_step_ticks_preserve_both_updates() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let root = temp();
+        let plan = write(&root, req("Plan", "- [ ] first\n- [ ] second\n")).expect("create");
+        let barrier = Arc::new(Barrier::new(3));
+        let mut workers = Vec::new();
+        for step in [1, 2] {
+            let root = root.clone();
+            let id = plan.id.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                set_step(&root, &id, StepRef::Number(step), true)
+            }));
+        }
+        barrier.wait();
+        for worker in workers {
+            worker
+                .join()
+                .expect("worker should not panic")
+                .expect("tick step");
+        }
+        let (current, body) = read(&root, &plan.id).expect("read current");
+        assert_eq!((current.done, current.total), (2, 2));
+        assert!(body.contains("- [x] first"));
+        assert!(body.contains("- [x] second"));
         fs::remove_dir_all(root).expect("cleanup");
     }
 
