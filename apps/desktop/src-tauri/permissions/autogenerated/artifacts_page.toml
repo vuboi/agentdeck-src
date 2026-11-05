@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-artifacts-page"
+description = "Enables the artifacts_page command without any pre-configured scope."
+commands.allow = ["artifacts_page"]
+
+[[permission]]
+identifier = "deny-artifacts-page"
+description = "Denies the artifacts_page command without any pre-configured scope."
+commands.deny = ["artifacts_page"]
