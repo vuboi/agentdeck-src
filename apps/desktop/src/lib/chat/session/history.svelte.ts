@@ -1256,22 +1256,20 @@ async function catchUp(session: SessionItem) {
     const held = messagesById.get(session.id);
     // The list was replaced or released while the file was read: the newer read decides.
     if (!held || !olderById.has(session.id)) return;
+    // The held list starts inside the page read (it holds fewer messages than the page): only the file from the held
+    // list's first message on is used, so reopening a chat never adds older messages to it or makes it longer.
+    const from = held[0]
+        ? fresh.findIndex((message) => message.id === held[0].id)
+        : -1;
+    if (from >= 0) {
+        setMessages(
+            session.id,
+            withLive(session.id, mergeWorkMessages(fresh.slice(from), held)),
+        );
+        return;
+    }
     const at = tailStart(held, fresh);
     if (at < 0) {
-        // The held list is shorter than the newest page read: its first message lies inside that page. The page
-        // starts the list, with the held messages in it (and the older pages already held are kept as they are).
-        const from = held[0]
-            ? fresh.findIndex((message) => message.id === held[0].id)
-            : -1;
-        if (from > 0) {
-            olderById.set(session.id, read.start);
-            if (workspace.activeId === session.id) chat.older = read.start;
-            setMessages(
-                session.id,
-                withLive(session.id, mergeWorkMessages(fresh, held)),
-            );
-            return;
-        }
         olderById.delete(session.id);
         if (workspace.activeId === session.id)
             void readFromFile(session, ++transcriptToken);
