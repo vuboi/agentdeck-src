@@ -6,7 +6,7 @@
 //! is built in the background when a chat starts and brought up to date (changed files only) before each answer.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -47,10 +47,17 @@ CREATE INDEX IF NOT EXISTS refs_name ON refs(name);
 CREATE INDEX IF NOT EXISTS refs_file ON refs(file_id);
 CREATE TABLE IF NOT EXISTS imports (file_id INTEGER NOT NULL, spec TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS imports_file ON imports(file_id);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
+
+/// Seconds a stored index may go unused before housekeeping deletes it.
+const STALE_AFTER: u64 = 30 * 24 * 3600;
+/// `last_used` is written at most once a day, so a burst of tool calls does not write on every call.
+const TOUCH_EVERY: u64 = 24 * 3600;
 
 struct Index {
     conn: Connection,
+    path: PathBuf,
     checked: Option<Instant>,
     /// The last refresh stopped at `MAX_FILES`: the index is partial.
     capped: bool,
@@ -69,6 +76,17 @@ fn fnv(text: &str) -> u64 {
     })
 }
 
+/// The database file name of a project root.
+fn db_name(root: &str) -> String {
+    format!("{:016x}.db", fnv(&root.to_lowercase()))
+}
+
+fn index_folder() -> Result<PathBuf, String> {
+    Ok(crate::home_folder()?
+        .join(crate::channel::home_folder_name())
+        .join("index"))
+}
+
 fn open(root: &str) -> Result<Arc<Mutex<Index>>, String> {
     let mut all = INDEXES
         .get_or_init(Default::default)
@@ -77,27 +95,149 @@ fn open(root: &str) -> Result<Arc<Mutex<Index>>, String> {
     if let Some(found) = all.get(root) {
         return Ok(found.clone());
     }
-    let folder = crate::home_folder()?
-        .join(crate::channel::home_folder_name())
-        .join("index");
+    let folder = index_folder()?;
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let conn = Connection::open(folder.join(format!("{:016x}.db", fnv(&root.to_lowercase()))))
-        .map_err(|error| error.to_string())?;
+    let path = folder.join(db_name(root));
+    let conn = Connection::open(&path).map_err(|error| error.to_string())?;
     let _ = conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()));
     // The WAL is folded back into the file once it passes 4 MB and cut to 64 MB after a checkpoint, so it cannot grow
-    // without bound (it reached 3 GB before).
+    // without bound (it reached 3 GB before). A vacuum running in another connection makes writers wait, not fail.
     let _ = conn.execute_batch(
         "PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; PRAGMA journal_size_limit=67108864;",
     );
+    conn.busy_timeout(Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
     conn.execute_batch(SCHEMA)
         .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('root', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [root],
+    )
+    .map_err(|error| error.to_string())?;
     let index = Arc::new(Mutex::new(Index {
         conn,
+        path,
         checked: None,
         capped: false,
     }));
     all.insert(root.to_string(), index.clone());
     Ok(index)
+}
+
+/// Writes `last_used` now, at most once a day.
+fn touch(conn: &Connection) {
+    let now = now_secs();
+    let last: Option<String> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'last_used'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    if last
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|last| now.saturating_sub(last) < TOUCH_EVERY)
+    {
+        return;
+    }
+    let _ = conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('last_used', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [now.to_string()],
+    );
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Deletes the index files of folders that are gone, refused now, or unused for `STALE_AFTER`, and the files of
+/// indexes from before `meta` existed that were last written that long ago. Returns how many were deleted.
+pub fn cleanup_stale(now: std::time::SystemTime) -> usize {
+    let Ok(folder) = index_folder() else { return 0 };
+    cleanup_in(&folder, now)
+}
+
+fn cleanup_in(folder: &Path, now: std::time::SystemTime) -> usize {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return 0;
+    };
+    let open: HashSet<String> = INDEXES
+        .get()
+        .and_then(|all| all.lock().ok())
+        .map(|all| all.keys().map(|root| db_name(root)).collect())
+        .unwrap_or_default();
+    let now_s = now
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("db") {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if open.contains(&name) {
+            continue;
+        }
+        let modified_age = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| now.duration_since(time).ok())
+            .map_or(0, |age| age.as_secs());
+        let stored = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .ok()
+            .and_then(|conn| {
+                let root: Option<String> = conn
+                    .query_row("SELECT value FROM meta WHERE key = 'root'", [], |row| {
+                        row.get(0)
+                    })
+                    .ok();
+                let used: Option<u64> = conn
+                    .query_row(
+                        "SELECT value FROM meta WHERE key = 'last_used'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .ok()
+                    .and_then(|value| value.parse().ok());
+                root.map(|root| (root, used))
+            });
+        let stale = match stored {
+            Some((root, used)) => {
+                // Without `last_used` the file's age decides, as for an index with no record at all.
+                let unused = match used {
+                    Some(last) => now_s.saturating_sub(last) > STALE_AFTER,
+                    None => modified_age > STALE_AFTER,
+                };
+                unused || !Path::new(&root).is_dir() || refusal(&root).is_some()
+            }
+            // No record of its folder (written before this table): judged by age only.
+            None => modified_age > STALE_AFTER,
+        };
+        if !stale {
+            continue;
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+        removed += 1;
+    }
+    removed
+}
+
+/// Rebuilds a database file in its own connection, so the connection in use is not held up. Runs off the caller.
+fn vacuum_in_background(path: PathBuf) {
+    std::thread::spawn(move || {
+        if let Ok(conn) = Connection::open(&path) {
+            let _ = conn.busy_timeout(Duration::from_secs(60));
+            let _ = conn.execute_batch("VACUUM;");
+        }
+    });
 }
 
 /// Tells the index which folder a chat works in, and starts reading it in the background.
@@ -527,6 +667,7 @@ fn forget(tx: &rusqlite::Transaction, id: i64) -> rusqlite::Result<()> {
 fn refresh(root: &str) -> Result<(), String> {
     let index = open(root)?;
     let mut guard = index.lock().map_err(|_| "index busy")?;
+    touch(&guard.conn);
     if guard.checked.is_some_and(|at| at.elapsed() < RECHECK) {
         return Ok(());
     }
@@ -645,6 +786,10 @@ fn refresh(root: &str) -> Result<(), String> {
     if written + deleted > 0 {
         // Fold the WAL back into the database file, so it does not keep the size of its busiest moment.
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+    // Many files gone at once leave most pages free: give them back, in the background.
+    if deleted > 0 && deleted * 5 > known.len() {
+        vacuum_in_background(guard.path.clone());
     }
     guard.capped = capped;
     guard.checked = Some(Instant::now());
@@ -1121,6 +1266,61 @@ mod tests {
             refused_because(Path::new("E:/work/app"), Some(home), temp, true),
             None
         );
+    }
+
+    #[test]
+    fn stale_index_files_are_deleted_and_live_ones_kept() {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("agentdeck-index-clean-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("folder");
+        let now = std::time::SystemTime::now();
+        // A folder that is gone: its index goes.
+        let gone = folder.join("gone.db");
+        let conn = Connection::open(&gone).expect("db");
+        conn.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .expect("meta");
+        conn.execute(
+            "INSERT INTO meta VALUES ('root', 'C:/does/not/exist/anywhere')",
+            [],
+        )
+        .expect("root");
+        drop(conn);
+        // A project used just now: kept.
+        let live = folder.join("live.db");
+        let conn = Connection::open(&live).expect("db");
+        conn.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .expect("meta");
+        conn.execute(
+            "INSERT INTO meta VALUES ('root', ?1), ('last_used', ?2)",
+            [
+                folder.join("live-project").to_string_lossy().into_owned(),
+                now_secs().to_string(),
+            ],
+        )
+        .expect("values");
+        drop(conn);
+        std::fs::create_dir_all(folder.join("live-project")).expect("project");
+        std::fs::write(folder.join("live-project").join("Cargo.toml"), "[package]")
+            .expect("manifest");
+        // Unused for a long time: gone, even though its folder exists.
+        let old = folder.join("old.db");
+        let conn = Connection::open(&old).expect("db");
+        conn.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .expect("meta");
+        conn.execute(
+            "INSERT INTO meta VALUES ('root', ?1), ('last_used', '1000')",
+            [folder.join("live-project").to_string_lossy().into_owned()],
+        )
+        .expect("values");
+        drop(conn);
+
+        let removed = cleanup_in(&folder, now);
+        assert_eq!(removed, 2);
+        assert!(!gone.exists());
+        assert!(!old.exists());
+        assert!(live.exists());
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
