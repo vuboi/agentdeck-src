@@ -67,7 +67,11 @@ fn open() -> Result<MutexGuard<'static, Connection>, String> {
         return conn.lock().map_err(|_| "image history is busy".to_string());
     }
     let folder = crate::home_folder()?.join(crate::channel::home_folder_name());
-    let conn = crate::sqlite::open(&folder.join("image-history.db"), &[SCHEMA])?;
+    let conn = crate::sqlite::open(
+        &folder.join("image-history.db"),
+        crate::sqlite::Journal::Wal,
+        &[SCHEMA],
+    )?;
     // Two first calls at once: the one that lost the race drops its connection.
     let shared = CONN.get_or_init(|| Mutex::new(conn));
     shared

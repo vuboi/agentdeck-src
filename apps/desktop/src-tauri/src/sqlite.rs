@@ -6,16 +6,33 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 
-/// Opens (creating it if needed) a database in WAL mode, sets the pragmas, and applies the migrations it has not had yet.
+/// `Wal` for databases in AgentDeck's home folder. `Delete` for a database inside a project folder: no `-wal`/`-shm`
+/// files appear there, so a sync tool never copies one half-written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Journal {
+    Wal,
+    Delete,
+}
+
+impl Journal {
+    fn mode(self) -> &'static str {
+        match self {
+            Journal::Wal => "WAL",
+            Journal::Delete => "DELETE",
+        }
+    }
+}
+
+/// Opens (creating it if needed) a database, sets the pragmas, and applies the migrations it has not had yet.
 /// Migration `n` (0-based) brings `user_version` to `n + 1`; a database from a newer AgentDeck is refused, not rewritten.
-pub fn open(path: &Path, migrations: &[&str]) -> Result<Connection, String> {
+pub fn open(path: &Path, journal: Journal, migrations: &[&str]) -> Result<Connection, String> {
     if let Some(folder) = path.parent() {
         std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
     }
     let conn = Connection::open(path).map_err(|error| error.to_string())?;
     conn.busy_timeout(Duration::from_secs(30))
         .map_err(|error| error.to_string())?;
-    conn.pragma_update(None, "journal_mode", "WAL")
+    conn.pragma_update(None, "journal_mode", journal.mode())
         .map_err(|error| error.to_string())?;
     // The WAL is folded back into the file past 4 MB and cut to 64 MB after a checkpoint, so it cannot grow without bound.
     conn.execute_batch(
@@ -72,11 +89,11 @@ mod tests {
             "ALTER TABLE t ADD COLUMN b TEXT;",
         ];
         {
-            let conn = open(&path, &schema).expect("open");
+            let conn = open(&path, Journal::Wal, &schema).expect("open");
             conn.execute("INSERT INTO t (a, b) VALUES (1, 'kept')", [])
                 .expect("row");
         }
-        let conn = open(&path, &schema).expect("reopen");
+        let conn = open(&path, Journal::Wal, &schema).expect("reopen");
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("version");
@@ -92,8 +109,16 @@ mod tests {
     #[test]
     fn a_newer_database_is_refused() {
         let path = temp("newer");
-        drop(open(&path, &["CREATE TABLE t (a INTEGER);", "SELECT 1;"]).expect("open"));
-        let error = open(&path, &["CREATE TABLE t (a INTEGER);"]).expect_err("refused");
+        drop(
+            open(
+                &path,
+                Journal::Wal,
+                &["CREATE TABLE t (a INTEGER);", "SELECT 1;"],
+            )
+            .expect("open"),
+        );
+        let error =
+            open(&path, Journal::Wal, &["CREATE TABLE t (a INTEGER);"]).expect_err("refused");
         assert!(error.contains("newer"), "{error}");
         let _ = std::fs::remove_dir_all(path.parent().expect("folder"));
     }
@@ -103,6 +128,7 @@ mod tests {
         let path = temp("failed");
         let error = open(
             &path,
+            Journal::Wal,
             &["CREATE TABLE t (a INTEGER); SELECT * FROM missing;"],
         )
         .expect_err("failed");

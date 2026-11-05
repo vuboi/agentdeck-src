@@ -1,33 +1,86 @@
 //! What the Preview agent learned about the pages of a site, kept in the project it works on:
-//! `<project>/.agentdeck/ui-memory/<site>.json`. Every project has its own memory and nothing is kept in AgentDeck
-//! itself, so a new session in the project finds controls through `browser_recall` instead of a screenshot or a scan.
+//! `<project>/.agentdeck/ui-memory/memory.db` (SQLite, plan storage-sqlite P2). Every project has its own memory and
+//! nothing is kept in AgentDeck's own folders, so a new session in the project finds controls through `browser_recall`
+//! instead of a screenshot or a scan.
 //!
 //! A dev server on `localhost` (any port) is the site `local` of its project. Elements seen by `browser_elements` and
-//! `browser_find` are stored on the way; `browser_remember` keeps the steps that reached a goal.
+//! `browser_find` are stored on the way; `browser_remember` keeps the steps that reached a goal. The JSON files of the
+//! first version (`<site>.json`) are imported once and renamed `*.json.imported`.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use ag_adapters::codec;
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use unicode_normalization::UnicodeNormalization;
 
 const DIR: &str = ".agentdeck/ui-memory";
-const MAX_ELEMENTS: usize = 1500;
-const MAX_RECIPES: usize = 200;
-const MAX_FILE: usize = 2 * 1024 * 1024;
+const FILE: &str = "memory.db";
+/// Per site.
+const MAX_ELEMENTS: i64 = 1500;
+/// Per site.
+const MAX_RECIPES: i64 = 200;
 const MAX_STEPS: usize = 40;
 /// Elements kept from one scan of a page.
 const MAX_SEEN: usize = 200;
-const WEEK_MS: u64 = 7 * 24 * 3600 * 1000;
+/// Candidates read from the word index for one query.
+const MAX_CANDIDATES: usize = 400;
+const WEEK_MS: i64 = 7 * 24 * 3600 * 1000;
 const STOP: [&str; 21] = [
     "the", "a", "an", "to", "of", "and", "or", "in", "on", "for", "is", "at", "it", "be", "by",
     "va", "la", "cua", "cho", "cac", "mot",
 ];
 
-/// One read-modify-write at a time: two agents of one project would otherwise lose each other's elements.
+const SCHEMA_1: &str = "
+CREATE TABLE elements (
+    id INTEGER PRIMARY KEY,
+    site TEXT NOT NULL,
+    path_key TEXT NOT NULL,
+    selector TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 1,
+    ok INTEGER NOT NULL DEFAULT 0,
+    fail INTEGER NOT NULL DEFAULT 0,
+    last_seen INTEGER NOT NULL,
+    last_ok INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (site, path_key, selector)
+);
+CREATE INDEX elements_site_seen ON elements (site, last_seen);
+CREATE TABLE element_words (
+    word TEXT NOT NULL,
+    site TEXT NOT NULL,
+    element_id INTEGER NOT NULL REFERENCES elements (id) ON DELETE CASCADE,
+    PRIMARY KEY (site, word, element_id)
+) WITHOUT ROWID;
+CREATE INDEX element_words_id ON element_words (element_id);
+CREATE TABLE recipes (
+    id INTEGER PRIMARY KEY,
+    site TEXT NOT NULL,
+    goal_key TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    steps BLOB NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 1,
+    ok INTEGER NOT NULL DEFAULT 0,
+    fail INTEGER NOT NULL DEFAULT 0,
+    last_used INTEGER NOT NULL,
+    UNIQUE (site, goal_key)
+);
+CREATE TABLE recipe_words (
+    word TEXT NOT NULL,
+    site TEXT NOT NULL,
+    recipe_id INTEGER NOT NULL REFERENCES recipes (id) ON DELETE CASCADE,
+    PRIMARY KEY (site, word, recipe_id)
+) WITHOUT ROWID;
+CREATE INDEX recipe_words_id ON recipe_words (recipe_id);
+";
+
+const MIGRATIONS: &[&str] = &[SCHEMA_1];
+
+/// Serialises the read-modify-write of the database: two agents of one project must not lose each other's rows.
 static LOCK: Mutex<()> = Mutex::new(());
 
 /// One thing that can be clicked or filled in on a page, as the agent found it.
@@ -41,6 +94,7 @@ pub struct PageElement {
     pub kind: String,
 }
 
+/// A stored element, as scoring reads it.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Element {
@@ -49,38 +103,39 @@ pub struct Element {
     pub kind: String,
     /// The page it was seen on, ids turned into `:id` (`/orders/:id/edit`).
     pub path_key: String,
-    pub seen: u64,
+    pub seen: i64,
     /// Actions on it that worked, and that failed (the selector no longer matched).
-    pub ok: u64,
-    pub fail: u64,
-    pub last_seen: u64,
-    pub last_ok: u64,
+    pub ok: i64,
+    pub fail: i64,
+    pub last_seen: i64,
+    pub last_ok: i64,
 }
 
+/// Steps that worked for a goal, as scoring reads them.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Recipe {
     pub goal: String,
     pub steps: Vec<String>,
-    pub seen: u64,
-    pub ok: u64,
-    pub fail: u64,
-    pub last_used: u64,
+    pub seen: i64,
+    pub ok: i64,
+    pub fail: i64,
+    pub last_used: i64,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+/// The first version's file, `<site>.json`: read only to import it.
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct SiteMemory {
-    pub version: u32,
-    pub site: String,
-    pub elements: Vec<Element>,
-    pub recipes: Vec<Recipe>,
+struct LegacySite {
+    site: String,
+    elements: Vec<Element>,
+    recipes: Vec<Recipe>,
 }
 
-fn now_ms() -> u64 {
+fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |time| time.as_millis() as u64)
+        .map_or(0, |time| time.as_millis() as i64)
 }
 
 /// The host and path of an http(s) address, without user info, port, query or fragment.
@@ -218,17 +273,17 @@ pub fn words(text: &str) -> Vec<String> {
 }
 
 /// Failed more often than it worked, at least three times: no longer offered.
-fn broken(ok: u64, fail: u64) -> bool {
+fn broken(ok: i64, fail: i64) -> bool {
     fail >= 3 && fail > ok
 }
 
-fn element_words(element: &Element) -> Vec<String> {
-    let kind: String = element
-        .kind
+/// The words an element is found by: its name and its kind (letters only).
+fn element_words(name: &str, kind: &str) -> Vec<String> {
+    let kind: String = kind
         .chars()
         .map(|c| if c.is_ascii_alphabetic() { c } else { ' ' })
         .collect();
-    words(&format!("{} {kind}", element.name))
+    words(&format!("{name} {kind}"))
 }
 
 /// How well a stored element answers a query: every query word it has counts, a word at the start of its name more,
@@ -237,7 +292,7 @@ pub fn score_element(element: &Element, query: &[String], path_key: Option<&str>
     if query.is_empty() || broken(element.ok, element.fail) {
         return 0.0;
     }
-    let own = element_words(element);
+    let own = element_words(&element.name, &element.kind);
     let name = element.name.to_lowercase();
     let mut score = 0.0;
     let mut hits = 0;
@@ -278,82 +333,14 @@ pub fn score_recipe(recipe: &Recipe, query: &[String]) -> f64 {
         + (((recipe.seen + 1) as f64).log2() / 2.0).min(2.0)
 }
 
-/// `<root>/.agentdeck/ui-memory/<site>.json`, refused when it would leave the project folder.
-fn file_for(root: &Path, site: &str) -> Result<PathBuf, String> {
-    let safe = !site.is_empty()
-        && site.len() <= 100
-        && !site.starts_with('.')
-        && !site.contains("..")
-        && site
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-');
-    if !safe {
-        return Err("invalid site name".into());
+/// The project's memory database, created with its own `.gitignore` (so the memory stays out of the project's git,
+/// and the project's root `.gitignore` is never edited). Old JSON files of the site are imported once.
+fn open(root: &Path) -> Result<Connection, String> {
+    if !root.is_dir() {
+        return Err("the project folder does not exist".into());
     }
-    Ok(root.join(DIR).join(format!("{site}.json")))
-}
-
-/// The memory of one site, empty when there is none yet. A file that is not valid JSON is set aside (`.bad-<time>`)
-/// and the memory starts again, so one broken write never blocks the agent.
-fn load(root: &Path, site: &str) -> Result<SiteMemory, String> {
-    let path = file_for(root, site)?;
-    let empty = SiteMemory {
-        version: 1,
-        site: site.to_string(),
-        ..Default::default()
-    };
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(empty),
-        Err(error) => return Err(error.to_string()),
-    };
-    match serde_json::from_str::<SiteMemory>(&text) {
-        Ok(mut memory) => {
-            memory.site = site.to_string();
-            Ok(memory)
-        }
-        Err(_) => {
-            let _ = fs::rename(&path, path.with_extension(format!("json.bad-{}", now_ms())));
-            Ok(empty)
-        }
-    }
-}
-
-/// Drops what is least worth keeping: long broken elements, then over the limits the least proven and oldest first.
-fn prune(memory: &mut SiteMemory, now: u64) {
-    memory.elements.retain(|element| {
-        !(broken(element.ok, element.fail) && now.saturating_sub(element.last_seen) > WEEK_MS)
-    });
-    if memory.elements.len() > MAX_ELEMENTS {
-        memory.elements.sort_by_key(|element| {
-            (
-                element.ok >= 3 && !broken(element.ok, element.fail),
-                element.last_seen,
-            )
-        });
-        let excess = memory.elements.len() - MAX_ELEMENTS;
-        memory.elements.drain(..excess);
-    }
-    if memory.recipes.len() > MAX_RECIPES {
-        memory
-            .recipes
-            .sort_by_key(|recipe| (recipe.fail <= recipe.ok, recipe.last_used));
-        let excess = memory.recipes.len() - MAX_RECIPES;
-        memory.recipes.drain(..excess);
-    }
-}
-
-fn save(root: &Path, memory: &mut SiteMemory) -> Result<(), String> {
-    let path = file_for(root, &memory.site)?;
-    let folder = path.parent().ok_or("invalid memory path")?;
-    fs::create_dir_all(folder).map_err(|e| e.to_string())?;
-    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
-    let canonical_folder = folder.canonicalize().map_err(|e| e.to_string())?;
-    if !canonical_folder.starts_with(&canonical_root) {
-        return Err("ui memory folder escapes the project folder".into());
-    }
-    // Kept out of the project's git by a `.gitignore` of its own, so the project's root `.gitignore` is never edited.
-    // One the user changed is left as it is.
+    let folder = root.join(DIR);
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let ignore = folder.join(".gitignore");
     if !ignore.exists() {
         crate::plans::atomic_write(
@@ -361,21 +348,201 @@ fn save(root: &Path, memory: &mut SiteMemory) -> Result<(), String> {
             "# AgentDeck's memory of the Preview pages of this project.\n*\n",
         )?;
     }
-    memory.version = 1;
-    prune(memory, now_ms());
-    // Sorted so a project that keeps this file in git sees small diffs.
-    memory
-        .elements
-        .sort_by(|a, b| (&a.path_key, &a.selector).cmp(&(&b.path_key, &b.selector)));
-    memory.recipes.sort_by(|a, b| a.goal.cmp(&b.goal));
-    let mut text = serde_json::to_string_pretty(memory).map_err(|e| e.to_string())?;
-    while text.len() > MAX_FILE && !memory.elements.is_empty() {
-        memory.elements.sort_by_key(|element| element.last_seen);
-        let drop = (memory.elements.len() / 10).max(1);
-        memory.elements.drain(..drop);
-        text = serde_json::to_string_pretty(memory).map_err(|e| e.to_string())?;
+    // Journal `DELETE`: no `-wal`/`-shm` files appear in the project folder.
+    let mut conn = crate::sqlite::open(
+        &folder.join(FILE),
+        crate::sqlite::Journal::Delete,
+        MIGRATIONS,
+    )?;
+    import_legacy(&mut conn, &folder)?;
+    Ok(conn)
+}
+
+/// Imports `<site>.json` files of the first version, once each: a file that does not parse is left as it is.
+fn import_legacy(conn: &mut Connection, folder: &Path) -> Result<(), String> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(legacy) = serde_json::from_str::<LegacySite>(&text) else {
+            continue;
+        };
+        let site = if legacy.site.is_empty() {
+            path.file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_default()
+                .to_string()
+        } else {
+            legacy.site.clone()
+        };
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        for element in &legacy.elements {
+            let path_key = if element.path_key.is_empty() {
+                "/".to_string()
+            } else {
+                element.path_key.clone()
+            };
+            insert_element(&tx, &site, &path_key, element)?;
+        }
+        for recipe in &legacy.recipes {
+            insert_recipe(
+                &tx,
+                &site,
+                &recipe.goal,
+                &recipe.steps,
+                recipe.seen,
+                recipe.ok,
+                recipe.fail,
+                recipe.last_used,
+            )?;
+        }
+        tx.commit().map_err(|error| error.to_string())?;
+        let _ = std::fs::rename(&path, path.with_extension("json.imported"));
     }
-    crate::plans::atomic_write(&path, &text)
+    Ok(())
+}
+
+fn insert_element(
+    tx: &rusqlite::Transaction,
+    site: &str,
+    path_key: &str,
+    element: &Element,
+) -> Result<(), String> {
+    let added = tx
+        .execute(
+            "INSERT INTO elements (site, path_key, selector, name, kind, seen, ok, fail, last_seen, last_ok)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT (site, path_key, selector) DO NOTHING",
+            params![
+                site,
+                path_key,
+                element.selector,
+                element.name,
+                element.kind,
+                element.seen.max(1),
+                element.ok,
+                element.fail,
+                element.last_seen,
+                element.last_ok,
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+    if added == 1 {
+        let id = tx.last_insert_rowid();
+        insert_words(tx, site, id, &element.name, &element.kind)?;
+    }
+    Ok(())
+}
+
+fn insert_words(
+    tx: &rusqlite::Transaction,
+    site: &str,
+    element_id: i64,
+    name: &str,
+    kind: &str,
+) -> Result<(), String> {
+    for word in element_words(name, kind) {
+        tx.execute(
+            "INSERT OR IGNORE INTO element_words (word, site, element_id) VALUES (?1, ?2, ?3)",
+            params![word, site, element_id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_recipe(
+    tx: &rusqlite::Transaction,
+    site: &str,
+    goal: &str,
+    steps: &[String],
+    seen: i64,
+    ok: i64,
+    fail: i64,
+    last_used: i64,
+) -> Result<(), String> {
+    let goal = goal.trim();
+    let goal_key = goal.to_lowercase();
+    let blob = codec::encode_keep(&steps.to_vec())?;
+    tx.execute(
+        "INSERT INTO recipes (site, goal_key, goal, steps, seen, ok, fail, last_used)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT (site, goal_key) DO UPDATE SET
+            goal = excluded.goal, steps = excluded.steps, seen = recipes.seen + 1, last_used = excluded.last_used",
+        params![site, goal_key, goal, blob, seen.max(1), ok, fail, last_used.max(now_ms())],
+    )
+    .map_err(|error| error.to_string())?;
+    let id: i64 = tx
+        .query_row(
+            "SELECT id FROM recipes WHERE site = ?1 AND goal_key = ?2",
+            params![site, goal_key],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    tx.execute("DELETE FROM recipe_words WHERE recipe_id = ?1", [id])
+        .map_err(|error| error.to_string())?;
+    for word in words(goal) {
+        tx.execute(
+            "INSERT OR IGNORE INTO recipe_words (word, site, recipe_id) VALUES (?1, ?2, ?3)",
+            params![word, site, id],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Forgets what is broken for a week, then the least proven and oldest beyond the limit of the site.
+fn prune_site(tx: &rusqlite::Transaction, site: &str, now: i64) -> Result<(), String> {
+    let err = |error: rusqlite::Error| error.to_string();
+    tx.execute(
+        "DELETE FROM elements WHERE site = ?1 AND fail >= 3 AND fail > ok AND last_seen < ?2",
+        params![site, now - WEEK_MS],
+    )
+    .map_err(err)?;
+    let count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM elements WHERE site = ?1",
+            [site],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    if count > MAX_ELEMENTS {
+        // Unproven elements go first (false sorts before true), then the oldest.
+        tx.execute(
+            "DELETE FROM elements WHERE id IN (
+                SELECT id FROM elements WHERE site = ?1
+                ORDER BY (ok >= 3 AND NOT (fail >= 3 AND fail > ok)) ASC, last_seen ASC
+                LIMIT ?2)",
+            params![site, count - MAX_ELEMENTS],
+        )
+        .map_err(err)?;
+    }
+    let recipes: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM recipes WHERE site = ?1",
+            [site],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    if recipes > MAX_RECIPES {
+        tx.execute(
+            "DELETE FROM recipes WHERE id IN (
+                SELECT id FROM recipes WHERE site = ?1
+                ORDER BY (fail <= ok) ASC, last_used ASC
+                LIMIT ?2)",
+            params![site, recipes - MAX_RECIPES],
+        )
+        .map_err(err)?;
+    }
+    Ok(())
 }
 
 /// Keeps the elements seen on one page; one already known is seen once more.
@@ -389,7 +556,8 @@ pub fn remember_elements(
     };
     let page = path_key(url);
     let _guard = LOCK.lock().map_err(|_| "ui memory is busy")?;
-    let mut memory = load(root, &site)?;
+    let mut conn = open(root)?;
+    let tx = conn.transaction().map_err(|error| error.to_string())?;
     let now = now_ms();
     let mut kept = 0;
     for element in elements.iter().take(MAX_SEEN) {
@@ -397,31 +565,45 @@ pub fn remember_elements(
             continue;
         }
         kept += 1;
-        match memory
-            .elements
-            .iter_mut()
-            .find(|known| known.path_key == page && known.selector == element.selector)
-        {
-            Some(known) => {
-                known.seen += 1;
-                known.last_seen = now;
-                known.name = element.name.clone();
-                known.kind = element.kind.clone();
+        let known: Option<(i64, String, String)> = tx
+            .query_row(
+                "SELECT id, name, kind FROM elements WHERE site = ?1 AND path_key = ?2 AND selector = ?3",
+                params![site, page, element.selector],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        match known {
+            Some((id, name, kind)) => {
+                tx.execute(
+                    "UPDATE elements SET seen = seen + 1, last_seen = ?1, name = ?2, kind = ?3 WHERE id = ?4",
+                    params![now, element.name, element.kind, id],
+                )
+                .map_err(|error| error.to_string())?;
+                if name != element.name || kind != element.kind {
+                    tx.execute("DELETE FROM element_words WHERE element_id = ?1", [id])
+                        .map_err(|error| error.to_string())?;
+                    insert_words(&tx, &site, id, &element.name, &element.kind)?;
+                }
             }
-            None => memory.elements.push(Element {
-                selector: element.selector.clone(),
-                name: element.name.clone(),
-                kind: element.kind.clone(),
-                path_key: page.clone(),
-                seen: 1,
-                last_seen: now,
-                ..Default::default()
-            }),
+            None => {
+                let fresh = Element {
+                    selector: element.selector.clone(),
+                    name: element.name.clone(),
+                    kind: element.kind.clone(),
+                    path_key: page.clone(),
+                    seen: 1,
+                    last_seen: now,
+                    ..Default::default()
+                };
+                insert_element(&tx, &site, &page, &fresh)?;
+            }
         }
     }
     if kept > 0 {
-        save(root, &mut memory)?;
+        prune_site(&tx, &site, now)?;
     }
+    tx.commit().map_err(|error| error.to_string())?;
     Ok(kept)
 }
 
@@ -446,30 +628,39 @@ pub fn remember_recipe(
         return Ok(false);
     }
     let _guard = LOCK.lock().map_err(|_| "ui memory is busy")?;
-    let mut memory = load(root, &site)?;
-    let now = now_ms();
-    let key = goal.to_lowercase();
-    match memory
-        .recipes
-        .iter_mut()
-        .find(|recipe| recipe.goal.to_lowercase() == key)
-    {
-        Some(recipe) => {
-            recipe.goal = goal.to_string();
-            recipe.steps = steps;
-            recipe.seen += 1;
-            recipe.last_used = now;
-        }
-        None => memory.recipes.push(Recipe {
-            goal: goal.to_string(),
-            steps,
-            seen: 1,
-            last_used: now,
-            ..Default::default()
-        }),
-    }
-    save(root, &mut memory)?;
+    let mut conn = open(root)?;
+    let tx = conn.transaction().map_err(|error| error.to_string())?;
+    insert_recipe(&tx, &site, goal, &steps, 1, 0, 0, now_ms())?;
+    prune_site(&tx, &site, now_ms())?;
+    tx.commit().map_err(|error| error.to_string())?;
     Ok(true)
+}
+
+/// Candidate ids that share a word of the query with the site, read from the word index.
+fn candidates(
+    conn: &Connection,
+    table: &str,
+    site: &str,
+    words: &[String],
+    limit: usize,
+) -> Result<Vec<i64>, String> {
+    let marks = vec!["?"; words.len()].join(", ");
+    let sql = format!(
+        "SELECT DISTINCT {id} FROM {table} WHERE site = ?1 AND word IN ({marks}) LIMIT {limit}",
+        id = if table == "element_words" {
+            "element_id"
+        } else {
+            "recipe_id"
+        },
+    );
+    let mut values: Vec<String> = vec![site.to_string()];
+    values.extend(words.iter().cloned());
+    let mut statement = conn.prepare(&sql).map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params_from_iter(values.iter()), |row| row.get::<_, i64>(0))
+        .map_err(|error| error.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
 }
 
 /// The elements and recipes of the site of `url` that best answer `query` (the current page's own first), in the shape
@@ -480,25 +671,73 @@ pub fn recall(root: &Path, url: &str, query: &str, limit: usize) -> Result<Value
     if site.is_empty() || query_words.is_empty() {
         return Ok(json!({ "site": site, "query": query, "hits": [], "recipes": [] }));
     }
-    let memory = {
-        let _guard = LOCK.lock().map_err(|_| "ui memory is busy")?;
-        load(root, &site)?
-    };
+    let _guard = LOCK.lock().map_err(|_| "ui memory is busy")?;
+    let conn = open(root)?;
     let page = path_key(url);
-    let mut hits: Vec<(f64, &Element)> = memory
-        .elements
-        .iter()
-        .map(|element| (score_element(element, &query_words, Some(&page)), element))
-        .filter(|(score, _)| *score > 0.0)
-        .collect();
+    let err = |error: rusqlite::Error| error.to_string();
+
+    let mut hits: Vec<(f64, Element)> = Vec::new();
+    for id in candidates(&conn, "element_words", &site, &query_words, MAX_CANDIDATES)? {
+        let element = conn
+            .query_row(
+                "SELECT selector, name, kind, path_key, seen, ok, fail, last_seen, last_ok FROM elements WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok(Element {
+                        selector: row.get(0)?,
+                        name: row.get(1)?,
+                        kind: row.get(2)?,
+                        path_key: row.get(3)?,
+                        seen: row.get(4)?,
+                        ok: row.get(5)?,
+                        fail: row.get(6)?,
+                        last_seen: row.get(7)?,
+                        last_ok: row.get(8)?,
+                    })
+                },
+            )
+            .map_err(err)?;
+        let score = score_element(&element, &query_words, Some(&page));
+        if score > 0.0 {
+            hits.push((score, element));
+        }
+    }
     hits.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let mut recipes: Vec<(f64, &Recipe)> = memory
-        .recipes
-        .iter()
-        .map(|recipe| (score_recipe(recipe, &query_words), recipe))
-        .filter(|(score, _)| *score > 0.0)
-        .collect();
+
+    let mut recipes: Vec<(f64, Recipe)> = Vec::new();
+    for id in candidates(&conn, "recipe_words", &site, &query_words, 100)? {
+        let (goal, blob, seen, ok, fail, last_used): (String, Vec<u8>, i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT goal, steps, seen, ok, fail, last_used FROM recipes WHERE id = ?1",
+                [id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .map_err(err)?;
+        let steps: Vec<String> = codec::decode(&blob)?;
+        let recipe = Recipe {
+            goal,
+            steps,
+            seen,
+            ok,
+            fail,
+            last_used,
+        };
+        let score = score_recipe(&recipe, &query_words);
+        if score > 0.0 {
+            recipes.push((score, recipe));
+        }
+    }
     recipes.sort_by(|a, b| b.0.total_cmp(&a.0));
+
     Ok(json!({
         "site": site,
         "query": query,
@@ -522,13 +761,13 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    fn temp() -> PathBuf {
+    fn temp() -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
             "agentdeck-ui-memory-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(&root).expect("temp root");
+        std::fs::create_dir_all(&root).expect("temp root");
         root
     }
     fn element(selector: &str, name: &str, kind: &str) -> PageElement {
@@ -642,9 +881,9 @@ mod tests {
         ];
         assert_eq!(remember_elements(&root, url, &seen).expect("store"), 2);
         assert_eq!(remember_elements(&root, url, &seen[..1]).expect("again"), 1);
-        assert!(root.join(".agentdeck/ui-memory/local.json").is_file());
-        let ignore =
-            fs::read_to_string(root.join(".agentdeck/ui-memory/.gitignore")).expect("gitignore");
+        let folder = root.join(DIR);
+        assert!(folder.join(FILE).is_file());
+        let ignore = std::fs::read_to_string(folder.join(".gitignore")).expect("gitignore");
         assert!(ignore.lines().any(|line| line == "*"));
         let steps = vec![
             "click \"Export\"".to_string(),
@@ -663,7 +902,8 @@ mod tests {
         assert_eq!(found["hits"][0]["pathKey"], "/reports/:id");
         assert_eq!(found["recipes"].as_array().map(Vec::len), Some(1));
         assert_eq!(found["recipes"][0]["goal"], "export report csv");
-        let _ = fs::remove_dir_all(root);
+        assert_eq!(found["recipes"][0]["steps"][1], "click \"CSV\" (#csv)");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -677,56 +917,95 @@ mod tests {
         .expect("store a");
         let found = recall(&b, "http://localhost:4000/", "only", 8).expect("recall b");
         assert_eq!(found["hits"].as_array().map(Vec::len), Some(0));
-        let _ = fs::remove_dir_all(a);
-        let _ = fs::remove_dir_all(b);
+        let _ = std::fs::remove_dir_all(a);
+        let _ = std::fs::remove_dir_all(b);
     }
 
     #[test]
-    fn a_broken_file_is_set_aside_and_the_memory_starts_again() {
+    fn the_first_version_json_is_imported_once() {
         let root = temp();
         let folder = root.join(DIR);
-        fs::create_dir_all(&folder).expect("folder");
-        fs::write(folder.join("local.json"), "{ not json").expect("broken file");
+        std::fs::create_dir_all(&folder).expect("folder");
+        std::fs::write(
+            folder.join("local.json"),
+            r##"{"version":1,"site":"local","elements":[{"selector":"#save","name":"Save","kind":"button","pathKey":"/edit","seen":4,"ok":3,"fail":0,"lastSeen":1,"lastOk":1}],"recipes":[{"goal":"save edit","steps":["click Save (#save)"],"seen":1,"ok":1,"fail":0,"lastUsed":1}]}"##,
+        )
+        .expect("legacy file");
+        let found = recall(&root, "http://localhost:5173/edit", "save", 8).expect("recall");
+        assert_eq!(found["hits"][0]["selector"], "#save");
+        assert_eq!(found["hits"][0]["seen"], 4);
+        assert_eq!(found["recipes"][0]["goal"], "save edit");
+        assert!(folder.join("local.json.imported").is_file());
+        assert!(!folder.join("local.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_legacy_file_that_does_not_parse_is_left_alone() {
+        let root = temp();
+        let folder = root.join(DIR);
+        std::fs::create_dir_all(&folder).expect("folder");
+        std::fs::write(folder.join("local.json"), "{ not json").expect("broken");
         let found = recall(&root, "http://localhost/", "anything", 8).expect("recall");
         assert_eq!(found["hits"].as_array().map(Vec::len), Some(0));
-        let set_aside = fs::read_dir(&folder).expect("list").flatten().any(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("local.json.bad-")
-        });
-        assert!(set_aside);
-        let _ = fs::remove_dir_all(root);
+        assert!(folder.join("local.json").is_file());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn pruning_keeps_proven_elements_and_drops_the_oldest() {
-        let mut memory = SiteMemory {
-            version: 1,
-            site: "local".into(),
-            ..Default::default()
-        };
-        for index in 0..(MAX_ELEMENTS + 100) {
-            let mut item = stored(&format!("e{index}"), "button", "/");
-            item.last_seen = index as u64 + 1;
-            if index == 0 {
-                item.ok = 5;
-            }
-            memory.elements.push(item);
-        }
-        prune(&mut memory, (MAX_ELEMENTS + 200) as u64);
-        assert_eq!(memory.elements.len(), MAX_ELEMENTS);
-        assert!(memory.elements.iter().any(|item| item.name == "e0"));
-        assert!(!memory.elements.iter().any(|item| item.name == "e1"));
-    }
-
-    #[test]
-    fn a_site_name_cannot_leave_the_memory_folder() {
+    fn the_site_keeps_its_limit_and_its_proven_elements() {
         let root = temp();
-        assert!(file_for(&root, "../x").is_err());
-        assert!(file_for(&root, ".hidden").is_err());
-        assert!(file_for(&root, "Shop.com").is_err());
-        assert!(file_for(&root, "shop.com").is_ok());
-        let _ = fs::remove_dir_all(root);
+        let url = "http://localhost:5173/list";
+        let mut proven_seen = false;
+        for call in 0..9 {
+            let batch: Vec<PageElement> = (0..200)
+                .map(|index| {
+                    element(
+                        &format!("#e{call}-{index}"),
+                        &format!("Item {call} {index}"),
+                        "button",
+                    )
+                })
+                .collect();
+            remember_elements(&root, url, &batch).expect("store");
+            if call == 0 {
+                let conn = open(&root).expect("open");
+                conn.execute("UPDATE elements SET ok = 5 WHERE selector = '#e0-0'", [])
+                    .expect("prove");
+                proven_seen = true;
+            }
+        }
+        assert!(proven_seen);
+        let conn = open(&root).expect("open");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM elements WHERE site = 'local'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert!(count <= MAX_ELEMENTS, "{count}");
+        let kept: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM elements WHERE selector = '#e0-0'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("proven");
+        assert_eq!(kept, 1, "a proven element is not the first to go");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_names_of_a_stored_element_are_searchable_after_a_rename() {
+        let root = temp();
+        let url = "http://localhost:5173/a";
+        remember_elements(&root, url, &[element("#x", "Old label", "button")]).expect("first");
+        remember_elements(&root, url, &[element("#x", "New label", "button")]).expect("renamed");
+        let found = recall(&root, url, "new label", 8).expect("recall");
+        assert_eq!(found["hits"][0]["name"], "New label");
+        let old = recall(&root, url, "old", 8).expect("recall old");
+        assert_eq!(old["hits"].as_array().map(Vec::len), Some(0));
+        let _ = std::fs::remove_dir_all(root);
     }
 }
