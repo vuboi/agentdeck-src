@@ -139,6 +139,15 @@
                         () => toast.error('Could not copy path'),
                     ),
             },
+            ...(!row.plan.readOnly && row.plan.status === 'draft'
+                ? [
+                      {
+                          label: 'Approve',
+                          icon: 'lucideCheck' as ZIconName,
+                          onClick: () => void setStatus(row, 'approved'),
+                      },
+                  ]
+                : []),
             ...(!row.plan.readOnly
                 ? [
                       {
