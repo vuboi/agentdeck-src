@@ -55,8 +55,10 @@ mod pty;
 mod question_repair;
 mod servers;
 mod slash_commands;
+mod sqlite;
 mod store;
 mod tts;
+mod ui_memory;
 mod voice;
 mod worktree;
 
@@ -1551,6 +1553,122 @@ fn file_trash() -> Result<PathBuf, String> {
         .join("files"))
 }
 
+/// Size of a file or of everything in a folder (links are not followed).
+fn size_of(path: &Path) -> u64 {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::read_dir(path)
+            .map(|entries| entries.flatten().map(|entry| size_of(&entry.path())).sum())
+            .unwrap_or(0),
+        Ok(meta) => meta.len(),
+        Err(_) => 0,
+    }
+}
+
+/// Deletes what was trashed more than `max_age` ago, then the oldest of what is left while the trash is over `max_total`
+/// (down to `target`). Returns how many items were deleted.
+fn prune_trash_in(
+    folder: &Path,
+    now: std::time::SystemTime,
+    max_age: std::time::Duration,
+    max_total: u64,
+    target: u64,
+) -> usize {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return 0;
+    };
+    let mut items: Vec<(PathBuf, std::time::SystemTime, u64)> = entries
+        .flatten()
+        .map(|entry| {
+            let path = entry.path();
+            let modified = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .unwrap_or(now);
+            let size = size_of(&path);
+            (path, modified, size)
+        })
+        .collect();
+    let remove = |path: &Path| {
+        let _ = if path.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+    };
+    let mut removed = 0;
+    items.retain(|(path, modified, _)| {
+        let old = now.duration_since(*modified).is_ok_and(|age| age > max_age);
+        if old {
+            remove(path);
+            removed += 1;
+        }
+        !old
+    });
+    let mut total: u64 = items.iter().map(|(_, _, size)| size).sum();
+    if total > max_total {
+        items.sort_by_key(|(_, modified, _)| *modified);
+        for (path, _, size) in items {
+            if total <= target {
+                break;
+            }
+            remove(&path);
+            total = total.saturating_sub(size);
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// The trash limits: 14 days, and 2 GB (down to 1.5 GB when over it).
+const TRASH_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(14 * 24 * 3600);
+const TRASH_MAX_TOTAL: u64 = 2 * 1024 * 1024 * 1024;
+const TRASH_TARGET: u64 = 1536 * 1024 * 1024;
+
+fn prune_trash(now: std::time::SystemTime) -> usize {
+    file_trash()
+        .map(|folder| prune_trash_in(&folder, now, TRASH_MAX_AGE, TRASH_MAX_TOTAL, TRASH_TARGET))
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod trash_tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn put(folder: &Path, name: &str, bytes: usize, age_days: u64, now: SystemTime) {
+        let path = folder.join(name);
+        std::fs::write(&path, vec![b'x'; bytes]).expect("item");
+        let when = now - Duration::from_secs(age_days * 24 * 3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(when))
+            .expect("age");
+    }
+
+    #[test]
+    fn old_trash_goes_and_the_oldest_goes_over_the_size_limit() {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("agentdeck-trash-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("folder");
+        let now = SystemTime::now();
+        put(&folder, "ancient", 10, 30, now);
+        put(&folder, "old-big", 600, 5, now);
+        put(&folder, "recent-a", 300, 1, now);
+        put(&folder, "recent-b", 300, 0, now);
+        // Limits scaled down: 14 days, 1000 bytes, target 700 bytes.
+        let removed = prune_trash_in(&folder, now, Duration::from_secs(14 * 24 * 3600), 1000, 700);
+        // ancient goes by age; the total is 1200, so old-big (600, the oldest left) goes: 600 left, under the target.
+        assert_eq!(removed, 2);
+        assert!(!folder.join("ancient").exists());
+        assert!(!folder.join("old-big").exists());
+        assert!(folder.join("recent-a").exists());
+        assert!(folder.join("recent-b").exists());
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+}
+
 fn copy_all(from: &Path, to: &Path) -> std::io::Result<()> {
     if from.is_dir() {
         std::fs::create_dir_all(to)?;
@@ -2665,6 +2783,13 @@ pub fn run() {
         .setup(|app| {
             // First: every folder and MCP name below depends on which build this is.
             channel::init(&app.config().identifier);
+            // Housekeeping off the start path: the trash, and code index files of folders that are gone or unused.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+                let now = std::time::SystemTime::now();
+                prune_trash(now);
+                index::cleanup_stale(now);
+            });
             // resource_dir is a `\\?\` path on Windows; node cannot start a main module from one (lstat 'E:').
             let resource_sdk = app.path().resource_dir().ok().map(|directory| {
                 ag_adapters::agent::runner::without_verbatim(&directory).join("claude-agent")
@@ -2977,7 +3102,6 @@ pub fn run() {
             delegate::delegate_release,
             delegate::delegate_pause,
             delegate::delegate_resume,
-            page_memory::page_memory_reply,
             attachment_save,
             attachment_save_file,
             browser_save_guide,

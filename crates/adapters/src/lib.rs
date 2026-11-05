@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod chat_index;
+pub mod codec;
 pub mod history;
 pub mod models;
 

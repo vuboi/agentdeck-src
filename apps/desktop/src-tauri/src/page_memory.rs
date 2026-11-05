@@ -1,20 +1,8 @@
-//! What the Preview agent learned about the pages of a site, kept in the webview's IndexedDB (src/lib/browser/page-memory.ts) so the
-//! next visit can look an element up instead of taking a screenshot and walking the DOM again.
-//!
-//! The webview owns the store: each call is emitted as a `page-memory` event `{ callId, op, args }` and, for the ones that
-//! answer, waits until the webview replies through `page_memory_reply`. Elements seen by `browser_elements` and
-//! `browser_find` are stored on the way (fire and forget); `browser_recall` reads, `browser_remember` keeps a recipe.
-
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
-use std::time::Duration;
+//! The browser tools of the Preview agent's page memory: `browser_recall` reads, `browser_remember` keeps a recipe, and
+//! the elements `browser_elements` / `browser_find` showed are stored on the way. The memory itself is per project, in
+//! the project's folder (`ui_memory.rs`); this file holds the tools' definitions and the scripts and text around them.
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
-use tokio::sync::oneshot;
-
-const WAIT: Duration = Duration::from_secs(8);
 
 pub const TOOLS: [&str; 2] = ["browser_recall", "browser_remember"];
 
@@ -26,7 +14,7 @@ pub fn tool_defs() -> Vec<Value> {
     vec![
         json!({
             "name": "browser_recall",
-            "description": "Looks up, in AgentDeck's memory of this site, the elements you (or an earlier run) already found on its pages: buttons, links, fields, each with the CSS selector that found it and whether it is on the page you are on now. Use it BEFORE taking a screenshot or listing the page: when it answers, click or fill with browser_click_element / browser_fill using the selector and skip the scan. It also returns steps that worked before for a similar goal. Say what you want in a few words (\"sign in\", \"export report\", \"search box\"). An empty answer means nothing is remembered yet: use browser_elements or browser_find, and the result is remembered for next time.",
+            "description": "Looks up, in this project's memory of this site, the elements you (or an earlier run) already found on its pages: buttons, links, fields, each with the CSS selector that found it and whether it is on the page you are on now. Use it BEFORE taking a screenshot or listing the page: when it answers, click or fill with browser_click_element / browser_fill using the selector and skip the scan. It also returns steps that worked before for a similar goal. Say what you want in a few words (\"sign in\", \"export report\", \"search box\"). An empty answer means nothing is remembered yet: use browser_elements or browser_find, and the result is remembered for next time.",
             "inputSchema": { "type": "object", "properties": {
                 "query": { "type": "string", "description": "what you are looking for or want to do, in a few words" },
                 "limit": { "type": "number", "description": "most elements to return (default 8)" }
@@ -41,60 +29,6 @@ pub fn tool_defs() -> Vec<Value> {
             }, "required": ["goal", "steps"] },
         }),
     ]
-}
-
-static NEXT: AtomicU64 = AtomicU64::new(1);
-type Answer = Result<String, String>;
-static PENDING: LazyLock<Mutex<HashMap<String, oneshot::Sender<Answer>>>> =
-    LazyLock::new(Default::default);
-
-/// Hands a read or a write to the webview and waits for its answer.
-pub async fn ask(app: &AppHandle, op: &str, args: Value) -> Result<String, String> {
-    let id = format!("pm-{}", NEXT.fetch_add(1, Ordering::Relaxed));
-    let (sender, receiver) = oneshot::channel();
-    if let Ok(mut pending) = PENDING.lock() {
-        pending.insert(id.clone(), sender);
-    }
-    if let Err(error) = app.emit(
-        "page-memory",
-        json!({ "callId": id, "op": op, "args": args }),
-    ) {
-        if let Ok(mut pending) = PENDING.lock() {
-            pending.remove(&id);
-        }
-        return Err(error.to_string());
-    }
-    match tokio::time::timeout(WAIT, receiver).await {
-        Ok(Ok(answer)) => answer,
-        _ => {
-            if let Ok(mut pending) = PENDING.lock() {
-                pending.remove(&id);
-            }
-            Err("the page memory did not answer".to_string())
-        }
-    }
-}
-
-/// A write nobody waits for: what was seen on a page.
-pub fn store(app: &AppHandle, args: Value) {
-    let _ = app.emit(
-        "page-memory",
-        json!({ "callId": "", "op": "store", "args": args }),
-    );
-}
-
-/// The webview's answer to a call.
-#[tauri::command]
-pub fn page_memory_reply(call_id: String, text: String, is_error: bool) -> bool {
-    let sender = PENDING
-        .lock()
-        .ok()
-        .and_then(|mut pending| pending.remove(&call_id));
-    sender.is_some_and(|sender| {
-        sender
-            .send(if is_error { Err(text) } else { Ok(text) })
-            .is_ok()
-    })
 }
 
 /// Runs in the page: the selectors of the elements the agent was shown (`window.__adEls`), steadiest form first, with
