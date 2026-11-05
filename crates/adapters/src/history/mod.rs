@@ -169,11 +169,11 @@ pub fn list_all(roots: &Roots) -> Vec<HistorySession> {
     // One scan at a time: two running scans would write the same index file.
     static SCAN: Mutex<()> = Mutex::new(());
     let _scan = SCAN.lock().unwrap_or_else(PoisonError::into_inner);
-    let mut sessions = claude::list(&roots.claude, &roots.index.join("claude.json"));
+    let mut sessions = claude::list(&roots.claude, &roots.index.join("claude.db"));
     sessions.extend(codex::list(
         &roots.codex,
         &roots.codex_index,
-        &roots.index.join("codex.json"),
+        &roots.index.join("codex.db"),
     ));
     sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
     let mut seen = std::collections::HashSet::new();
@@ -191,11 +191,11 @@ pub fn list_all(roots: &Roots) -> Vec<HistorySession> {
 /// Sessions of one provider. The sidebar still reads `list_all` (Claude and Codex): the UI cannot show the others yet.
 pub fn list_native(roots: &Roots, source: Source) -> Vec<HistorySession> {
     match source {
-        Source::Claude => claude::list(&roots.claude, &roots.index.join("claude.json")),
+        Source::Claude => claude::list(&roots.claude, &roots.index.join("claude.db")),
         Source::Codex => codex::list(
             &roots.codex,
             &roots.codex_index,
-            &roots.index.join("codex.json"),
+            &roots.index.join("codex.db"),
         ),
         Source::Copilot => copilot::list(&roots.copilot),
         Source::Antigravity => antigravity::list(&roots.gemini),

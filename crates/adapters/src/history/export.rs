@@ -574,7 +574,7 @@ mod tests {
             Some(roots.claude.join(claude_folder(&cwd)).as_path())
         );
 
-        let sessions = claude::list(&roots.claude, &roots.index.join("claude.json"));
+        let sessions = claude::list(&roots.claude, &roots.index.join("claude.db"));
         let session = sessions
             .iter()
             .find(|session| session.id == format!("claude:{}", result.native_id))
@@ -691,7 +691,7 @@ mod tests {
         let sessions = codex::list(
             &roots.codex,
             &roots.codex_index,
-            &roots.index.join("codex.json"),
+            &roots.index.join("codex.db"),
         );
         let session = sessions
             .iter()
