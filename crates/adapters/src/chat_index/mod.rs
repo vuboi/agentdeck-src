@@ -34,6 +34,8 @@ pub enum ChatIndexError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error("could not encode or decode a message's blocks: {0}")]
+    Codec(String),
     #[error("native session {provider}:{native_id} already belongs to chat {chat_id}")]
     NativeBound {
         provider: String,

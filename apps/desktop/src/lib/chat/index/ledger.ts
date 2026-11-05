@@ -11,11 +11,12 @@ import { createDualWriter, type ChatMeta } from './dual-write';
 
 export const LEDGER_FLAG = 'chat_index.dual_write';
 
-let flagOn = false;
+// On by default (plan storage-sqlite P5.1): only an explicit `false` in the pref turns the ledger off.
+let flagOn = true;
 if (inTauri()) {
     void getPref<boolean>(LEDGER_FLAG).then(
         (on) => {
-            flagOn = on === true;
+            flagOn = on !== false;
         },
         () => {},
     );

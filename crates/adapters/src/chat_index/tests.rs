@@ -512,3 +512,22 @@ fn migrates_an_indexeddb_dump_once() {
     assert_eq!(forced, report);
     assert_eq!(index.list_chats().expect("list").len(), 3);
 }
+
+#[test]
+fn a_row_written_before_version_two_still_reads() {
+    let mut index = ChatIndex::open_in_memory().expect("open");
+    index.save_chat(&chat("old")).expect("chat");
+    // What version 1 wrote: the blocks as JSON text, no blob.
+    index
+        .conn
+        .execute(
+            "INSERT INTO messages (chat_id, seq, role, time, blocks_json) VALUES ('old', 1, 'user', '2026-11-01T10:00:00Z', ?1)",
+            [json!({ "id": "x", "text": "from version one" }).to_string()],
+        )
+        .expect("legacy row");
+    let page = index
+        .open_page("old", None, 10)
+        .expect("page")
+        .expect("chat");
+    assert_eq!(texts(&page.messages), vec!["from version one"]);
+}
