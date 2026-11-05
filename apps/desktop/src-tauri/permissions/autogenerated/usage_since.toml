@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-usage-since"
+description = "Enables the usage_since command without any pre-configured scope."
+commands.allow = ["usage_since"]
+
+[[permission]]
+identifier = "deny-usage-since"
+description = "Denies the usage_since command without any pre-configured scope."
+commands.deny = ["usage_since"]
