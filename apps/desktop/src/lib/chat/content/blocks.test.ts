@@ -172,6 +172,34 @@ test('a propose_session call is a proposal segment, not a step of the group', ()
     assert.equal(card.kind === 'proposal' && card.item.id, 'p');
 });
 
+test('a finished artifact fence gets a durable key from its chat message and block location', () => {
+    const text =
+        '```agentdeck-artifact title="Landing" kind="html"\n<h1>Hi</h1>\n```';
+    const first = segments(
+        [{ kind: 'response', text }],
+        undefined,
+        'chat-a',
+        'message-7',
+    ).find((part) => part.kind === 'artifact_fence');
+    const reloaded = segments(
+        [{ kind: 'response', text }],
+        undefined,
+        'chat-a',
+        'message-7',
+    ).find((part) => part.kind === 'artifact_fence');
+    const otherChat = segments(
+        [{ kind: 'response', text }],
+        undefined,
+        'chat-b',
+        'message-7',
+    ).find((part) => part.kind === 'artifact_fence');
+    assert.ok(first?.kind === 'artifact_fence');
+    assert.ok(reloaded?.kind === 'artifact_fence');
+    assert.ok(otherChat?.kind === 'artifact_fence');
+    assert.equal(first.sourceKey, reloaded.sourceKey);
+    assert.notEqual(first.sourceKey, otherChat.sourceKey);
+});
+
 test('the steps before and after a proposal are groups of their own', () => {
     const parts = segments([cmd('a'), proposal('p'), cmd('b')]);
     assert.deepEqual(

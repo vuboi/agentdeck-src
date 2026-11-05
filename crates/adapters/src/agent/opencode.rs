@@ -116,6 +116,9 @@ pub enum PermissionAnswer {
 
 /// The kind of an action the server asks about, as the modes read it.
 fn action_kind(action: &str) -> Action {
+    if let Some(action) = permission::plan_action(action) {
+        return action;
+    }
     match action {
         "shell" | "bash" => Action::Shell,
         "edit" | "write" | "patch" | "apply_patch" | "multiedit" => Action::Write,
@@ -130,7 +133,7 @@ fn allow_name(action: &str) -> String {
         Action::Shell => "Bash".into(),
         Action::Write => "Write".into(),
         Action::Read => "Read".into(),
-        Action::Other => action.to_owned(),
+        Action::PlanWrite | Action::Other => action.to_owned(),
     }
 }
 
@@ -627,6 +630,36 @@ impl Provider for OpenCode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn permission_plan_only_allows_agentdeck_plan_and_artifact_writes() {
+        use super::*;
+        for name in [
+            "plan_write",
+            "plan_step",
+            "artifact_create",
+            "artifact_update",
+        ] {
+            for tool in [name.to_owned(), format!("mcp__agentdeck__{name}")] {
+                assert_eq!(
+                    answer_permission(&json!({"action": tool}), Mode::Plan, &[]),
+                    PermissionAnswer::Approve
+                );
+            }
+        }
+        for tool in [
+            "write",
+            "bash",
+            "mcp__other__plan_write",
+            "plan_write_extra",
+            "artifact_delete",
+        ] {
+            assert!(matches!(
+                answer_permission(&json!({"action": tool}), Mode::Plan, &[]),
+                PermissionAnswer::Refuse(_)
+            ));
+        }
+    }
+
     use super::*;
 
     fn request(prompt: &str) -> TurnRequest {

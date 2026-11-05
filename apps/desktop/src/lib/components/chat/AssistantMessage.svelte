@@ -27,6 +27,8 @@
     import TurnChanges from './TurnChanges.svelte';
     import PlanCard from './PlanCard.svelte';
     import ProposalCard from './ProposalCard.svelte';
+    import CanvasCard from './CanvasCard.svelte';
+    import ArtifactFenceCard from './ArtifactFenceCard.svelte';
     import TaskCards from '../tasks/TaskCards.svelte';
     import AgentActivityCards from './AgentActivityCards.svelte';
     import LiveStatus from './LiveStatus.svelte';
@@ -67,7 +69,10 @@
     // do not render again (reuseSegments). Plain variable on purpose: it is a cache, not state.
     let lastParts: Segment[] = [];
     const parts = $derived.by(() => {
-        lastParts = reuseSegments(lastParts, segments(message.blocks));
+        lastParts = reuseSegments(
+            lastParts,
+            segments(message.blocks, undefined, workspace.activeId, message.id),
+        );
         return lastParts;
     });
     // Replies of the same agent and model that follow one another share one name line, while each actual answer keeps
@@ -177,6 +182,16 @@
             <PlanCard items={segment.items} />
         {:else if segment.kind === 'proposal'}
             <ProposalCard item={segment.item} sessionId={sid} />
+        {:else if segment.kind === 'artifact'}
+            <CanvasCard item={segment.item} sessionId={sid} />
+        {:else if segment.kind === 'artifact_fence'}
+            <ArtifactFenceCard
+                response={segment.response}
+                fence={segment.fence}
+                sourceKey={segment.sourceKey}
+                sessionId={sid}
+                startedAt={message.startedAt}
+            />
         {:else if segment.kind === 'tasks'}
             <TaskCards items={segment.items} />
         {:else if segment.kind === 'agent_activity'}

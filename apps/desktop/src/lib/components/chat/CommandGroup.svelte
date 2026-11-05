@@ -1103,6 +1103,15 @@
             {/if}
         </div>
     </div>
+    {#each items.filter((item) => item.savedPlan) as item (item.id)}
+        {@const plan = item.savedPlan!}
+        <button
+            type="button"
+            class="mt-2 cursor-pointer text-xs text-muted-foreground hover:text-primary hover:underline"
+            onclick={() => void openProjectFile(plan.path, plan.root)}
+            >Saved to {plan.id}</button
+        >
+    {/each}
     {#if shots.length > 0}
         <!-- Pictures the tools returned (screenshots), shown in the chat too, not only inside the opened steps. -->
         <div

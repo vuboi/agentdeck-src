@@ -673,6 +673,37 @@ mod tests {
     }
 
     #[test]
+    fn exit_plan_mode_keeps_long_json_through_parser_and_event_serialization() {
+        let plan = format!(
+            "# Plan\n\n{}",
+            "- [ ] Read, implement, and verify the change.\n".repeat(40)
+        );
+        assert!(plan.chars().count() > 400);
+        let line = serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{
+                "type": "tool_use", "id": "plan-call", "name": "ExitPlanMode",
+                "input": {"plan": plan}
+            }]}
+        })
+        .to_string();
+        let events = Claude.parse_line(&line);
+        assert_eq!(events.len(), 1);
+        let wire = serde_json::to_value(&events[0]).expect("serialize event");
+        assert_eq!(wire["kind"], "tool_call");
+        assert_eq!(wire["name"], "ExitPlanMode");
+        let input: serde_json::Value =
+            serde_json::from_str(wire["input"].as_str().expect("tool input string"))
+                .expect("complete JSON input");
+        assert_eq!(input["plan"], plan);
+
+        // The exemption is exact: unrelated tool inputs keep the existing compact display limit.
+        let summary = summarize_tool_input("OtherTool", &serde_json::json!({"plan": plan}));
+        assert_eq!(summary.chars().count(), 401);
+        assert!(summary.ends_with('\u{2026}'));
+    }
+
+    #[test]
     fn tool_calls_and_their_output_are_linked_by_id() {
         let call = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls -la"}}]}}"#;
         assert_eq!(

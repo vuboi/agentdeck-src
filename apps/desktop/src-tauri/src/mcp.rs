@@ -572,6 +572,8 @@ pub(crate) fn tool_list() -> Value {
             })
             .chain(crate::index::tool_defs())
             .chain(crate::devtools::tool_defs())
+            .chain(crate::plans::tool_defs())
+            .chain(crate::artifacts::tool_defs())
             .chain(crate::delegate::tool_defs())
             .chain(crate::page_memory::tool_defs())
             .chain([
@@ -661,6 +663,18 @@ async fn call_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> Val
     }
     if crate::devtools::is_tool(name) {
         return match crate::devtools::call(name, args, chat).await {
+            Ok(text) => text_reply(text),
+            Err(error) => error_reply(error),
+        };
+    }
+    if crate::plans::is_tool(name) {
+        return match crate::plans::call(app, name, args, chat).await {
+            Ok(text) => text_reply(text),
+            Err(error) => error_reply(error),
+        };
+    }
+    if crate::artifacts::is_tool(name) {
+        return match crate::artifacts::call(app, name, args, chat).await {
             Ok(text) => text_reply(text),
             Err(error) => error_reply(error),
         };
@@ -935,7 +949,7 @@ pub async fn handle(app: &AppHandle, body: &str, chat: &str) -> Option<String> {
             "protocolVersion": params["protocolVersion"].as_str().unwrap_or("2025-06-18"),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "agentdeck", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "The page open in AgentDeck's Preview panel, the browser the user is looking at. Use these tools to see it and act on it as a user would: screenshot, then click / type / scroll, then screenshot again and check browser_console and browser_network for errors. For a requested video guide, call browser_record_start with the absolute project root before operating the page, then browser_record_stop when finished; it saves the WebM under docs/user-guides. Computer Use is on by default: computer_screenshot, computer_click, computer_type, computer_press_key and computer_scroll operate the user's Windows desktop immediately; the user can disable these calls in AgentDeck Settings. The code_* tools search an index of the project (symbols, outlines, definitions, references, imports): use them before grepping the tree. delegate_task routes work to another AgentDeck provider; use native sub-agents for internal orchestration when your CLI provides them. Keep ownership of integration and the final answer.",
+            "instructions": "The page open in AgentDeck's Preview panel, the browser the user is looking at. Use these tools to see it and act on it as a user would: screenshot, then click / type / scroll, then screenshot again and check browser_console and browser_network for errors. For a requested video guide, call browser_record_start with the absolute project root before operating the page, then browser_record_stop when finished; it saves the WebM under docs/user-guides. Computer Use is on by default: computer_screenshot, computer_click, computer_type, computer_press_key and computer_scroll operate the user's Windows desktop immediately; the user can disable these calls in AgentDeck Settings. The code_* tools search an index of the project (symbols, outlines, definitions, references, imports): use them before grepping the tree. delegate_task routes work to another AgentDeck provider; use native sub-agents for internal orchestration when your CLI provides them. Keep ownership of integration and the final answer. Plans: plan_list shows plans every AgentDeck agent shares; follow an approved plan, tick its steps with plan_step, and save a new plan with plan_write when you plan multi-step work. artifact_create shows an HTML page, SVG, Markdown or code in the user's Canvas panel; update it with artifact_update instead of creating a new one.",
         }),
         "ping" => json!({}),
         "tools/list" => json!({ "tools": tool_list() }),

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plans-set-status"
+description = "Enables the plans_set_status command without any pre-configured scope."
+commands.allow = ["plans_set_status"]
+
+[[permission]]
+identifier = "deny-plans-set-status"
+description = "Denies the plans_set_status command without any pre-configured scope."
+commands.deny = ["plans_set_status"]

@@ -5,6 +5,7 @@ use std::sync::{Mutex, OnceLock};
 mod agent_runs;
 mod agents;
 mod answers;
+mod artifacts;
 mod awake;
 mod background_stop;
 mod bridge;
@@ -43,6 +44,7 @@ mod opencode_serve;
 mod page_memory;
 mod path_links;
 mod picture_store;
+mod plans;
 mod privacy;
 mod process_guard;
 mod process_registry;
@@ -709,6 +711,143 @@ async fn history_list() -> Result<Vec<HistorySession>, String> {
     tauri::async_runtime::spawn_blocking(move || history::list_all(&roots))
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn plans_list(root: String, status: Option<String>) -> Result<Vec<plans::PlanInfo>, String> {
+    plans::list(Path::new(&root), status.as_deref())
+}
+
+#[tauri::command]
+fn plans_read(root: String, id: String) -> Result<(plans::PlanInfo, String), String> {
+    plans::read(Path::new(&root), &id)
+}
+
+#[tauri::command]
+fn plans_set_status(
+    app: AppHandle,
+    root: String,
+    id: String,
+    status: String,
+) -> Result<plans::PlanInfo, String> {
+    let plan = plans::set_status(Path::new(&root), &id, &status)?;
+    let _ = app.emit(
+        "plan-changed",
+        serde_json::json!({"root": root, "id": plan.id}),
+    );
+    Ok(plan)
+}
+
+#[tauri::command]
+fn plans_set_step(
+    app: AppHandle,
+    root: String,
+    id: String,
+    step: serde_json::Value,
+    done: bool,
+) -> Result<plans::PlanInfo, String> {
+    let step = if let Some(n) = step.as_u64() {
+        plans::StepRef::Number(n as usize)
+    } else {
+        plans::StepRef::Text(
+            step.as_str()
+                .ok_or("step must be a number or text")?
+                .to_string(),
+        )
+    };
+    let plan = plans::set_step(Path::new(&root), &id, step, done)?;
+    let _ = app.emit(
+        "plan-changed",
+        serde_json::json!({"root": root, "id": plan.id}),
+    );
+    Ok(plan)
+}
+
+#[tauri::command]
+fn plans_save(
+    app: AppHandle,
+    root: String,
+    title: String,
+    body: String,
+    agent: String,
+    chat: String,
+    source: String,
+) -> Result<plans::PlanInfo, String> {
+    let plan = plans::write(
+        Path::new(&root),
+        plans::WriteReq {
+            title,
+            body,
+            status: Some("draft".into()),
+            id: None,
+            agent,
+            chat,
+            source,
+            base_updated: None,
+        },
+    )?;
+    let _ = app.emit(
+        "plan-changed",
+        serde_json::json!({"root": root, "id": plan.id}),
+    );
+    Ok(plan)
+}
+
+#[tauri::command]
+fn artifacts_list(root: String) -> Result<Vec<artifacts::ArtifactListItem>, String> {
+    artifacts::list(Path::new(&root))
+}
+
+#[tauri::command]
+fn artifacts_read(
+    root: String,
+    id: String,
+    version: Option<u32>,
+) -> Result<artifacts::ArtifactRead, String> {
+    let (info, content) = artifacts::read(Path::new(&root), &id, version)?;
+    Ok(artifacts::ArtifactRead { info, content })
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // These fields mirror the artifact_create MCP input used by the fence fallback.
+fn artifacts_create(
+    app: AppHandle,
+    root: String,
+    title: String,
+    kind: String,
+    content: String,
+    language: Option<String>,
+    agent: Option<String>,
+    chat: Option<String>,
+    source_key: Option<String>,
+) -> Result<artifacts::ArtifactInfo, String> {
+    let chat = chat.unwrap_or_default();
+    let (artifact, _) = artifacts::create_with_key(
+        Path::new(&root),
+        &title,
+        &kind,
+        &content,
+        language.as_deref().unwrap_or(""),
+        agent.as_deref().unwrap_or("custom-chat"),
+        &chat,
+        source_key.as_deref(),
+    )?;
+    let version = artifact
+        .versions
+        .iter()
+        .map(|item| item.n)
+        .max()
+        .unwrap_or(1);
+    let _ = app.emit(
+        "artifact-changed",
+        serde_json::json!({"root": root, "id": artifact.id, "version": version, "chat": chat}),
+    );
+    Ok(artifact)
+}
+
+#[tauri::command]
+fn artifacts_delete(root: String, id: String) -> Result<(), String> {
+    artifacts::delete(Path::new(&root), &id)
 }
 
 /// The transcript of one saved session. The path must be inside the history folders.
@@ -2627,6 +2766,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             tray_update_recent,
             history_list,
+            plans_list,
+            plans_read,
+            plans_set_status,
+            plans_set_step,
+            plans_save,
+            artifacts_list,
+            artifacts_read,
+            artifacts_create,
+            artifacts_delete,
             changes::changes_list,
             worktree::worktree_create,
             worktree::worktree_status,

@@ -12,7 +12,7 @@ pub enum Mode {
     Ask,
     /// File edits run without asking; commands and everything else asks.
     Edits,
-    /// Nothing is changed: reading runs, writing and commands are refused.
+    /// Reading and AgentDeck plan/artifact writes run; project writes and commands are refused.
     Plan,
     /// Reading, writing and commands run without asking (commands in the sandbox); anything else asks.
     Auto,
@@ -84,8 +84,21 @@ impl Mode {
 pub enum Action {
     Read,
     Write,
+    /// An explicitly named AgentDeck plan/artifact write, never a general project edit.
+    PlanWrite,
     Shell,
     Other,
+}
+
+/// Classifies the four AgentDeck planning writes, with only AgentDeck's exact optional MCP prefix.
+/// Unknown tool names retain their caller's normal action classification.
+pub fn plan_action(name: &str) -> Option<Action> {
+    let name = name.strip_prefix("mcp__agentdeck__").unwrap_or(name);
+    matches!(
+        name,
+        "plan_write" | "plan_step" | "artifact_create" | "artifact_update"
+    )
+    .then_some(Action::PlanWrite)
 }
 
 /// What a mode does with one call.
@@ -105,12 +118,14 @@ pub fn verdict(mode: Mode, action: Action) -> Verdict {
     match (mode, action) {
         (Mode::Yolo, _) => Verdict::Approve,
         (Mode::Ask, _) => Verdict::Ask,
-        (Mode::Edits, Action::Read | Action::Write) => Verdict::Approve,
+        (Mode::Edits, Action::Read | Action::Write | Action::PlanWrite) => Verdict::Approve,
         (Mode::Edits, _) => Verdict::Ask,
         // "Auto-approve: run commands in the sandbox": reads, edits and commands run; anything else asks.
-        (Mode::Auto, Action::Read | Action::Write | Action::Shell) => Verdict::Approve,
+        (Mode::Auto, Action::Read | Action::Write | Action::PlanWrite | Action::Shell) => {
+            Verdict::Approve
+        }
         (Mode::Auto, _) => Verdict::Ask,
-        (Mode::Plan, Action::Read) => Verdict::Approve,
+        (Mode::Plan, Action::Read | Action::PlanWrite) => Verdict::Approve,
         (Mode::Plan, _) => Verdict::Refuse,
     }
 }
@@ -142,6 +157,33 @@ mod tests {
         assert_eq!(Mode::Yolo.agy(), None);
         assert!(Mode::Yolo.opencode_auto());
         assert!(!Mode::Edits.opencode_auto());
+    }
+
+    #[test]
+    fn plan_permissions_only_allow_named_planning_writes() {
+        for name in [
+            "plan_write",
+            "plan_step",
+            "artifact_create",
+            "artifact_update",
+        ] {
+            for name in [name.to_owned(), format!("mcp__agentdeck__{name}")] {
+                let action = plan_action(&name).expect("planning write");
+                assert_eq!(verdict(Mode::Plan, action), Verdict::Approve);
+                assert_eq!(verdict(Mode::Ask, action), Verdict::Ask);
+            }
+        }
+        for name in [
+            "Write",
+            "artifact_delete",
+            "plan_write_extra",
+            "mcp__other__plan_write",
+        ] {
+            assert_eq!(plan_action(name), None);
+        }
+        assert_eq!(verdict(Mode::Plan, Action::Write), Verdict::Refuse);
+        assert_eq!(verdict(Mode::Plan, Action::Other), Verdict::Refuse);
+        assert_eq!(Mode::Plan.codex_sandbox(), Some("read-only"));
     }
 
     #[test]
