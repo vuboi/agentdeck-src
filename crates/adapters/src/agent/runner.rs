@@ -276,6 +276,7 @@ pub async fn drive_turn(
     // project file around those calls so realtime counts describe the actual edit and can be summed.
     let mut file_snapshots = std::collections::HashMap::new();
     let mut watchdog = Watchdog::new(provider.stall_limit());
+    let mut repeats = super::repeat::RepeatGuard::default();
     // Set once the CLI has exited, with the time after which its pipe is no longer read.
     let mut exited: Option<(
         std::io::Result<std::process::ExitStatus>,
@@ -349,6 +350,18 @@ pub async fn drive_turn(
                         }
                     }
                     _ => {}
+                }
+                // The same tool call again and again, with nothing between: the turn is stuck. The tree is ended with it.
+                if let AgentEvent::ToolCall { name, input, .. } = &event {
+                    if repeats.note(name, input) {
+                        emit(AgentEvent::Error {
+                            message: super::repeat::message(name),
+                        });
+                        finished = true;
+                        stalled = true;
+                        suggestion_wait = false;
+                        break;
+                    }
                 }
                 watchdog.note(&event);
                 // A worker is asked for the answer of the work it handed to sub-agents: the CLI's first result comes

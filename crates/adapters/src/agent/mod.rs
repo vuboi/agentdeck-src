@@ -14,6 +14,7 @@ pub mod opencode;
 mod opencode_server;
 pub mod output;
 pub mod permission;
+pub mod repeat;
 pub mod resolve;
 pub mod runner;
 pub mod stall;
