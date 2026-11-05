@@ -13,7 +13,7 @@ use super::{
 const BINDING_COLUMNS: &str =
     "id, chat_id, provider, native_id, path, model, epoch, origin, state, synced_seq, cursor_json";
 const MESSAGE_COLUMNS: &str =
-    "seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks";
+    "seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks, client_id";
 
 impl ChatIndex {
     /// Creates the chat, or updates its title, folder, project and agent. `created_at` is kept once it is set.
@@ -419,8 +419,8 @@ pub(super) fn insert_message(
     // The blocks go in as a codec blob (version 2); `blocks_json` stays empty for these rows.
     let blocks = crate::codec::encode_keep(&message.blocks).map_err(ChatIndexError::Codec)?;
     conn.execute(
-        "INSERT INTO messages (chat_id, seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks, preview)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', ?10, ?11)",
+        "INSERT INTO messages (chat_id, seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks, preview, client_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', ?10, ?11, ?12)",
         params![
             chat_id,
             seq,
@@ -433,6 +433,7 @@ pub(super) fn insert_message(
             message.time,
             blocks,
             preview_of(&message.blocks),
+            message.client_id,
         ],
     )?;
     Ok(())
@@ -524,6 +525,7 @@ fn parse_message(row: &Row) -> Result<StoredMessage> {
             time: row.get(7)?,
             native,
             blocks,
+            client_id: row.get(10)?,
         },
     })
 }

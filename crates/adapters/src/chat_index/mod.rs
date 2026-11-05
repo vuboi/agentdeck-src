@@ -159,6 +159,9 @@ pub struct NewMessage {
     pub time: String,
     pub native: Option<NativeRef>,
     pub blocks: Value,
+    /// The id the message has on screen (the app's own), so the ledger row can be matched back to it (version 3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
 }
 
 /// A stored turn: a `NewMessage` plus its position in the ledger.

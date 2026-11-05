@@ -36,6 +36,7 @@ fn binding(id: &str, chat_id: &str, provider: &str, native_id: Option<&str>) -> 
 /// A turn whose text is `text`. `native` is `(provider, native message id)` when it came from a native session.
 fn turn(text: &str, binding_id: Option<&str>, native: Option<(&str, &str)>) -> NewMessage {
     NewMessage {
+        client_id: None,
         role: "user".to_string(),
         agent: None,
         model: None,

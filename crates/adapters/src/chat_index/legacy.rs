@@ -372,6 +372,7 @@ fn import_chat(
         }
         seq += 1;
         let new = NewMessage {
+            client_id: None,
             role: role.to_string(),
             agent,
             model: message

@@ -4,7 +4,7 @@ use rusqlite::Connection;
 
 use super::Result;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 const DDL: &str = "
 CREATE TABLE IF NOT EXISTS meta (
@@ -78,6 +78,13 @@ pub fn prepare(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "ALTER TABLE messages ADD COLUMN blocks BLOB;
              ALTER TABLE messages ADD COLUMN preview TEXT;",
+        )?;
+    }
+    if version < 3 {
+        // Version 3: the message id the screen uses, so a row can be matched back to the message it came from.
+        conn.execute_batch(
+            "ALTER TABLE messages ADD COLUMN client_id TEXT;
+             CREATE INDEX IF NOT EXISTS messages_client ON messages(chat_id, client_id);",
         )?;
     }
     conn.execute(

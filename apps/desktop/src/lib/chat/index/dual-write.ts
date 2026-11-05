@@ -46,6 +46,8 @@ export type NewMessage = {
     time: string;
     native: null;
     blocks: unknown;
+    /** The message id on screen, so the row can be matched back (ledger version 3). */
+    clientId?: string;
 };
 
 /** What a turn ended with. Only `done` is written; anything else leaves the ledger as it was. */
@@ -227,6 +229,7 @@ export function createDualWriter(options: DualWriteOptions): DualWriter {
                     native: null,
                     // Copied now: the message keeps changing on screen after the turn ends.
                     blocks: JSON.parse(JSON.stringify(message.blocks)),
+                    clientId: message.id,
                 });
             }
             for (const message of fresh) state.sent.add(message.id);

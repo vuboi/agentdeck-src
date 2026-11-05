@@ -157,6 +157,7 @@ fn source_of(provider: &str) -> Option<Source> {
 /// A native turn in the shape the chat view keeps: its id, role, time and blocks, plus the native id used for dedupe.
 fn native_turn(binding: &Binding, message: &HistoryMessage) -> NewMessage {
     NewMessage {
+        client_id: None,
         role: message.role.clone(),
         agent: Some(binding.provider.clone()),
         model: message.model.clone(),
