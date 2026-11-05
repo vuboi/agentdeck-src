@@ -16,7 +16,7 @@ pub const POSTCARD_LZ4: u8 = 10;
 
 /// Values from this size up are compressed. Smaller ones do not shrink enough to pay for the CPU.
 pub const ZSTD_FROM: usize = 512;
-const ZSTD_LEVEL: i32 = 3;
+const ZSTD_LEVEL: i32 = 1;
 
 fn prefixed(code: u8, body: Vec<u8>) -> Vec<u8> {
     let mut out = Vec::with_capacity(body.len() + 1);
@@ -140,4 +140,80 @@ mod tests {
         assert!(decode::<Note>(&[]).is_err());
         assert!(decode::<Note>(&[99, 1, 2]).is_err());
     }
+}
+
+/// Measures the codecs on real chat messages (plan storage-sqlite P1.5). Run with
+/// `cargo test -p ag-adapters codec_benchmark -- --ignored --nocapture`; it reads `~/.agentdeck/chats.db` and does not
+/// change it. Prints size and time per codec.
+#[cfg(test)]
+#[test]
+#[ignore]
+fn codec_benchmark() {
+    use std::time::Instant;
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)
+        .expect("home");
+    let path = home.join(".agentdeck").join("chats.db");
+    let conn =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("chats.db");
+    let mut statement = conn
+        .prepare("SELECT blocks_json FROM messages ORDER BY rowid DESC LIMIT 1000")
+        .expect("query");
+    let rows: Vec<String> = statement
+        .query_map([], |row| row.get(0))
+        .expect("rows")
+        .flatten()
+        .collect();
+    let values: Vec<serde_json::Value> = rows
+        .iter()
+        .filter_map(|text| serde_json::from_str(text).ok())
+        .collect();
+    let json_bytes: usize = rows.iter().map(String::len).sum();
+    println!("messages {} json {} bytes", values.len(), json_bytes);
+
+    let measure = |name: &str, encode: &dyn Fn(&serde_json::Value) -> Vec<u8>| {
+        let start = Instant::now();
+        let blobs: Vec<Vec<u8>> = values.iter().map(encode).collect();
+        let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let bytes: usize = blobs.iter().map(Vec::len).sum();
+        let start = Instant::now();
+        for blob in &blobs {
+            let _: serde_json::Value = decode(blob).expect("decode");
+        }
+        let decode_ms = start.elapsed().as_secs_f64() * 1000.0;
+        println!(
+            "{name:<12} {bytes:>10} bytes ({:.2}x of json)  encode {encode_ms:>7.1} ms  decode {decode_ms:>7.1} ms",
+            bytes as f64 / json_bytes as f64
+        );
+    };
+    measure("json", &|value| {
+        let mut out = vec![JSON];
+        out.extend(serde_json::to_vec(value).expect("json"));
+        out
+    });
+    measure("msgpack", &|value| {
+        let mut out = vec![MSGPACK];
+        out.extend(rmp_serde::to_vec_named(value).expect("msgpack"));
+        out
+    });
+    measure("keep (2/3)", &|value| encode_keep(value).expect("keep"));
+    // postcard cannot write a JSON value (no field names), so the cache row is measured as the text it holds.
+    let start = Instant::now();
+    let blobs: Vec<Vec<u8>> = rows
+        .iter()
+        .map(|text| encode_cache(text).expect("cache"))
+        .collect();
+    let encode_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let bytes: usize = blobs.iter().map(Vec::len).sum();
+    let start = Instant::now();
+    for blob in &blobs {
+        let _: String = decode(blob).expect("decode");
+    }
+    let decode_ms = start.elapsed().as_secs_f64() * 1000.0;
+    println!(
+        "cache (10)   {bytes:>10} bytes ({:.2}x of json)  encode {encode_ms:>7.1} ms  decode {decode_ms:>7.1} ms",
+        bytes as f64 / json_bytes as f64
+    );
 }
