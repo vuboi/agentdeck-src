@@ -731,15 +731,17 @@ fn an_unchanged_transcript_comes_from_the_index_and_a_changed_one_is_read_again(
         )],
     );
     assert_eq!(list_all(&roots)[0].title, "first prompt");
-    assert!(roots.index.join("claude.json").is_file());
+    assert!(roots.index.join("claude.db").is_file());
 
-    // Same length and time: the saved entry answers, so a value changed in the index file shows.
-    let cache = fs::read_to_string(roots.index.join("claude.json")).unwrap();
-    fs::write(
-        roots.index.join("claude.json"),
-        cache.replace("first prompt", "from index"),
-    )
-    .unwrap();
+    // Same length and time: the saved entry answers, so a value changed in the index database shows.
+    {
+        let conn = rusqlite::Connection::open(roots.index.join("claude.db")).unwrap();
+        conn.execute(
+            "UPDATE entries SET value = REPLACE(value, 'first prompt', 'from index')",
+            [],
+        )
+        .unwrap();
+    }
     assert_eq!(list_all(&roots)[0].title, "from index");
 
     // A longer file is read again.
