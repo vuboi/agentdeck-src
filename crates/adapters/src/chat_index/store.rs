@@ -417,8 +417,7 @@ pub(super) fn insert_message(
     message: &NewMessage,
 ) -> Result<()> {
     // The blocks go in as a codec blob (version 2); `blocks_json` stays empty for these rows.
-    let blocks =
-        crate::codec::encode_keep(&message.blocks).map_err(|error| ChatIndexError::Codec(error))?;
+    let blocks = crate::codec::encode_keep(&message.blocks).map_err(ChatIndexError::Codec)?;
     conn.execute(
         "INSERT INTO messages (chat_id, seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks, preview)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', ?10, ?11)",
