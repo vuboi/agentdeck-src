@@ -13,7 +13,7 @@ use super::{
 const BINDING_COLUMNS: &str =
     "id, chat_id, provider, native_id, path, model, epoch, origin, state, synced_seq, cursor_json";
 const MESSAGE_COLUMNS: &str =
-    "seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json";
+    "seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks";
 
 impl ChatIndex {
     /// Creates the chat, or updates its title, folder, project and agent. `created_at` is kept once it is set.
@@ -416,9 +416,12 @@ pub(super) fn insert_message(
     seq: i64,
     message: &NewMessage,
 ) -> Result<()> {
+    // The blocks go in as a codec blob (version 2); `blocks_json` stays empty for these rows.
+    let blocks =
+        crate::codec::encode_keep(&message.blocks).map_err(|error| ChatIndexError::Codec(error))?;
     conn.execute(
-        "INSERT INTO messages (chat_id, seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO messages (chat_id, seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks, preview)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', ?10, ?11)",
         params![
             chat_id,
             seq,
@@ -429,10 +432,28 @@ pub(super) fn insert_message(
             message.native.as_ref().map(|native| native.provider.as_str()),
             message.native.as_ref().map(|native| native.msg_id.as_str()),
             message.time,
-            message.blocks.to_string(),
+            blocks,
+            preview_of(&message.blocks),
         ],
     )?;
     Ok(())
+}
+
+/// The first 300 characters of the text of a message's blocks, for the lists.
+pub(super) fn preview_of(blocks: &Value) -> String {
+    let mut text = String::new();
+    if let Some(list) = blocks.as_array() {
+        for block in list {
+            if let Some(part) = block.get("text").and_then(Value::as_str) {
+                text.push_str(part);
+                text.push(' ');
+            }
+            if text.chars().count() >= 300 {
+                break;
+            }
+        }
+    }
+    text.trim().chars().take(300).collect()
 }
 
 fn chat_from_row(row: &Row) -> rusqlite::Result<ChatMeta> {
@@ -477,7 +498,23 @@ fn parse_message(row: &Row) -> Result<StoredMessage> {
         (Some(provider), Some(msg_id)) => Some(NativeRef { provider, msg_id }),
         _ => None,
     };
-    let blocks: String = row.get(8)?;
+    // Version 2 rows keep the blocks as a blob; older rows keep their JSON text.
+    let blob: Option<Vec<u8>> = row.get(9)?;
+    let blocks: Value = match blob {
+        Some(bytes) => crate::codec::decode(&bytes).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Blob, error.into())
+        })?,
+        None => {
+            let text: String = row.get(8)?;
+            serde_json::from_str(&text).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    8,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?
+        }
+    };
     Ok(StoredMessage {
         seq: row.get(0)?,
         message: NewMessage {
@@ -487,7 +524,7 @@ fn parse_message(row: &Row) -> Result<StoredMessage> {
             binding_id: row.get(4)?,
             time: row.get(7)?,
             native,
-            blocks: serde_json::from_str(&blocks)?,
+            blocks,
         },
     })
 }

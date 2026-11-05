@@ -4,7 +4,7 @@ use rusqlite::Connection;
 
 use super::Result;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const DDL: &str = "
 CREATE TABLE IF NOT EXISTS meta (
@@ -62,9 +62,27 @@ CREATE INDEX IF NOT EXISTS messages_binding ON messages(binding_id);
 pub fn prepare(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     conn.execute_batch(DDL)?;
+    let version: i64 = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|text| text.parse().ok())
+        // A new database has no version yet: its tables come from DDL without the version 2 columns.
+        .unwrap_or(1);
+    if version < 2 {
+        // Version 2: a message keeps its blocks as a codec blob (`blocks`, plan storage-sqlite P5.2) and a short text of
+        // the reply (`preview`) for the lists. Rows written before keep their JSON text in `blocks_json`.
+        conn.execute_batch(
+            "ALTER TABLE messages ADD COLUMN blocks BLOB;
+             ALTER TABLE messages ADD COLUMN preview TEXT;",
+        )?;
+    }
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
-         ON CONFLICT(key) DO NOTHING",
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [SCHEMA_VERSION.to_string()],
     )?;
     Ok(())
