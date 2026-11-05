@@ -9,15 +9,17 @@
 
 html,
 body {
-  background-color: var(--background);
+    background-color: var(--background);
 }
 
 /* ZChatNavigator's preview reserves an empty question row when a turn has no title. */
 .z-popover-host[role='tooltip']:not(.z-tooltip-host) > div:first-child:empty {
-  display: none;
+    display: none;
 }
-.z-popover-host[role='tooltip']:not(.z-tooltip-host) > div:first-child:empty + div {
-  margin-top: 0;
+.z-popover-host[role='tooltip']:not(.z-tooltip-host)
+    > div:first-child:empty
+    + div {
+    margin-top: 0;
 }
 
 /* ---- Corner radius: two sizes, set here and nowhere else ----
@@ -25,20 +27,20 @@ body {
    hold them (popovers, cards, panels, the message box, code blocks). Round things (dots, pills, avatars: rounded-full,
    9999px, 50%) are not part of this and stay round. The Tailwind scale and z-ui's own scale both read these. */
 :root {
-  --radius-small: 4px;
-  --radius-large: 6px;
-  --radius-row: 3px;
-  --radius-xs: 2px;
-  --radius-sm: var(--radius-small);
-  --radius-md: var(--radius-small);
-  --radius-lg: var(--radius-large);
-  --radius-xl: var(--radius-large);
-  --radius-2xl: var(--radius-large);
-  --radius-3xl: var(--radius-large);
+    --radius-small: 4px;
+    --radius-large: 6px;
+    --radius-row: 3px;
+    --radius-xs: 2px;
+    --radius-sm: var(--radius-small);
+    --radius-md: var(--radius-small);
+    --radius-lg: var(--radius-large);
+    --radius-xl: var(--radius-large);
+    --radius-2xl: var(--radius-large);
+    --radius-3xl: var(--radius-large);
 }
 /* A value or placeholder longer than its field ends in an ellipsis instead of being cut off. */
 input {
-  text-overflow: ellipsis;
+    text-overflow: ellipsis;
 }
 
 /* No focus outline or ring anywhere (the open row, a focused button, an input): state is shown by colour only. */
@@ -51,25 +53,25 @@ input {
 :focus-visible::after,
 :focus-within::before,
 :focus-within::after {
-  outline: none !important;
-  --tw-ring-shadow: 0 0 #0000 !important;
-  --tw-ring-offset-shadow: 0 0 #0000 !important;
+    outline: none !important;
+    --tw-ring-shadow: 0 0 #0000 !important;
+    --tw-ring-offset-shadow: 0 0 #0000 !important;
 }
 
 /* Rows of a tree are things you point at: a notch under small (z-ui draws them with the large radius), and a hair
    more air between them. The hover highlight, the open row and the selected row all share the one radius (the Explorer
    and the chat list are both trees). */
 .z-tree {
-  --z-tree-row-gap: 2.3px;
+    --z-tree-row-gap: 2.3px;
 }
 .z-tree-row,
 .z-tree-row::before {
-  border-radius: var(--radius-row);
+    border-radius: var(--radius-row);
 }
 /* The hover highlight is as wide as the row, while the open and selected row's background (::before) sits 4px in from
    both sides and stops short of the row's bottom gap: cut the highlight to the same box, or it looks shifted. */
 .z-tree [data-z-hover-glide-highlight] {
-  clip-path: inset(0 4px var(--z-tree-row-gap) 4px round var(--radius-row));
+    clip-path: inset(0 4px var(--z-tree-row-gap) 4px round var(--radius-row));
 }
 /* Surfaces that float (popover, dropdown, tooltip, dialog, drawer) are large: their items inside are small, and a
    container needs more radius than what it holds or the corners look pinched. z-ui gives some of them the small step. */
@@ -78,530 +80,971 @@ input {
 .z-dropdown-menu-content,
 .z-modal-content,
 .z-drawer-content {
-  border-radius: var(--radius-large);
+    border-radius: var(--radius-large);
 }
 /* z-ui declares its scale with `@theme inline`, which bakes the values into the utilities (rounded-xl and the like), so the
    same scale is declared here too. The :root block above is for CSS that reads the variables at run time. */
 @theme inline {
-  --radius-xs: 2px;
-  --radius-sm: var(--radius-small);
-  --radius-md: var(--radius-small);
-  --radius-lg: var(--radius-large);
-  --radius-xl: var(--radius-large);
-  --radius-2xl: var(--radius-large);
-  --radius-3xl: var(--radius-large);
+    --radius-xs: 2px;
+    --radius-sm: var(--radius-small);
+    --radius-md: var(--radius-small);
+    --radius-lg: var(--radius-large);
+    --radius-xl: var(--radius-large);
+    --radius-2xl: var(--radius-large);
+    --radius-3xl: var(--radius-large);
 }
 
 body {
-  min-height: 100vh;
-  margin: 0;
+    min-height: 100vh;
+    margin: 0;
 }
 
 /* ---- Global scrollbars: slim, flush with the edge, arrow buttons at both ends ---- */
 *::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+    width: 12px;
+    height: 12px;
 }
 *::-webkit-scrollbar-track,
 *::-webkit-scrollbar-corner {
-  background: transparent;
+    background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
-  border: 3px solid transparent;
-  border-radius: 6px;
-  background-clip: padding-box;
+    background-color: color-mix(
+        in oklab,
+        var(--muted-foreground) 35%,
+        transparent
+    );
+    border: 3px solid transparent;
+    border-radius: 6px;
+    background-clip: padding-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background-color: color-mix(in oklab, var(--muted-foreground) 60%, transparent);
+    background-color: color-mix(
+        in oklab,
+        var(--muted-foreground) 60%,
+        transparent
+    );
 }
 *::-webkit-scrollbar-button:single-button {
-  display: block;
-  width: 10px;
-  height: 10px;
-  background-color: transparent;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 8px 8px;
-  opacity: 0.7;
+    display: block;
+    width: 10px;
+    height: 10px;
+    background-color: transparent;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 8px 8px;
+    opacity: 0.7;
 }
 *::-webkit-scrollbar-button:single-button:hover {
-  opacity: 1;
+    opacity: 1;
 }
 *::-webkit-scrollbar-button:vertical:start:increment,
 *::-webkit-scrollbar-button:vertical:end:decrement,
 *::-webkit-scrollbar-button:horizontal:start:increment,
 *::-webkit-scrollbar-button:horizontal:end:decrement {
-  display: none;
+    display: none;
 }
 *::-webkit-scrollbar-button:vertical:decrement {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 5.2 4 2.8 6.5 5.2' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 5.2 4 2.8 6.5 5.2' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 *::-webkit-scrollbar-button:vertical:increment {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 2.8 4 5.2 6.5 2.8' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 2.8 4 5.2 6.5 2.8' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 *::-webkit-scrollbar-button:horizontal:decrement {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M5.2 1.5 2.8 4 5.2 6.5' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M5.2 1.5 2.8 4 5.2 6.5' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 *::-webkit-scrollbar-button:horizontal:increment {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M2.8 1.5 5.2 4 2.8 6.5' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M2.8 1.5 5.2 4 2.8 6.5' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 /* `.scrollbar-slim`: a narrower scrollbar (8px, no arrow buttons) for a modal or a small panel; the width is
    `--scrollbar-width` when a place wants another one. */
 /* A modal's body (z-ui's overlay scroll host) sets `scrollbar-color` and it is inherited: Chromium then draws its own
    15px scrollbar and ignores every ::-webkit-scrollbar rule below, so the property goes back to `auto` here. */
-.scrollbar-slim { scrollbar-color: auto; scrollbar-width: auto; }
+.scrollbar-slim {
+    scrollbar-color: auto;
+    scrollbar-width: auto;
+}
 /* `.scrollbar-full`: the global scrollbar (12px, arrow buttons at both ends, as in the chat) inside a host that sets
 `scrollbar-color` (a modal): without the reset Chromium draws its own and drops the arrows. */
-.scrollbar-full { scrollbar-color: auto; scrollbar-width: auto; }
-.scrollbar-slim::-webkit-scrollbar { width: var(--scrollbar-width, 8px); height: var(--scrollbar-width, 8px); }
-.scrollbar-slim::-webkit-scrollbar-thumb { border-width: 2px; border-radius: 4px; }
-.scrollbar-slim::-webkit-scrollbar-button:single-button { display: none; }
+.scrollbar-full {
+    scrollbar-color: auto;
+    scrollbar-width: auto;
+}
+.scrollbar-slim::-webkit-scrollbar {
+    width: var(--scrollbar-width, 8px);
+    height: var(--scrollbar-width, 8px);
+}
+.scrollbar-slim::-webkit-scrollbar-thumb {
+    border-width: 2px;
+    border-radius: 4px;
+}
+.scrollbar-slim::-webkit-scrollbar-button:single-button {
+    display: none;
+}
 
-/* Main chat, network and file viewers stay clean while middle-drag still pans both axes. */
-.middle-pan-scroll { scrollbar-width: none; -ms-overflow-style: none; }
-.middle-pan-scroll::-webkit-scrollbar { display: none; }
-.middle-pan-scroll.middle-pan-active { cursor: grabbing !important; user-select: none; }
+/* Scrollbars stay visible; middle-drag still pans both axes. */
+.middle-pan-scroll.middle-pan-active {
+    cursor: grabbing !important;
+    user-select: none;
+}
 
 /* The narrow sessions drawer uses a compact native scrollbar while keeping the shared arrow buttons. */
 [data-testid='z-drawer'] *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+    width: 8px;
+    height: 8px;
 }
 [data-testid='z-drawer'] *::-webkit-scrollbar-thumb {
-  border-width: 2px;
-  border-radius: 4px;
+    border-width: 2px;
+    border-radius: 4px;
 }
 
 /* z-tree's indent guides run 1px past the last row, which made short trees show a scrollbar.
    Clipping the row container at its own height removes the overflow; real scrolling is untouched. */
 .z-tree > .relative.w-full {
-  overflow: clip;
+    overflow: clip;
 }
 
 /* Resize dividers: a quiet hairline that lights up at its centre on hover or drag and tapers to
    nothing at both ends. */
 .sidebar-shell-animating {
-  overflow: hidden;
-  transition:
-    width 240ms cubic-bezier(0.33, 1, 0.68, 1),
-    min-width 240ms cubic-bezier(0.33, 1, 0.68, 1);
+    overflow: hidden;
+    transition:
+        width 240ms cubic-bezier(0.33, 1, 0.68, 1),
+        min-width 240ms cubic-bezier(0.33, 1, 0.68, 1);
 }
 .sidebar-shell:not(.sidebar-shell-visible) {
-  pointer-events: none;
+    pointer-events: none;
 }
 .tools-shell-animating {
-  overflow: hidden;
-  transition:
-    width 240ms cubic-bezier(0.33, 1, 0.68, 1),
-    min-width 240ms cubic-bezier(0.33, 1, 0.68, 1);
+    overflow: hidden;
+    transition:
+        width 240ms cubic-bezier(0.33, 1, 0.68, 1),
+        min-width 240ms cubic-bezier(0.33, 1, 0.68, 1);
 }
 .tools-shell:not(.tools-shell-visible) {
-  pointer-events: none;
+    pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  .sidebar-shell-animating,
-  .tools-shell-animating { transition: none !important; }
+    .sidebar-shell-animating,
+    .tools-shell-animating {
+        transition: none !important;
+    }
 }
 .agent-divider {
-  position: relative;
+    position: relative;
 }
 .agent-divider::before {
-  content: '';
-  position: absolute;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 180ms ease;
+    content: '';
+    position: absolute;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 180ms ease;
 }
 .agent-divider-v::before {
-  inset: 0 -0.5px;
-  background: linear-gradient(to bottom, transparent 0%, color-mix(in oklab, var(--primary) 85%, transparent) 50%, transparent 100%);
+    inset: 0 -0.5px;
+    background: linear-gradient(
+        to bottom,
+        transparent 0%,
+        color-mix(in oklab, var(--primary) 85%, transparent) 50%,
+        transparent 100%
+    );
 }
 .agent-divider-h::before {
-  inset: -0.5px 0;
-  background: linear-gradient(to right, transparent 0%, color-mix(in oklab, var(--primary) 85%, transparent) 50%, transparent 100%);
+    inset: -0.5px 0;
+    background: linear-gradient(
+        to right,
+        transparent 0%,
+        color-mix(in oklab, var(--primary) 85%, transparent) 50%,
+        transparent 100%
+    );
 }
 .agent-divider:hover::before,
 .agent-divider[data-dragging='true']::before {
-  opacity: 1;
+    opacity: 1;
 }
 
 /* Command palettes (mentions, chat search): compact rows and text. */
 .z-command .z-command-item {
-  padding-block: 0.375rem;
-  font-size: 0.8125rem;
+    padding-block: 0.375rem;
+    font-size: 0.8125rem;
 }
 .z-command .z-command-item .z-icon {
-  width: 14px !important;
-  height: 14px !important;
+    width: 14px !important;
+    height: 14px !important;
 }
 .z-command input {
-  font-size: 0.8125rem;
+    font-size: 0.8125rem;
 }
 .z-command [class*='font-semibold'][class*='text-muted-foreground'] {
-  font-size: 0.6875rem;
-  padding-block: 0.375rem;
+    font-size: 0.6875rem;
+    padding-block: 0.375rem;
 }
 
 /* While a popover is pre-opened at start-up to warm it, nobody should see it. */
 html[data-warming] [data-z-popover] {
-  visibility: hidden !important;
-  animation: none !important;
+    visibility: hidden !important;
+    animation: none !important;
 }
 
 /* A block that appears (first token after the loader, a new command) eases in instead of popping. */
 @keyframes block-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
 }
 .block-in {
-  animation: block-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: block-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @media (prefers-reduced-motion: reduce) {
-  .block-in {
-    animation: none;
-  }
+    .block-in {
+        animation: none;
+    }
 }
 
 /* ---- Markdown in answers ---- */
 .md {
-  font-size: 0.875rem;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
-  /* A wide table scrolls inside its own card (.md-table), instead of widening the whole answer. */
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
+    font-size: 0.875rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+    /* A wide table scrolls inside its own card (.md-table), instead of widening the whole answer. */
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
 }
 /* An answer is drawn block by block (Markdown.svelte); the wrappers take no box, so its spacing is as one document. */
-.md > .md-block { display: contents; }
-.md > :first-child, .md > .md-block:first-child > :first-child { margin-top: 0; }
-.md > :last-child, .md > .md-block:last-child > :last-child { margin-bottom: 0; }
-.md p { margin: 0 0 0.75rem; }
-.md h1, .md h2, .md h3, .md h4 { margin: 1.1rem 0 0.5rem; font-weight: 600; line-height: 1.35; }
-.md h1 { font-size: 1.15rem; }
-.md h2 { font-size: 1.05rem; }
-.md h3, .md h4 { font-size: 0.95rem; }
-.md ul, .md ol { margin: 0 0 0.75rem; padding-left: 1.4rem; }
-.md ul { list-style: disc; }
-.md ol { list-style: decimal; }
-.md li { margin: 0.2rem 0; }
-.md li > p { margin: 0; }
-.md li::marker { color: var(--muted-foreground); }
-.md a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.md > .md-block {
+    display: contents;
+}
+.md > :first-child,
+.md > .md-block:first-child > :first-child {
+    margin-top: 0;
+}
+.md > :last-child,
+.md > .md-block:last-child > :last-child {
+    margin-bottom: 0;
+}
+.md p {
+    margin: 0 0 0.75rem;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+    margin: 1.1rem 0 0.5rem;
+    font-weight: 600;
+    line-height: 1.35;
+}
+.md h1 {
+    font-size: 1.15rem;
+}
+.md h2 {
+    font-size: 1.05rem;
+}
+.md h3,
+.md h4 {
+    font-size: 0.95rem;
+}
+.md ul,
+.md ol {
+    margin: 0 0 0.75rem;
+    padding-left: 1.4rem;
+}
+.md ul {
+    list-style: disc;
+}
+.md ol {
+    list-style: decimal;
+}
+.md li {
+    margin: 0.2rem 0;
+}
+.md li > p {
+    margin: 0;
+}
+.md li::marker {
+    color: var(--muted-foreground);
+}
+.md a {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
 /* A link to a file: bold when the file is there, faded (with a "not found" tooltip) when it is not. No loud error. */
 /* Three dots that rise in turn, for a text that is being read ("Reading accounts…"). Still under reduced motion. */
-.loading-dots span { display: inline-block; animation: loading-dot 1.2s ease-in-out infinite; }
-.loading-dots span:nth-child(2) { animation-delay: 0.2s; }
-.loading-dots span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes loading-dot {
-  0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
-  40% { opacity: 1; transform: translateY(-2px); }
+.loading-dots span {
+    display: inline-block;
+    animation: loading-dot 1.2s ease-in-out infinite;
 }
-@media (prefers-reduced-motion: reduce) { .loading-dots span { animation: none; } }
+.loading-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+.loading-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+@keyframes loading-dot {
+    0%,
+    80%,
+    100% {
+        opacity: 0.2;
+        transform: translateY(0);
+    }
+    40% {
+        opacity: 1;
+        transform: translateY(-2px);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .loading-dots span {
+        animation: none;
+    }
+}
 /* A running chat in the sidebar tree that has not been opened since it started: its label blinks between the text colour
    and the primary, so it is easy to find. A click on it ends the blink (Sidebar.svelte: blinking). */
-.row-running-blink { animation: row-running-blink 1.4s ease-in-out infinite; }
-@keyframes row-running-blink {
-  0%, 100% { color: var(--foreground); }
-  50% { color: var(--primary); }
+.row-running-blink {
+    animation: row-running-blink 1.4s ease-in-out infinite;
 }
-@media (prefers-reduced-motion: reduce) { .row-running-blink { animation: none; color: var(--primary); } }
+@keyframes row-running-blink {
+    0%,
+    100% {
+        color: var(--foreground);
+    }
+    50% {
+        color: var(--primary);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .row-running-blink {
+        animation: none;
+        color: var(--primary);
+    }
+}
 /* A run that ended in a chat not open: its dot lights up and ripples 3 times, then the label rests tinted until the chat
    is opened. The background is !important: the status dot's inline fallback colour would otherwise win. */
 .row-done-dot {
-  position: relative;
-  background-color: var(--primary) !important;
-  animation: row-done-dot 1.4s ease-in-out 3;
+    position: relative;
+    background-color: var(--primary) !important;
+    animation: row-done-dot 1.4s ease-in-out 3;
 }
 /* The ripple is a ring that grows out of the dot and fades. */
 .row-done-dot::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  border: 1px solid var(--primary);
-  animation: row-done-ripple 1.4s ease-out 3;
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border: 1px solid var(--primary);
+    animation: row-done-ripple 1.4s ease-out 3;
 }
 @keyframes row-done-dot {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+    0%,
+    100% {
+        opacity: 0.35;
+    }
+    50% {
+        opacity: 1;
+    }
 }
 @keyframes row-done-ripple {
-  0% { transform: scale(1); opacity: 0.8; }
-  100% { transform: scale(3); opacity: 0; }
+    0% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+    100% {
+        transform: scale(3);
+        opacity: 0;
+    }
 }
 @media (prefers-reduced-motion: reduce) {
-  .row-done-dot, .row-done-dot::after { animation: none; }
+    .row-done-dot,
+    .row-done-dot::after {
+        animation: none;
+    }
 }
-.md a.md-path-ok { font-weight: 600; }
+.md a.md-path-ok {
+    font-weight: 600;
+}
 .md a.md-path-dir::before {
-  content: ''; display: inline-block; width: 1em; height: 1em; margin-right: 0.25em; vertical-align: -0.15em; background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E") center / contain no-repeat;
+    content: '';
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    margin-right: 0.25em;
+    vertical-align: -0.15em;
+    background: currentColor;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E")
+        center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'/%3E%3C/svg%3E")
+        center / contain no-repeat;
 }
-.md a.md-path-missing { opacity: 0.5; text-decoration-style: dotted; cursor: default; }
-.md .md-image-missing { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.6rem; border: 1px dashed var(--border); border-radius: var(--radius-large); color: var(--muted-foreground); font-size: 0.8125rem; }
-.md blockquote { margin: 0 0 0.75rem; padding: 0.1rem 0.9rem; border-left: 3px solid var(--border); color: var(--muted-foreground); }
-.md hr { margin: 1rem 0; border: 0; border-top: 1px solid var(--border); }
+.md a.md-path-missing {
+    opacity: 0.5;
+    text-decoration-style: dotted;
+    cursor: default;
+}
+.md .md-image-missing {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-large);
+    color: var(--muted-foreground);
+    font-size: 0.8125rem;
+}
+.md blockquote {
+    margin: 0 0 0.75rem;
+    padding: 0.1rem 0.9rem;
+    border-left: 3px solid var(--border);
+    color: var(--muted-foreground);
+}
+.md hr {
+    margin: 1rem 0;
+    border: 0;
+    border-top: 1px solid var(--border);
+}
 /* The chat's line between two replies of the agent, and each side of a session line: 1px, fading out at both ends, from
    the theme's own border colour (so it is right in light and dark). Not like the solid rule of a markdown `---`. */
 .chat-rule {
-  height: 1px;
-  flex: 1 1 auto;
-  min-width: 1.5rem;
-  background: linear-gradient(to right, transparent, color-mix(in oklab, var(--border) 85%, transparent) 18%, color-mix(in oklab, var(--border) 85%, transparent) 82%, transparent);
+    height: 1px;
+    flex: 1 1 auto;
+    min-width: 1.5rem;
+    background: linear-gradient(
+        to right,
+        transparent,
+        color-mix(in oklab, var(--border) 85%, transparent) 18%,
+        color-mix(in oklab, var(--border) 85%, transparent) 82%,
+        transparent
+    );
 }
-.md strong { font-weight: 600; }
+.md strong {
+    font-weight: 600;
+}
 .md :not(pre) > code {
-  padding: 0.1rem 0.35rem;
-  border-radius: var(--radius-small);
-  background: var(--muted);
-  font-size: 0.8em;
+    padding: 0.1rem 0.35rem;
+    border-radius: var(--radius-small);
+    background: var(--muted);
+    font-size: 0.8em;
 }
-.md-table { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; margin: 0 0 0.75rem; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; border: 1px solid var(--border); border-radius: var(--radius-large); background: var(--muted); }
-.md-table table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-.md-table th, .md-table td { padding: 0.4rem 0.8rem; text-align: left; border: 0; }
-.md-table th { font-weight: 600; color: var(--muted-foreground); font-size: 0.8125rem; border-bottom: 1px solid var(--border); }
-.md-table tr + tr td { border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent); }
+.md-table {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    margin: 0 0 0.75rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    background: var(--muted);
+}
+.md-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+.md-table th,
+.md-table td {
+    padding: 0.4rem 0.8rem;
+    text-align: left;
+    border: 0;
+}
+.md-table th {
+    font-weight: 600;
+    color: var(--muted-foreground);
+    font-size: 0.8125rem;
+    border-bottom: 1px solid var(--border);
+}
+.md-table tr + tr td {
+    border-top: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
 /* Words stay whole (a "Mức" or "minor" cell does not split into letters), headers stay on one line, the "#" column hugs its
    number, and a long code span (a path) may wrap anywhere, so it does not claim a column of its own. */
-.md-table th { white-space: nowrap; }
-.md-table th, .md-table td { overflow-wrap: normal; word-break: normal; }
+.md-table th {
+    white-space: nowrap;
+}
+.md-table th,
+.md-table td {
+    overflow-wrap: normal;
+    word-break: normal;
+}
 /* The first column hugs its content but still wraps: a long first cell ("CVE-… — text") is cut by its cell's reading width
    instead of running into the next column. */
-.md-table td code { overflow-wrap: anywhere; line-height: 1.4; }
-.md-table th, .md-table td { vertical-align: top; }
+.md-table td code {
+    overflow-wrap: anywhere;
+    line-height: 1.4;
+}
+.md-table th,
+.md-table td {
+    vertical-align: top;
+}
 /* Columns size to their content up to a reading width, then wrap: a long cell no longer takes the whole table and leaves
    the next column a sliver. The table fills the card, and scrolls sideways only when the columns need more. */
-.md-table table { width: max-content; min-width: 100%; }
-.md-cell { max-width: 28rem; min-width: 4rem; }
-.md-table td:first-child .md-cell { max-width: 4rem; min-width: 0; }
-.md-table td:first-child code { overflow-wrap: break-word; white-space: normal; }
-.md img { max-width: 100%; border-radius: var(--radius-large); }
-.md-code { margin: 0 0 0.75rem; overflow: clip; border: 1px solid var(--border); border-radius: var(--radius-large); background: var(--muted); }
-.md-code-head, .md-code-foot { position: relative; display: flex; align-items: center; justify-content: space-between; background: var(--muted); color: var(--muted-foreground); font-size: 0.6875rem; }
-.md-code-head { padding: 0.25rem 0.5rem 0.25rem 0.75rem; border-bottom: 1px solid var(--border); }
-.md-code-foot { justify-content: flex-end; padding: 0.25rem 0.5rem; border-top: 1px solid var(--border); }
-.md-code-kind { display: inline-flex; align-items: center; gap: 0.4rem; height: 1.6rem; color: var(--muted-foreground); }
-.md-code-actions { display: flex; align-items: center; gap: 0.1rem; }
-.md-code-head button, .md-code-foot button { position: relative; display: grid; place-items: center; width: 1.6rem; height: 1.6rem; padding: 0; cursor: pointer; border-radius: var(--radius-small); font: inherit; }
-.md-code-head button:hover, .md-code-foot button:hover { background: var(--accent); color: var(--foreground); }
-.md-code-head button svg, .md-code-foot button svg { grid-area: 1 / 1; transition: opacity 0.18s, transform 0.18s; }
-.md-code-head .ic-check, .md-code-foot .ic-check { opacity: 0; transform: scale(0.4); color: var(--success, #22c55e); }
-.md-table .md-code-head { position: sticky; left: 0; z-index: 1; width: 100%; border-radius: 0; }
+.md-table table {
+    width: max-content;
+    min-width: 100%;
+}
+.md-cell {
+    max-width: 28rem;
+    min-width: 4rem;
+}
+.md-table td:first-child .md-cell {
+    max-width: 4rem;
+    min-width: 0;
+}
+.md-table td:first-child code {
+    overflow-wrap: break-word;
+    white-space: normal;
+}
+.md img {
+    max-width: 100%;
+    border-radius: var(--radius-large);
+}
+.md-code {
+    margin: 0 0 0.75rem;
+    overflow: clip;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-large);
+    background: var(--muted);
+}
+.md-code-head,
+.md-code-foot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    font-size: 0.6875rem;
+}
+.md-code-head {
+    padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+.md-code-foot {
+    justify-content: flex-end;
+    padding: 0.25rem 0.5rem;
+    border-top: 1px solid var(--border);
+}
+.md-code-kind {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 1.6rem;
+    color: var(--muted-foreground);
+}
+.md-code-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.1rem;
+}
+.md-code-head button,
+.md-code-foot button {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    padding: 0;
+    cursor: pointer;
+    border-radius: var(--radius-small);
+    font: inherit;
+}
+.md-code-head button:hover,
+.md-code-foot button:hover {
+    background: var(--accent);
+    color: var(--foreground);
+}
+.md-code-head button svg,
+.md-code-foot button svg {
+    grid-area: 1 / 1;
+    transition:
+        opacity 0.18s,
+        transform 0.18s;
+}
+.md-code-head .ic-check,
+.md-code-foot .ic-check {
+    opacity: 0;
+    transform: scale(0.4);
+    color: var(--success, #22c55e);
+}
+.md-table .md-code-head {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: 100%;
+    border-radius: 0;
+}
 
 /* Running labels (Thinking, Reasoning, Working, a Shimmer status) read at the size of the streamed answer. One place: a
    component that shows such a label uses this class, not its own size. */
-.stream-label { font-size: var(--text-sm); line-height: var(--text-sm--line-height); }
-.md-code-head button[data-copied] .ic-copy, .md-code-foot button[data-copied] .ic-copy { opacity: 0; transform: scale(0.4); }
-.md-code-head button[data-copied] .ic-check, .md-code-foot button[data-copied] .ic-check { opacity: 1; transform: scale(1); }
-.md-code-head .ic-check path, .md-code-foot .ic-check path { stroke-dasharray: 24; stroke-dashoffset: 24; }
-.md-code-head button[data-copied] .ic-check path, .md-code-foot button[data-copied] .ic-check path { animation: md-check-draw 0.35s ease-out 0.05s forwards; }
-@keyframes md-check-draw { to { stroke-dashoffset: 0; } }
-.md-code pre { margin: 0; padding: 0.7rem 0.85rem; overflow-x: auto; background: transparent; }
-.md-code code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.78rem; line-height: 1.6; white-space: pre; }
-.md-code-lang { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.7rem; color: var(--muted-foreground); }
+.stream-label {
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+}
+.md-code-head button[data-copied] .ic-copy,
+.md-code-foot button[data-copied] .ic-copy {
+    opacity: 0;
+    transform: scale(0.4);
+}
+.md-code-head button[data-copied] .ic-check,
+.md-code-foot button[data-copied] .ic-check {
+    opacity: 1;
+    transform: scale(1);
+}
+.md-code-head .ic-check path,
+.md-code-foot .ic-check path {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+}
+.md-code-head button[data-copied] .ic-check path,
+.md-code-foot button[data-copied] .ic-check path {
+    animation: md-check-draw 0.35s ease-out 0.05s forwards;
+}
+@keyframes md-check-draw {
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+.md-code pre {
+    margin: 0;
+    padding: 0.7rem 0.85rem;
+    overflow-x: auto;
+    background: transparent;
+}
+.md-code code {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    white-space: pre;
+}
+.md-code-lang {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.7rem;
+    color: var(--muted-foreground);
+}
 /* Table rows: a light stripe and a hover tint, so a wide table is easy to follow across. */
-.md-table tbody tr:nth-child(even) td { background: color-mix(in oklab, var(--muted) 35%, transparent); }
-.md-table tbody tr:hover td { background: color-mix(in oklab, var(--primary) 7%, transparent); }
+.md-table tbody tr:nth-child(even) td {
+    background: color-mix(in oklab, var(--muted) 35%, transparent);
+}
+.md-table tbody tr:hover td {
+    background: color-mix(in oklab, var(--primary) 7%, transparent);
+}
 /* A code block or table shown as its answer arrives rises in; table rows follow one after another (--row). */
-.md-reveal { animation: md-block-in 320ms ease-out both; }
-.md-reveal tbody tr { animation: md-block-in 320ms ease-out both; animation-delay: calc(var(--row, 0) * 45ms); }
+.md-reveal {
+    animation: md-block-in 320ms ease-out both;
+}
+.md-reveal tbody tr {
+    animation: md-block-in 320ms ease-out both;
+    animation-delay: calc(var(--row, 0) * 45ms);
+}
 @keyframes md-block-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: none; }
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
 }
 @media (prefers-reduced-motion: reduce) {
-  .md-reveal, .md-reveal tbody tr { animation: none; }
+    .md-reveal,
+    .md-reveal tbody tr {
+        animation: none;
+    }
 }
 
 /* Chat opening: an edge-to-edge hairline on a faint primary track; two comet bars with soft tails chase each other.
    It shows at once and the bars start mid-way (negative delays), so even a short load is seen. Only `transform` and
    `opacity` move, so the compositor runs it and a busy main thread (the chat being laid out) does not stall it. */
-.chat-loading { opacity: 0; background: color-mix(in oklab, var(--primary) 12%, transparent); animation: chat-loading-in 0.12s ease-out forwards; }
-.chat-loading-bar {
-  position: absolute; inset-block: 0; left: 0; width: 45%; border-radius: 9999px; will-change: transform;
-  background: linear-gradient(90deg, transparent, var(--primary) 45%, color-mix(in oklab, var(--primary) 55%, white) 80%, transparent);
-  box-shadow: 0 0 8px color-mix(in oklab, var(--primary) 60%, transparent);
-  animation: chat-loading-slide 1.4s cubic-bezier(0.65, 0.05, 0.35, 1) -0.45s infinite;
+.chat-loading {
+    opacity: 0;
+    background: color-mix(in oklab, var(--primary) 12%, transparent);
+    animation: chat-loading-in 0.12s ease-out forwards;
 }
-.chat-loading-bar-trail { width: 22%; opacity: 0.65; animation-name: chat-loading-slide-trail; animation-delay: -1.15s; }
-@keyframes chat-loading-in { to { opacity: 1; } }
+.chat-loading-bar {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: 45%;
+    border-radius: 9999px;
+    will-change: transform;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--primary) 45%,
+        color-mix(in oklab, var(--primary) 55%, white) 80%,
+        transparent
+    );
+    box-shadow: 0 0 8px color-mix(in oklab, var(--primary) 60%, transparent);
+    animation: chat-loading-slide 1.4s cubic-bezier(0.65, 0.05, 0.35, 1) -0.45s
+        infinite;
+}
+.chat-loading-bar-trail {
+    width: 22%;
+    opacity: 0.65;
+    animation-name: chat-loading-slide-trail;
+    animation-delay: -1.15s;
+}
+@keyframes chat-loading-in {
+    to {
+        opacity: 1;
+    }
+}
 /* translateX is in the bar's own width: 45% wide crosses the track in -100% → 100/45 ≈ 223%; 22% wide → 455%. */
-@keyframes chat-loading-slide { from { transform: translateX(-100%); } to { transform: translateX(223%); } }
-@keyframes chat-loading-slide-trail { from { transform: translateX(-100%); } to { transform: translateX(455%); } }
-@media (prefers-reduced-motion: reduce) { .chat-loading-bar { animation: none; width: 100%; opacity: 0.5; } .chat-loading-bar-trail { display: none; } }
+@keyframes chat-loading-slide {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(223%);
+    }
+}
+@keyframes chat-loading-slide-trail {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(455%);
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat-loading-bar {
+        animation: none;
+        width: 100%;
+        opacity: 0.5;
+    }
+    .chat-loading-bar-trail {
+        display: none;
+    }
+}
 
 /* No focus outlines on the tree rows and the chat ruler: the selected row and hover already show where you are. */
 .z-tree [role='treeitem']:focus,
 .z-tree [role='treeitem']:focus-visible,
 .z-chat-navigator-viewport:focus,
 .z-chat-navigator-viewport:focus-visible {
-  outline: none !important;
-  box-shadow: none !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
 .z-tree [role='treeitem'] button:focus,
 .z-tree [role='treeitem'] button:focus-visible {
-  outline: none !important;
-  box-shadow: none !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
 
 /* Blocks inside a list item (a code card under "1. Do this:") get the same breathing room as elsewhere. */
-.md li > * + * { margin-top: 0.5rem; }
-.md li > .md-code, .md li > .md-table { margin-bottom: 0.5rem; }
-.md li > ul, .md li > ol { margin-bottom: 0; }
+.md li > * + * {
+    margin-top: 0.5rem;
+}
+.md li > .md-code,
+.md li > .md-table {
+    margin-bottom: 0.5rem;
+}
+.md li > ul,
+.md li > ol {
+    margin-bottom: 0;
+}
 
 /* Tooltips: z-ui draws them as a dark card now; only the arrow is dropped and the text kept to one line. */
 .z-tooltip-host.z-tooltip > div:not(:last-child) {
-  display: none; /* the arrow */
+    display: none; /* the arrow */
 }
 .z-tooltip-host.z-tooltip,
 .z-tooltip-host.z-tooltip > div:last-child {
-  /* Follows the theme: the popover surface of light or dark mode. */
-  background-color: var(--popover) !important;
-  color: var(--popover-foreground) !important;
-  border-color: var(--border) !important;
+    /* Follows the theme: the popover surface of light or dark mode. */
+    background-color: var(--popover) !important;
+    color: var(--popover-foreground) !important;
+    border-color: var(--border) !important;
 }
 .z-tooltip-host.z-tooltip > div:last-child {
-  padding: 0.3rem 0.6rem !important;
-  font-size: 0.75rem;
-  font-weight: 500;
-  line-height: 1.4;
-  white-space: nowrap;
+    padding: 0.3rem 0.6rem !important;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.4;
+    white-space: nowrap;
 }
 /* The card fits its text: one line up to a point, then wrapped (z-ui sizes the box before our padding). */
 .z-tooltip-host.z-tooltip {
-  width: max-content !important;
-  max-width: min(420px, calc(100vw - 16px)) !important;
+    width: max-content !important;
+    max-width: min(420px, calc(100vw - 16px)) !important;
 }
 .z-tooltip-host.z-tooltip > div:last-child {
-  white-space: pre-line;
+    white-space: pre-line;
 }
 
 /* The app is one screen, never a scrolling page: z-ui reserves a scrollbar gutter on <html>, which left a 10px strip
    at the right edge. */
 html,
 body {
-  scrollbar-gutter: auto;
-  overflow: hidden;
+    scrollbar-gutter: auto;
+    overflow: hidden;
 }
 
 /* "Show more" under a long block: a smaller button with smaller text. */
 .z-show-more > .justify-center button {
-  height: 1.5rem !important;
-  padding-inline: 0.625rem !important;
-  font-size: 11px !important;
-  line-height: 1 !important;
+    height: 1.5rem !important;
+    padding-inline: 0.625rem !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
 }
 .z-show-more > .justify-center button svg {
-  width: 12px !important;
-  height: 12px !important;
+    width: 12px !important;
+    height: 12px !important;
 }
 
 /* The terminal draws its own 14px scrollbar (xterm 6): slimmed to match the app's. */
 /* The padding of the text is the terminal's own (the fit counts it), so its scrollbar sits flush against the panel's right edge. */
 /* Top and bottom padding is the room of the scroll arrows (Terminal.svelte), 10px like the app's scrollbar buttons. */
-.xterm { padding: 10px 0 10px 12px; }
+.xterm {
+    padding: 10px 0 10px 12px;
+}
 /* xterm paints its scroll area black by default: it would show in the padding (and in a light theme). */
-.xterm .xterm-viewport { background-color: transparent !important; }
-.xterm .xterm-scrollable-element > .scrollbar.vertical { width: 12px !important; }
-.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider { width: 7px !important; left: 3px !important; border-radius: 3px; }
+.xterm .xterm-viewport {
+    background-color: transparent !important;
+}
+.xterm .xterm-scrollable-element > .scrollbar.vertical {
+    width: 12px !important;
+}
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+    width: 7px !important;
+    left: 3px !important;
+    border-radius: 3px;
+}
 
 /* Match OverlayScrollbars (dialogs, settings, drawers) to the chat's 12px track and 6px thumb. */
-.os-theme-z.os-theme-z { --os-size: 12px; --os-padding-perpendicular: 3px; --os-padding-axis: 12px; }
+.os-theme-z.os-theme-z {
+    --os-size: 12px;
+    --os-padding-perpendicular: 3px;
+    --os-padding-axis: 12px;
+}
 
 /* OverlayScrollbars hides its reserved axis padding; use it for the same arrow buttons as native scrollbars. */
 .os-theme-z.os-scrollbar-vertical::before,
 .os-theme-z.os-scrollbar-vertical::after,
 .os-theme-z.os-scrollbar-horizontal::before,
 .os-theme-z.os-scrollbar-horizontal::after {
-  position: absolute;
-  z-index: 2;
-  display: block;
-  content: '';
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 8px 8px;
-  opacity: 0.7;
-  pointer-events: auto;
-  cursor: pointer;
+    position: absolute;
+    z-index: 2;
+    display: block;
+    content: '';
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 8px 8px;
+    opacity: 0.7;
+    pointer-events: auto;
+    cursor: pointer;
 }
 .os-theme-z.os-scrollbar-vertical::before,
 .os-theme-z.os-scrollbar-vertical::after {
-  right: 0;
-  left: 0;
-  height: 12px;
+    right: 0;
+    left: 0;
+    height: 12px;
 }
 .os-theme-z.os-scrollbar-vertical::before {
-  top: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 5.2 4 2.8 6.5 5.2' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    top: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 5.2 4 2.8 6.5 5.2' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 .os-theme-z.os-scrollbar-vertical::after {
-  bottom: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 2.8 4 5.2 6.5 2.8' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    bottom: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 2.8 4 5.2 6.5 2.8' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 .os-theme-z.os-scrollbar-horizontal::before,
 .os-theme-z.os-scrollbar-horizontal::after {
-  top: 0;
-  bottom: 0;
-  width: 12px;
+    top: 0;
+    bottom: 0;
+    width: 12px;
 }
 .os-theme-z.os-scrollbar-horizontal::before {
-  left: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M5.2 1.5 2.8 4 5.2 6.5' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    left: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M5.2 1.5 2.8 4 5.2 6.5' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 .os-theme-z.os-scrollbar-horizontal::after {
-  right: 0;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M2.8 1.5 5.2 4 2.8 6.5' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    right: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M2.8 1.5 5.2 4 2.8 6.5' fill='none' stroke='%238b8b93' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 .os-theme-z.os-scrollbar-vertical:hover::before,
 .os-theme-z.os-scrollbar-vertical:hover::after,
 .os-theme-z.os-scrollbar-horizontal:hover::before,
-.os-theme-z.os-scrollbar-horizontal:hover::after { opacity: 1; }
+.os-theme-z.os-scrollbar-horizontal:hover::after {
+    opacity: 1;
+}
 
 /* ZTree owns native scrolling, including in the recent drawer; match the chat's 12px track. */
-.z-tree::-webkit-scrollbar { width: 12px; height: 12px; }
-.z-tree::-webkit-scrollbar-track { background: transparent; }
-.z-tree::-webkit-scrollbar-thumb {
-  background-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
-  border: 3px solid transparent;
-  border-radius: 6px;
-  background-clip: padding-box;
+.z-tree::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
 }
-.z-tree::-webkit-scrollbar-thumb:hover { background-color: color-mix(in oklab, var(--muted-foreground) 50%, transparent); }
+.z-tree::-webkit-scrollbar-track {
+    background: transparent;
+}
+.z-tree::-webkit-scrollbar-thumb {
+    background-color: color-mix(
+        in oklab,
+        var(--muted-foreground) 30%,
+        transparent
+    );
+    border: 3px solid transparent;
+    border-radius: 6px;
+    background-clip: padding-box;
+}
+.z-tree::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(
+        in oklab,
+        var(--muted-foreground) 50%,
+        transparent
+    );
+}
 
 /* Ctrl+F (FindBar.svelte): every match, and the current one stronger. */
-::highlight(find-all) { background-color: color-mix(in oklab, var(--primary) 28%, transparent); }
-::highlight(find-current) { background-color: color-mix(in oklab, var(--primary) 70%, transparent); color: var(--primary-foreground); }
+::highlight(find-all) {
+    background-color: color-mix(in oklab, var(--primary) 28%, transparent);
+}
+::highlight(find-current) {
+    background-color: color-mix(in oklab, var(--primary) 70%, transparent);
+    color: var(--primary-foreground);
+}
 
 /* Show more / Show less opens a little slower than the library default (300ms). */
-.z-show-more > [id][class*="transition-[max-height]"] {
-  transition-duration: 350ms;
+.z-show-more > [id][class*='transition-[max-height]'] {
+    transition-duration: 350ms;
 }
 
 /* The hover box of a list (zHoverGlide) is left where the last hovered row was, invisible. When the list then gets
    shorter (another provider's models, a search) that old place lies below the new end and makes the list scroll for
    no reason, until the box moves again. Hidden, it waits at the top; it is placed again on the next hover. */
-[data-z-hover-glide-highlight][style*="opacity: 0;"] {
-  transform: none !important;
-  top: 0 !important;
-  left: 0 !important;
+[data-z-hover-glide-highlight][style*='opacity: 0;'] {
+    transform: none !important;
+    top: 0 !important;
+    left: 0 !important;
 }
 
 /* Theme swap (theme.svelte.ts): nothing eases between the old and new colours, so the window flips in one frame. */
-.theme-switching *, .theme-switching *::before, .theme-switching *::after { transition: none !important; }
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+    transition: none !important;
+}
 
 /* The finished chat label blinks with the dot so the completion is visible in the text too. */
-.row-done-blink { animation: row-done-blink 1.4s ease-in-out 3; }
+.row-done-blink {
+    animation: row-done-blink 1.4s ease-in-out 3;
+}
 @keyframes row-done-blink {
-  0%, 100% { color: var(--primary); }
-  50% { color: var(--foreground); }
+    0%,
+    100% {
+        color: var(--primary);
+    }
+    50% {
+        color: var(--foreground);
+    }
 }
 @media (prefers-reduced-motion: reduce) {
-  .row-done-blink { animation: none; color: var(--primary); }
+    .row-done-blink {
+        animation: none;
+        color: var(--primary);
+    }
 }
