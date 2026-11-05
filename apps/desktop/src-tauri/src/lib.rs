@@ -799,6 +799,21 @@ fn artifacts_list(root: String) -> Result<Vec<artifacts::ArtifactListItem>, Stri
 }
 
 #[tauri::command]
+fn artifacts_page(
+    root: String,
+    query: String,
+    cursor: Option<usize>,
+    limit: Option<usize>,
+) -> Result<artifacts::ArtifactPage, String> {
+    artifacts::page(
+        Path::new(&root),
+        &query,
+        cursor.unwrap_or(0),
+        limit.unwrap_or(50),
+    )
+}
+
+#[tauri::command]
 fn artifacts_read(
     root: String,
     id: String,
@@ -2772,6 +2787,7 @@ pub fn run() {
             plans_set_step,
             plans_save,
             artifacts_list,
+            artifacts_page,
             artifacts_read,
             artifacts_create,
             artifacts_delete,

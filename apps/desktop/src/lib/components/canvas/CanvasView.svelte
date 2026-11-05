@@ -16,8 +16,10 @@
     import Markdown from '../ui/Markdown.svelte';
     import {
         loadArtifacts,
+        loadMoreArtifacts,
         readArtifact,
         selectArtifact,
+        setArtifactQuery,
         stateFor,
         type ArtifactInfo,
     } from '../../canvas/canvas.svelte';
@@ -30,6 +32,7 @@
     let versionAnchor = $state<HTMLElement | null>(null);
     let codeMode = $state(false);
     let saving = $state(false);
+    let artifactQuery = $state('');
     const activeRoot = $derived(
         activeSession() ? sessionCwd(activeSession()!) : null,
     );
@@ -49,6 +52,9 @@
             ? stateFor(root)
             : {
                   items: [],
+                  query: '',
+                  cursor: null,
+                  paging: false,
                   selected: '',
                   version: null,
                   content: '',
@@ -101,6 +107,9 @@
     });
     $effect(() => {
         if (root) void loadArtifacts(root);
+    });
+    $effect(() => {
+        if (root) setArtifactQuery(root, artifactQuery);
     });
     function picked(item: PickerItem<ArtifactInfo>) {
         if (root) selectArtifact(root, item.data.id);
@@ -208,14 +217,16 @@
         <PickerPopover
             anchor={artifactAnchor}
             bind:open={artifactOpen}
+            bind:query={artifactQuery}
             items={artifactItems}
             size="md"
             search
-            local
             width={260}
             label="Artifacts"
-            empty="No artifacts yet"
+            empty={artifactQuery ? 'No matching artifacts' : 'No artifacts yet'}
+            loading={artifactState.loading}
             position="bottom-left"
+            onmore={() => root && void loadMoreArtifacts(root)}
             onpick={picked}
         />
         <ZButton

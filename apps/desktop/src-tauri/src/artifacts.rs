@@ -471,6 +471,43 @@ pub fn list(root: &Path) -> Result<Vec<ArtifactListItem>, String> {
     Ok(items)
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactPage {
+    pub items: Vec<ArtifactListItem>,
+    /// Where the next page starts (an offset into the matching, newest-first list), or none at the end.
+    pub next_cursor: Option<usize>,
+}
+
+/// One page of the artifacts whose title, kind, language, agent or id contains `query` (any case), newest first.
+/// The search runs over the whole folder, so a page is never a filter of the rows read before it.
+pub fn page(root: &Path, query: &str, cursor: usize, limit: usize) -> Result<ArtifactPage, String> {
+    let needle = query.trim().to_lowercase();
+    let matching: Vec<ArtifactListItem> = list(root)?
+        .into_iter()
+        .filter(|item| {
+            needle.is_empty()
+                || [
+                    &item.title,
+                    &item.kind,
+                    &item.language,
+                    &item.agent,
+                    &item.id,
+                ]
+                .iter()
+                .any(|field| field.to_lowercase().contains(&needle))
+        })
+        .collect();
+    let limit = limit.clamp(1, 200);
+    let end = cursor.saturating_add(limit).min(matching.len());
+    let items = matching
+        .get(cursor.min(matching.len())..end)
+        .unwrap_or_default()
+        .to_vec();
+    let next_cursor = (end < matching.len()).then_some(end);
+    Ok(ArtifactPage { items, next_cursor })
+}
+
 pub fn read(root: &Path, id: &str, version: Option<u32>) -> Result<(ArtifactInfo, String), String> {
     let (dir, meta) = read_meta(root, id)?;
     let version = match version {
@@ -627,6 +664,30 @@ mod tests {
         let (v2, _) = update(&root, &meta.id, "second", "edit", Some(1)).expect("update");
         assert_eq!(v2.versions.len(), 2);
         assert_eq!(read(&root, &meta.id, None).expect("latest").1, "second");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn pages_and_searches_the_whole_folder() {
+        let root = temp();
+        for title in ["Alpha chart", "Beta page", "Gamma chart"] {
+            create(&root, title, "svg", "<svg/>", "", "", "").expect("create");
+        }
+        let first = page(&root, "", 0, 2).expect("first page");
+        assert_eq!(first.items.len(), 2);
+        assert_eq!(first.next_cursor, Some(2));
+        let last = page(&root, "", 2, 2).expect("last page");
+        assert_eq!(last.items.len(), 1);
+        assert_eq!(last.next_cursor, None);
+        assert_eq!(page(&root, "CHART", 0, 50).expect("search").items.len(), 2);
+        let beta = page(&root, "beta", 0, 50).expect("search");
+        assert_eq!(beta.items.len(), 1);
+        assert_eq!(beta.items[0].title, "Beta page");
+        assert!(page(&root, "nothing", 0, 50)
+            .expect("none")
+            .items
+            .is_empty());
+        assert!(page(&root, "", 99, 50).expect("past end").items.is_empty());
         let _ = fs::remove_dir_all(root);
     }
     #[test]
