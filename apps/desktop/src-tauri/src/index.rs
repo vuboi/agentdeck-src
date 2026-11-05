@@ -52,6 +52,8 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 /// Seconds a stored index may go unused before housekeeping deletes it.
 const STALE_AFTER: u64 = 30 * 24 * 3600;
+/// A project with no activity for this long loses its index; it is rebuilt when the project is used again.
+const IDLE_AFTER: u64 = 7 * 24 * 3600;
 /// `last_used` is written at most once a day, so a burst of tool calls does not write on every call.
 const TOUCH_EVERY: u64 = 24 * 3600;
 
@@ -186,19 +188,35 @@ fn cleanup_in(folder: &Path, now: std::time::SystemTime) -> usize {
             .ok()
             .and_then(|time| now.duration_since(time).ok())
             .map_or(0, |age| age.as_secs());
-        // A project's index is kept as long as its folder exists: it is a cache of the project, and rebuilding it costs a
-        // full walk. Deleted only when the folder is gone or no longer counts as a project.
-        let stored: Option<String> =
-            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-                .ok()
-                .and_then(|conn| {
-                    conn.query_row("SELECT value FROM meta WHERE key = 'root'", [], |row| {
+        // A project's index is a cache: it is deleted when its folder is gone or no longer a project, or when the project
+        // has had no activity for `IDLE_AFTER` (its `last_used`, written at most once a day). Rebuilding it costs one walk.
+        let record = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .ok()
+            .and_then(|conn| {
+                let root: Option<String> = conn
+                    .query_row("SELECT value FROM meta WHERE key = 'root'", [], |row| {
                         row.get(0)
                     })
+                    .ok();
+                let used: Option<u64> = conn
+                    .query_row(
+                        "SELECT value FROM meta WHERE key = 'last_used'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )
                     .ok()
-                });
-        let stale = match stored {
-            Some(root) => !Path::new(&root).is_dir() || refusal(&root).is_some(),
+                    .and_then(|value| value.parse().ok());
+                root.map(|root| (root, used))
+            });
+        let stale = match record {
+            Some((root, used)) => {
+                let idle = match used {
+                    Some(last) => now_secs().saturating_sub(last) > IDLE_AFTER,
+                    // Without `last_used`, the file's age decides.
+                    None => modified_age > STALE_AFTER,
+                };
+                idle || !Path::new(&root).is_dir() || refusal(&root).is_some()
+            }
             // No record of its folder (written before the `meta` table): the file's age decides.
             None => modified_age > STALE_AFTER,
         };
@@ -1286,7 +1304,7 @@ mod tests {
         std::fs::create_dir_all(folder.join("live-project")).expect("project");
         std::fs::write(folder.join("live-project").join("Cargo.toml"), "[package]")
             .expect("manifest");
-        // Unused for a long time, but its folder exists: a project's index is kept.
+        // Idle for a long time (7 days): its index goes; the folder stays and the index is rebuilt on use.
         let old = folder.join("old.db");
         let conn = Connection::open(&old).expect("db");
         conn.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
@@ -1299,9 +1317,9 @@ mod tests {
         drop(conn);
 
         let removed = cleanup_in(&folder, now);
-        assert_eq!(removed, 1);
+        assert_eq!(removed, 2);
         assert!(!gone.exists());
-        assert!(old.exists());
+        assert!(!old.exists());
         assert!(live.exists());
         let _ = std::fs::remove_dir_all(&folder);
     }
