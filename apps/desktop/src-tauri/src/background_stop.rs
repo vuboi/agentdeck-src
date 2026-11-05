@@ -14,9 +14,7 @@ struct ProcessRow {
 /// True when a process running `command` under the CLI of `chat` was found and ended.
 #[tauri::command]
 pub async fn stop_background_command(chat: String, command: String) -> Result<bool, String> {
-    tauri::async_runtime::spawn_blocking(move || stop_background(&chat, &command))
-        .await
-        .map_err(|error| error.to_string())?
+    stop_background(&chat, &command)
 }
 
 fn stop_background(chat: &str, command: &str) -> Result<bool, String> {
