@@ -136,6 +136,7 @@ pub(super) fn load(path: &Path) -> std::io::Result<Vec<HistoryMessage>> {
         {
             let args = call.get("args").cloned().unwrap_or(Value::Null);
             answer.blocks.push(HistoryBlock::Command {
+                id: None,
                 command: describe_tool(str_of(call, "name"), &args),
                 output: String::new(),
                 status: "ok".into(),

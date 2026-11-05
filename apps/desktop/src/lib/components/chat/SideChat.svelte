@@ -1,6 +1,4 @@
 <script lang="ts">
-    import { ZIcon } from '@shival99/z-ui-svelte';
-    import type { ZIconName } from '@shival99/z-ui-svelte';
     import { theme } from '../../app/ui/theme.svelte';
     import { hollow } from '../../chat/content/chat-dividers';
     import type { Message } from '../../chat/mock';
@@ -10,6 +8,7 @@
     } from '../../chat/runs/child-agents';
     import { messagesView } from '../../chat/session/run.svelte';
     import { workspace } from '../../chat/sessions.svelte';
+    import DevEmpty from '../browser/DevEmpty.svelte';
     import AssistantMessage from './AssistantMessage.svelte';
     import UserMessage from './UserMessage.svelte';
 
@@ -37,6 +36,7 @@
                     messagesView(agent.parentId),
                     source.messageId,
                     source.callId,
+                    agent.kind,
                 ),
                 live: agent.state === 'running',
                 agent: agent.agent as Message['agent'],
@@ -106,14 +106,12 @@
                 {/if}
             </article>
         {:else}
-            <div
-                class="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
-            >
-                <ZIcon
-                    zType={'lucideBot' as ZIconName}
-                    class="size-8 opacity-60"
+            <div class="flex flex-1 items-center justify-center">
+                <DevEmpty
+                    icon="lucideMessageSquareMore"
+                    title="Waiting for output"
+                    hint="Replies and tool calls appear here as the agent works."
                 />
-                <p class="m-0 text-sm">No output yet.</p>
             </div>
         {/each}
     </div>

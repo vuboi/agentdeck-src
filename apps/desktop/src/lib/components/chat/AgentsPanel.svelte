@@ -36,13 +36,17 @@
     const finished = $derived(
         agents.filter((agent) => !isWorkActive(agent.work)),
     );
-    // The grid shows running agents only: the ones ticked in its picker, else the first ones running.
+    // The grid shows the ones ticked in its picker (running or finished), else every agent, running first, up to
+    // GRID_MAX. A finished agent stays until it is removed, so its reply can still be read.
     const gridAgents = $derived.by(() => {
-        const picked = running.filter((agent) =>
+        const picked = agents.filter((agent) =>
             agentView.picked.includes(agent.id),
         );
-        return picked.length ? picked : running.slice(0, GRID_MAX);
+        return picked.length
+            ? picked
+            : [...running, ...finished].slice(0, GRID_MAX);
     });
+    const gridIds = $derived(gridAgents.map((agent) => agent.id));
     // Each group folds away under its heading, like the days of the Tasks view.
     const folded = $state({ running: false, finished: false });
     // A single view with no agent to show falls back to the list.
@@ -96,15 +100,15 @@
     let pickerOpen = $state(false);
     let pickerAnchor: HTMLElement | null = $state(null);
     const pickerItems = $derived<PickerItem<string>[]>(
-        running.map((agent) => {
-            const on = agentView.picked.includes(agent.id);
+        [...running, ...finished].map((agent) => {
+            const on = gridIds.includes(agent.id);
             return {
                 id: agent.id,
                 label: agent.title,
                 hint: agent.model ? modelLabel(agent.model) : undefined,
                 agent: (agent.agent ?? undefined) as Agent | undefined,
                 selected: on,
-                disabled: !on && agentView.picked.length >= GRID_MAX,
+                disabled: !on && gridIds.length >= GRID_MAX,
                 data: agent.id,
             };
         }),
@@ -232,10 +236,10 @@
                 width={280}
                 tooltip="left"
                 label="Agents in the grid"
-                empty="No sub agent is running"
+                empty="No sub agents"
                 emptyIcon={'lucideInbox' as ZIconName}
                 footer="Up to {GRID_MAX} at once"
-                onpick={(item) => toggleGridAgent(item.data)}
+                onpick={(item) => toggleGridAgent(item.data, gridIds)}
             />
         {/if}
         <button
@@ -271,9 +275,12 @@
         {/if}
     {:else if mode === 'grid'}
         {#if gridAgents.length}
+            <!-- Up to four cells share the height; more scroll, each keeping a readable height. -->
             <div
-                class="grid min-h-0 flex-1 auto-rows-fr gap-2 p-2 {gridAgents.length >
-                1
+                class="grid min-h-0 flex-1 gap-2 overflow-y-auto p-2 {gridAgents.length >
+                4
+                    ? 'auto-rows-64'
+                    : 'auto-rows-fr'} {gridAgents.length > 1
                     ? 'grid-cols-2'
                     : 'grid-cols-1'}"
             >
@@ -298,7 +305,8 @@
                                 class={ICON_BUTTON}
                                 aria-label="Remove from grid"
                                 title="Remove from grid"
-                                onclick={() => toggleGridAgent(agent.id)}
+                                onclick={() =>
+                                    toggleGridAgent(agent.id, gridIds)}
                             >
                                 <ZIcon
                                     zType={'lucideX' as ZIconName}
@@ -311,10 +319,7 @@
                 {/each}
             </div>
         {:else}
-            {@render empty(
-                'lucideLayoutGrid',
-                'No sub agent is running. Running ones show here.',
-            )}
+            {@render empty('lucideLayoutGrid', 'No sub agents in this chat.')}
         {/if}
     {:else if agents.length}
         <div class="min-h-0 flex-1 overflow-y-auto">
@@ -346,7 +351,7 @@
                     <div class="p-1">
                         {#each finished as agent (agent.id)}{@render listRow(
                                 agent,
-                                false,
+                                true,
                             )}{/each}
                     </div>
                 {/if}
@@ -390,36 +395,41 @@
     </button>
 {/snippet}
 
-<!-- One agent of the list; only a running one can join the grid. -->
+<!-- One agent of the list; any agent can join the grid. -->
 {#snippet listRow(agent: ChildAgent, canGrid: boolean)}
-    {@const inGrid = agentView.picked.includes(agent.id)}
-    <div class="flex items-center gap-1 rounded-md pr-1 hover:bg-primary/10">
-        <button
-            type="button"
-            class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2 py-1.5 text-left outline-none"
-            onclick={() => open(agent.id)}
+    {@const inGrid = gridIds.includes(agent.id)}
+    <!-- The divider belongs to the wrapper, with room around the row, so the hover box never touches it. -->
+    <div class="border-b border-border py-1 last:border-b-0">
+        <div
+            class="flex items-center gap-1 rounded-md pr-1 hover:bg-primary/10"
         >
-            {@render name(agent)}
-        </button>
-        {@render stop(agent)}
-        {#if canGrid}
             <button
                 type="button"
-                class="{ICON_BUTTON} {inGrid ? ICON_ON : ''}"
-                aria-label={inGrid ? 'Remove from grid' : 'Add to grid'}
-                aria-pressed={inGrid}
-                title={inGrid
-                    ? 'Remove from grid'
-                    : `Add to grid (up to ${GRID_MAX})`}
-                onclick={() => toggleGridAgent(agent.id)}
+                class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 px-2 py-2.5 text-left outline-none"
+                onclick={() => open(agent.id)}
             >
-                <ZIcon
-                    zType={(inGrid
-                        ? 'lucideGrid2x2Check'
-                        : 'lucideGrid2x2Plus') as ZIconName}
-                    class="size-3.5"
-                />
+                {@render name(agent)}
             </button>
-        {/if}
+            {@render stop(agent)}
+            {#if canGrid}
+                <button
+                    type="button"
+                    class="{ICON_BUTTON} {inGrid ? ICON_ON : ''}"
+                    aria-label={inGrid ? 'Remove from grid' : 'Add to grid'}
+                    aria-pressed={inGrid}
+                    title={inGrid
+                        ? 'Remove from grid'
+                        : `Add to grid (up to ${GRID_MAX})`}
+                    onclick={() => toggleGridAgent(agent.id, gridIds)}
+                >
+                    <ZIcon
+                        zType={(inGrid
+                            ? 'lucideGrid2x2Check'
+                            : 'lucideGrid2x2Plus') as ZIconName}
+                        class="size-3.5"
+                    />
+                </button>
+            {/if}
+        </div>
     </div>
 {/snippet}

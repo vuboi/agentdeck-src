@@ -290,6 +290,7 @@ pub(super) fn load(path: &Path) -> std::io::Result<Vec<HistoryMessage>> {
                             );
                             let input = item.get("input").unwrap_or(&Value::Null);
                             blocks.push(HistoryBlock::Command {
+                                id: Some(id.clone()),
                                 command,
                                 output: String::new(),
                                 status: "ok".into(),

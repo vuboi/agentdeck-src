@@ -85,5 +85,8 @@ test('a call child transcript is the children of the matching tool call', () => 
         { kind: 'response', text: 'step' },
     ]);
     assert.deepEqual(callChildBlocks(messages, 'm1', 'missing'), []);
-    assert.deepEqual(callChildBlocks(messages, 'nope', 'c1'), []);
+    // The work row carries the id of the request the call answers, not of the reply that holds it.
+    assert.deepEqual(callChildBlocks(messages, 'user-ask', 'c1'), [
+        { kind: 'response', text: 'step' },
+    ]);
 });

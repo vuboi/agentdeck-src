@@ -10,7 +10,7 @@ import { toChildAgent, type ChildAgent } from './child-agents';
 /** The side view's tool name: the Sub agents panel in the tools panel, or in a window. */
 export const AGENTS_TOOL = 'Agents';
 /** How many agents the grid shows at once. */
-export const GRID_MAX = 4;
+export const GRID_MAX = 10;
 
 export type AgentViewMode = 'list' | 'single' | 'grid';
 
@@ -37,12 +37,14 @@ export function openAgentView(id: string) {
     dockTool(AGENTS_TOOL);
 }
 
-/** Adds the agent to the grid, or takes it out. The grid holds at most `GRID_MAX` agents. */
-export function toggleGridAgent(id: string) {
-    if (agentView.picked.includes(id)) {
-        agentView.picked = agentView.picked.filter((item) => item !== id);
-    } else if (agentView.picked.length < GRID_MAX) {
-        agentView.picked = [...agentView.picked, id];
+/** Adds the agent to the grid, or takes it out. The grid holds at most `GRID_MAX` agents. `shown` is what the grid
+ *  shows now: with no choice made yet it is the automatic set, which the first change turns into a choice. */
+export function toggleGridAgent(id: string, shown: string[] = []) {
+    const current = agentView.picked.length ? agentView.picked : shown;
+    if (current.includes(id)) {
+        agentView.picked = current.filter((item) => item !== id);
+    } else if (current.length < GRID_MAX) {
+        agentView.picked = [...current, id];
     }
 }
 

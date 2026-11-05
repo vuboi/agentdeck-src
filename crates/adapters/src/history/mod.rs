@@ -67,6 +67,9 @@ pub enum HistoryBlock {
     },
     /// A tool call and its result. `status` is `ok` or `fail`. `change` is the file it wrote, if it wrote one.
     Command {
+        /// The tool call's id, where the transcript records one: it ties the call to the work that came from it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
         command: String,
         output: String,
         status: String,
