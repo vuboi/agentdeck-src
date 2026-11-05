@@ -172,28 +172,24 @@
     const measured = new SvelteMap<string, number>();
     // Two messages with one id (a reply continued by a hand-back, a history import next to the live copy) would make the
     // list throw `each_key_duplicate` on every frame and stop the chat drawing: the later one gets its position in its key.
-    let firstOf: {
-        list: unknown;
-        length: number;
-        at: Map<string, number>;
-    } | null = null;
-    const rowKey = (index: number): string | number => {
+    // Derived from the ids themselves: a cache keyed by the list's identity went stale when a message changed its id in
+    // place (same list, same length), and two rows then shared one key (`each_key_duplicate`).
+    const rowKeys = $derived.by(() => {
+        const first = new SvelteMap<string, number>();
         const list = chat.messages;
-        const id = list[index]?.id;
-        if (id === undefined) return index;
-        if (
-            !firstOf ||
-            firstOf.list !== list ||
-            firstOf.length !== list.length
-        ) {
-            const at = new SvelteMap<string, number>();
-            list.forEach((message, position) => {
-                if (!at.has(message.id)) at.set(message.id, position);
-            });
-            firstOf = { list, length: list.length, at };
-        }
-        return firstOf.at.get(id) === index ? id : `${id}#${index}`;
-    };
+        list.forEach((message, position) => {
+            if (message?.id !== undefined && !first.has(message.id))
+                first.set(message.id, position);
+        });
+        return list.map((message, position) =>
+            message?.id === undefined
+                ? position
+                : first.get(message.id) === position
+                  ? message.id
+                  : `${message.id}#${position}`,
+        );
+    });
+    const rowKey = (index: number): string | number => rowKeys[index] ?? index;
     const virtualOptions = () => ({
         count: chat.messages.length - from,
         getScrollElement: () => viewportEl ?? null,
