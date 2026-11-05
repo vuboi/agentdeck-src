@@ -456,13 +456,41 @@ pub fn read(root: &Path, id: &str) -> Result<(PlanInfo, String), String> {
     info(id, &path, ro)
 }
 
-pub fn write(root: &Path, req: WriteReq) -> Result<PlanInfo, String> {
+pub fn write(root: &Path, mut req: WriteReq) -> Result<PlanInfo, String> {
     if req.body.len() > MAX_BODY {
         return Err("plan body exceeds 256 KB".into());
     }
     let status = req.status.as_deref().unwrap_or("draft");
     if !["draft", "approved", "doing", "done", "dropped"].contains(&status) {
         return Err("invalid plan status".into());
+    }
+    // Auto-saves revise this conversation's draft; explicit MCP/manual writes still create a new plan.
+    // Scan the writable directory directly: the UI list is capped and also includes read-only/global plans.
+    if req.id.is_none()
+        && status == "draft"
+        && !req.chat.is_empty()
+        && matches!(req.source.as_str(), "exit-plan-mode" | "codex-plan-mode")
+    {
+        let folder = root.join(WRITE_DIR);
+        if folder.exists() {
+            for entry in fs::read_dir(folder).map_err(|e| e.to_string())? {
+                let path = entry.map_err(|e| e.to_string())?.path();
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                let id = format!("{WRITE_DIR}/{name}");
+                if let Ok((plan, _)) = read(root, &id) {
+                    if !plan.read_only
+                        && plan.status == "draft"
+                        && plan.chat == req.chat
+                        && plan.source == req.source
+                    {
+                        req.id = Some(id);
+                        break;
+                    }
+                }
+            }
+        }
     }
     let id = if let Some(id) = req.id {
         id
@@ -796,6 +824,51 @@ mod tests {
             base_updated: None,
         }
     }
+    #[test]
+    fn autosave_updates_same_chat_source_draft_and_keeps_created() {
+        let root = temp();
+        let mut first = req("First plan", "- [ ] first");
+        first.source = "exit-plan-mode".into();
+        let a = write(&root, first.clone()).expect("first save");
+        let original = fs::read_to_string(&a.path).expect("read");
+        fs::write(
+            &a.path,
+            original.replace(&a.created, "2020-01-01T00:00:00Z"),
+        )
+        .expect("set created");
+        first.title = "Revised plan".into();
+        first.body = "- [ ] revised".into();
+        let b = write(&root, first).expect("second save");
+        assert_eq!(a.id, b.id);
+        assert_eq!(b.created, "2020-01-01T00:00:00.000Z");
+        assert_eq!(b.title, "Revised plan");
+        assert!(read(&root, &b.id)
+            .expect("read")
+            .1
+            .contains("- [ ] revised"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn autosave_does_not_merge_other_chat_source_or_non_draft() {
+        let root = temp();
+        let mut request = req("Plan", "body");
+        request.source = "codex-plan-mode".into();
+        let a = write(&root, request.clone()).expect("first");
+        request.chat = "other".into();
+        let b = write(&root, request.clone()).expect("other chat");
+        assert_ne!(a.id, b.id);
+        request.chat = "c".into();
+        request.source = "exit-plan-mode".into();
+        let c = write(&root, request.clone()).expect("other source");
+        assert_ne!(a.id, c.id);
+        set_status(&root, &a.id, "approved").expect("approve");
+        request.source = "codex-plan-mode".into();
+        let d = write(&root, request).expect("after approval");
+        assert_ne!(a.id, d.id);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     #[test]
     fn parses_frontmatter_and_legacy() {
         let fm = parse_fm(

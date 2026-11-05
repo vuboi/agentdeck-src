@@ -553,8 +553,8 @@ pub fn is_proposal_tool(name: &str) -> bool {
 
 /// One line describing a tool call's input: the part a person would look at.
 pub fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
-    // A proposal is read whole: the webview parses its JSON to draw the card, so it is not cut like other input.
-    if is_proposal_tool(name) {
+    // The webview parses proposal and ExitPlanMode JSON to render/save it: preserve the complete input.
+    if is_proposal_tool(name) || name == "ExitPlanMode" {
         return input.to_string();
     }
     if matches!(name, "TodoWrite" | "update_plan") {

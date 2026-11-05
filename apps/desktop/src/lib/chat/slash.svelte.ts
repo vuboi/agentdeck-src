@@ -147,7 +147,15 @@ export const BUILTIN: SlashItem[] = [
         kind: 'builtin',
         origin: 'AgentDeck',
         template:
-            'Make a plan for: $ARGUMENTS\n\nDo not edit any file. Read what you need, then give the steps in order, the files each one touches, the risks, and how each step is verified. Ask me about anything that changes the plan.',
+            'Make a plan for: $ARGUMENTS\n\nDo not edit project files. Read what you need, then write the plan: goal, steps in order as `- [ ]` checkboxes, the files each step touches, risks, and how each step is verified. Save it with plan_write (status draft) and give me its path. If plan_write is not available, write it to docs/plans/<short-slug>.md instead. Ask me about anything that changes the plan.',
+    },
+    {
+        name: 'plans',
+        description: 'List project plans and their next steps',
+        kind: 'builtin',
+        origin: 'AgentDeck',
+        template:
+            "List this project's plans with plan_list and tell me which is approved and what step is next.",
     },
     {
         name: 'perf',

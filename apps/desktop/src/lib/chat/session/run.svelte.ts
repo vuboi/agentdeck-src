@@ -795,8 +795,11 @@ export function startTurn(
         delete liveAsks[session.id];
     } else if (!listener) delete liveHandouts[session.id];
     if (!listener) replies[session.id] = reply.id;
+    const permission = turnOptionsOf(session.id).permission;
     runReplies.set(turn, {
         sessionId: session.id,
+        permission,
+        planStart: reply.blocks.length,
         reply: list[list.length - 1],
         listener,
         ask: asked?.role === 'user' ? asked : undefined,
@@ -982,8 +985,7 @@ export function startTurn(
                             files: files.map((file) => file.path),
                         },
                     ],
-                    permissionMode:
-                        PERMISSION_MODE[turnOptionsOf(session.id).permission],
+                    permissionMode: PERMISSION_MODE[permission],
                     allowedTools: [
                         ...new SvelteSet([
                             ...(approved[session.id] ?? []),
@@ -1173,8 +1175,7 @@ export function startTurn(
                 resume,
                 // A model of another agent (left over from a switch) is never sent: the agent's own first model goes instead.
                 model: selectedModel,
-                permissionMode:
-                    PERMISSION_MODE[turnOptionsOf(session.id).permission],
+                permissionMode: PERMISSION_MODE[permission],
                 effort: effortFor(session),
                 allowedTools: [
                     ...new SvelteSet([
@@ -1281,6 +1282,10 @@ export const runReplies = new SvelteMap<
         listener: boolean;
         ask?: Message;
         backgroundTools: Set<string>;
+        /** Permission captured before dispatch, independent of later Composer changes. */
+        permission: ReturnType<typeof turnOptionsOf>['permission'];
+        /** Excludes earlier turns when a silent continuation reuses an assistant reply. */
+        planStart: number;
     }
 >();
 export const sessionLanes = $state<Record<string, RunLane[]>>({});

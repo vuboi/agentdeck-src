@@ -19,6 +19,8 @@ import {
 } from '../recovery/turn-failure';
 import { inTauri, isPreviewCopy, clock } from '../../app/platform/history';
 import { type Message, type Block } from '../mock';
+import { planOf } from '../content/blocks';
+import type { PlanInfo } from '../../plans/plans.svelte';
 import {
     customModelId,
     modelLabel,
@@ -1458,6 +1460,8 @@ function beginAutoTurn(sessionId: string, turn: string, messageId?: string) {
     runReplies.set(turn, {
         sessionId,
         reply,
+        permission: turnOptionsOf(sessionId).permission,
+        planStart: 0,
         listener: besideForeground,
         backgroundTools: new Set(),
     });
@@ -1568,6 +1572,120 @@ export function handleAgentEvent(
     }
     flushQueued(sessionId);
     applyEvent(sessionId, event, turn, messageId);
+}
+
+/** Auto-save attempts belong to the originating reply, including offscreen chats and repeated end events. */
+const savedPlanCalls = new WeakMap<Message, Set<string>>();
+const savedPlanTurns = new WeakMap<Message, Set<string>>();
+
+function planTitle(body: string): string {
+    return (
+        body.match(/^# (.+)$/m)?.[1].trim() ??
+        (body.trim().match(/^[^.!?\n]+[.!?]?/)?.[0] ?? 'Plan').slice(0, 60)
+    );
+}
+
+/** Saves completed provider plan output through Rust; frontend never parses or writes plan front matter. */
+function autoSavePlan(
+    session: SessionItem,
+    reply: Message,
+    event: AgentEvent,
+    permission: string | undefined,
+    turn?: string,
+    start = 0,
+) {
+    const root = projectOf(session)?.path;
+    if (!root || !inTauri() || isPreviewCopy()) return;
+    const agent = reply.agent ?? session.agent;
+    let body = '';
+    let source = '';
+    let callId: string | undefined;
+    if (
+        agent === 'claude' &&
+        event.kind === 'tool_call' &&
+        event.name === 'ExitPlanMode'
+    ) {
+        try {
+            const input: unknown = JSON.parse(event.input);
+            if (
+                !input ||
+                typeof input !== 'object' ||
+                !('plan' in input) ||
+                typeof input.plan !== 'string'
+            )
+                return;
+            body = input.plan.trim();
+        } catch {
+            return; // Incomplete inputs/deltas never cause a save.
+        }
+        if (!body) return;
+        let calls = savedPlanCalls.get(reply);
+        if (!calls) savedPlanCalls.set(reply, (calls = new SvelteSet()));
+        if (calls.has(event.id)) return;
+        calls.add(event.id);
+        callId = event.id;
+        source = 'exit-plan-mode';
+    } else if (
+        agent === 'codex' &&
+        permission === 'plan' &&
+        event.kind === 'done'
+    ) {
+        let turns = savedPlanTurns.get(reply);
+        if (!turns) savedPlanTurns.set(reply, (turns = new SvelteSet()));
+        const key = turn ?? reply.id;
+        if (turns.has(key)) return;
+        turns.add(key);
+        const blocks = reply.blocks.slice(start);
+        // The provider's final answer wins over preambles; streaming-only providers end in the last response block.
+        body =
+            event.text.trim() ||
+            blocks
+                .findLast((block) => block.kind === 'response')
+                ?.text.trim() ||
+            '';
+        if (!body) return;
+        const checklist = blocks.findLast(
+            (block) =>
+                block.kind === 'command' &&
+                /^update_plan\s/.test(block.command),
+        );
+        const steps =
+            checklist?.kind === 'command' ? planOf(checklist.command) : null;
+        if (steps?.length)
+            body +=
+                '\n\n## Steps\n' +
+                steps
+                    .map(
+                        (step) =>
+                            `- [${step.status === 'completed' ? 'x' : ' '}] ${step.content}`,
+                    )
+                    .join('\n');
+        source = 'codex-plan-mode';
+    } else return;
+    void import('@tauri-apps/api/core')
+        .then(({ invoke }) =>
+            invoke<PlanInfo>('plans_save', {
+                root,
+                title: planTitle(body),
+                body,
+                agent,
+                chat: session.id,
+                source,
+            }),
+        )
+        .then((plan) => {
+            if (!callId) return;
+            const block = reply.blocks.find(
+                (block) => block.kind === 'command' && block.id === callId,
+            );
+            if (block?.kind === 'command')
+                block.savedPlan = { id: plan.id, path: plan.path, root };
+        })
+        .catch((error) => {
+            logError('turn', 'could not save plan', error, {
+                chat: session.id,
+            });
+        });
 }
 
 function handleEventNow(
@@ -1840,6 +1958,14 @@ function handleEventNow(
     const update = applyAgentEvent(reply.blocks, event);
     reply.blocks = update.blocks;
     reply.notice = update.notice;
+    autoSavePlan(
+        session,
+        reply,
+        event,
+        ownedRun?.permission,
+        turn,
+        ownedRun?.planStart,
+    );
     if (update.finished && turn) queueWorkerChanges(sessionId, turn);
     if (ownedRun?.listener) {
         if (!update.finished) return;

@@ -53,6 +53,8 @@ export type Block =
           command: string;
           output: string;
           status: 'running' | 'ok' | 'fail';
+          /** Persisted Claude plan linked to this completed tool input. */
+          savedPlan?: { id: string; path: string; root: string };
           id?: string;
           /** A delegate_task call: the task it started (see delegate-task.ts). */ taskId?: string;
           change?: FileChange;
