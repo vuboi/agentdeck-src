@@ -22,6 +22,7 @@
     import { workspace } from '../../chat/sessions.svelte';
     import { toast } from '../../app/platform/toast';
     import { jsonInText } from '../../app/text/json-text';
+    import StoreSkeleton from '../store/StoreSkeleton.svelte';
 
     // The error log in a floating drawer, its rows as the background-process drawer's: icon, what happened, where, when,
     // an arrow for the detail. The file itself is saved with the button in the footer.
@@ -115,7 +116,7 @@
         expanded[id] = !expanded[id];
         if (expanded[id]) opened[id] = true;
     }
-    function onScroll() {
+    function maybeLoadMore() {
         const viewport = drawerViewport();
         if (!viewport || !errorLog.hasMore || errorLog.loading) return;
         const distanceToBottom =
@@ -125,8 +126,16 @@
     $effect(() => {
         const viewport = drawerViewport();
         if (!viewport) return;
-        viewport.addEventListener('scroll', onScroll, { passive: true });
-        return () => viewport.removeEventListener('scroll', onScroll);
+        viewport.addEventListener('scroll', maybeLoadMore, { passive: true });
+        return () => viewport.removeEventListener('scroll', maybeLoadMore);
+    });
+    // Also runs when the rows change, so a filter whose rows are not on the pages read yet keeps loading until it fills the drawer.
+    $effect(() => {
+        void rows.length;
+        void totalHeight;
+        void errorLog.hasMore;
+        void errorLog.loading;
+        if (open) untrack(maybeLoadMore);
     });
     let saving = $state(false);
 
@@ -320,33 +329,19 @@
                 </p>
             {/if}
             {#if rows.length === 0}
-                <div
-                    class="flex min-h-38 flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
-                >
-                    {#if errorLog.hasMore && filter !== 'all'}
-                        <span
-                            >No {AREAS[filter].label.toLowerCase()} errors on this
-                            page.</span
-                        >
-                        <ZButton
-                            zWave={false}
-                            zType="outline"
-                            zSize="sm"
-                            class="h-7 px-2.5 text-sm"
-                            disabled={errorLog.loading}
-                            onclick={loadMoreErrorLog}
-                            >Load older entries</ZButton
-                        >
-                    {:else}
+                {#if !errorLog.loaded || errorLog.hasMore}
+                    <StoreSkeleton variant="plugin" rows={8} />
+                {:else}
+                    <div
+                        class="flex min-h-38 flex-col items-center justify-center gap-2 text-sm text-muted-foreground"
+                    >
                         <ZIcon
                             zType={'lucideCircleCheck' as ZIconName}
                             zSize="24"
                         />
-                        {errorLog.loaded
-                            ? 'No errors logged'
-                            : 'Reading the log…'}
-                    {/if}
-                </div>
+                        No errors logged
+                    </div>
+                {/if}
             {/if}
             <div class="relative w-full" style:height="{totalHeight}px">
                 {#each virtualRows as row (row.key)}

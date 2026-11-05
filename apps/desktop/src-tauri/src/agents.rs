@@ -36,25 +36,36 @@ pub(crate) fn installed_ids() -> Vec<&'static str> {
 
 #[tauri::command]
 pub async fn agents_status() -> Vec<AgentStatus> {
+    // Each CLI is asked at the same time: a slow sign-in check (Command Code) no longer waits for the others.
+    let handles: Vec<_> = KNOWN
+        .into_iter()
+        .map(|(id, binary)| tokio::spawn(status_of(id, binary)))
+        .collect();
     let mut out = Vec::with_capacity(KNOWN.len());
-    for (id, binary) in KNOWN {
-        let installed = which(binary).is_some();
-        let configured = installed
-            && match id {
-                // Antigravity has no status command: it is set up when one of its accounts is not expired.
-                "antigravity" => crate::connectors::antigravity_accounts_list()
-                    .await
-                    .iter()
-                    .any(|account| !account.expired),
-                _ => login_status(id).await.logged_in == Some(true),
-            };
-        out.push(AgentStatus {
-            id,
-            installed,
-            configured,
-        });
+    for handle in handles {
+        if let Ok(row) = handle.await {
+            out.push(row);
+        }
     }
     out
+}
+
+async fn status_of(id: &'static str, binary: &'static str) -> AgentStatus {
+    let installed = which(binary).is_some();
+    let configured = installed
+        && match id {
+            // Antigravity has no status command: it is set up when one of its accounts is not expired.
+            "antigravity" => crate::connectors::antigravity_accounts_list()
+                .await
+                .iter()
+                .any(|account| !account.expired),
+            _ => login_status(id).await.logged_in == Some(true),
+        };
+    AgentStatus {
+        id,
+        installed,
+        configured,
+    }
 }
 
 #[cfg(test)]

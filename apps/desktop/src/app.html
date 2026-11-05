@@ -24,18 +24,20 @@
                 z-index: 9999;
             "
         >
-            <div
-                style="
-                    width: 20px;
-                    height: 20px;
-                    border-radius: 9999px;
-                    border: 2px solid var(--muted);
-                    border-top-color: var(--primary);
-                    animation: boot-spin 0.8s linear infinite;
-                "
-            ></div>
+                                    <div class="boot-comet"><b><i style="--z-index: 0"></i><i style="--z-index: 1"></i><i style="--z-index: 2"></i><i style="--z-index: 3"></i><i style="--z-index: 4"></i><i style="--z-index: 5"></i></b></div>
         </div>
         <style>
+            .boot-comet { position: relative; width: 28px; height: 28px; color: var(--primary); }
+            .boot-comet b { position: absolute; inset: 0; animation: boot-spin 1s linear infinite; }
+            .boot-comet i {
+                --z-dot: calc(28px * 0.2 * (1 - var(--z-index) * 0.13));
+                position: absolute; top: 50%; left: 50%;
+                width: var(--z-dot); height: var(--z-dot);
+                margin: calc(var(--z-dot) / -2) 0 0 calc(var(--z-dot) / -2);
+                border-radius: 999px; background: currentColor;
+                opacity: calc(1 - var(--z-index) * 0.16);
+                transform: rotate(calc(var(--z-index) * -15deg)) translateY(-11.2px);
+            }
             @keyframes boot-spin {
                 to {
                     transform: rotate(360deg);

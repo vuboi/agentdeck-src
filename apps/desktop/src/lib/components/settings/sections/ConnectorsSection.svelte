@@ -578,6 +578,7 @@
                                 `install:${card.id}`,
                                 `login:${card.id}`,
                                 `add:${card.id}`,
+                                'detect',
                             )}
                             {@const log = lastLog(card.id)}
                             {@const link = urlIn(

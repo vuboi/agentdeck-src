@@ -5,14 +5,14 @@ name: release
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to build, e.g. 0.1.0'
+        description: "Version to build, e.g. 0.1.0"
         required: true
       draft:
-        description: 'Publish as a draft release (for a test run)'
+        description: "Publish as a draft release (for a test run)"
         type: boolean
         default: false
 
@@ -28,20 +28,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, args: '', name: windows, arch: x64 }
+          - { os: windows-latest, args: "", name: windows, arch: x64 }
           - {
               os: macos-latest,
-              args: '--target aarch64-apple-darwin',
+              args: "--target aarch64-apple-darwin",
               name: mac-arm,
               arch: aarch64,
             }
           - {
               os: macos-15-intel,
-              args: '--target x86_64-apple-darwin',
+              args: "--target x86_64-apple-darwin",
               name: mac-intel,
               arch: x64,
             }
-          - { os: ubuntu-22.04, args: '', name: linux, arch: amd64 }
+          - { os: ubuntu-22.04, args: "", name: linux, arch: amd64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

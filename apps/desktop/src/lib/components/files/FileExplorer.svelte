@@ -11,7 +11,7 @@
     } from '@shival99/z-ui-svelte';
     import { untrack } from 'svelte';
     import { activeSession, workspace } from '../../chat/sessions.svelte';
-    import { openProjectFile } from '../../files/file-viewer.svelte';
+    import { openProjectFile, viewer } from '../../files/file-viewer.svelte';
     import { inTauri } from '../../app/platform/history';
     import { getPref, setPref } from '../../app/platform/prefs';
     import { toast } from '../../app/platform/toast';
@@ -25,48 +25,16 @@
 
     // Files of the active session's project, read from disk one folder at a time as folders are opened.
     // Right click renames or deletes; a delete goes to ~/.agentdeck/trash/files, so Ctrl+Z can put it back.
-    // Outside the desktop app (the web preview) a small mock listing stands in.
-    type File = { name: string; children?: File[] };
     type Entry = { name: string; dir: boolean; has_children: boolean };
-    const mockFiles: Record<string, File[]> = {
-        agentdeck: [
-            {
-                name: 'apps',
-                children: [
-                    {
-                        name: 'desktop',
-                        children: [
-                            {
-                                name: 'src',
-                                children: [
-                                    {
-                                        name: 'lib',
-                                        children: [
-                                            { name: 'components' },
-                                            { name: 'sessions.svelte.ts' },
-                                        ],
-                                    },
-                                    { name: 'routes' },
-                                ],
-                            },
-                            { name: 'package.json' },
-                        ],
-                    },
-                ],
-            },
-            {
-                name: 'crates',
-                children: [
-                    { name: 'protocol' },
-                    { name: 'store' },
-                    { name: 'core' },
-                ],
-            },
-            { name: 'AGENTS.md' },
-            { name: 'PLAN.md' },
-            { name: 'README.md' },
-        ],
-    };
+    // Folders come first, then files, each by name.
+    const sortEntries = (entries: Entry[]) =>
+        [...entries].sort((a, b) =>
+            a.dir === b.dir
+                ? a.name.localeCompare(b.name)
+                : a.dir
+                  ? -1
+                  : 1,
+        );
 
     // The files are listed ahead of time, so the search opens full.
     $effect(() => {
@@ -102,7 +70,8 @@
         if (pending) return pending;
         const from = root;
         const cached = await getPref<Entry[]>(listingKey(from, dir));
-        if (cached && from === root && !listing[dir]) listing[dir] = cached;
+        if (cached && from === root && !listing[dir])
+            listing[dir] = sortEntries(cached);
         if (listing[dir]) {
             void reread(dir);
             return listing[dir];
@@ -112,11 +81,12 @@
             path: `${from}${dir}`,
         })
             .then((entries) => {
+                const sorted = sortEntries(entries);
                 if (from === root) {
-                    listing[dir] = entries;
-                    void setPref(listingKey(from, dir), entries);
+                    listing[dir] = sorted;
+                    void setPref(listingKey(from, dir), sorted);
                 }
-                return entries;
+                return sorted;
             })
             .catch((error: unknown) => {
                 if (dir === '') failure = String(error);
@@ -177,7 +147,23 @@
         });
     });
 
+    // Folders start closed. The folders holding the file being viewed open, so the tree shows where it is.
     let expanded = $state<string[]>([]);
+    const viewing = $derived(
+        viewer.tabs.find((tab) => tab.id === viewer.active)?.path ?? '',
+    );
+    $effect(() => {
+        const path = viewing;
+        if (!path || !root) return;
+        untrack(() => {
+            const parts = path.split('/');
+            const folders: string[] = [];
+            for (let at = 1; at < parts.length; at++)
+                folders.push(`/${parts.slice(0, at).join('/')}`);
+            const missing = folders.filter((id) => !expanded.includes(id));
+            if (missing.length) expanded = [...expanded, ...missing];
+        });
+    });
     let expandAllMode = $state(false);
     let expandAllRun = 0;
     // An opened folder reads its entries the first time.
@@ -253,28 +239,7 @@
         );
     }
 
-    // Same shape as the sidebar tree: folders expand, files are leaves.
-    function fromMock(files: File[], parent = ''): ZTreeNode<null>[] {
-        return files.map((file) => {
-            const id = `${parent}/${file.name}`;
-            return {
-                id,
-                label: file.name,
-                icon: (file.children
-                    ? 'lucideFolder'
-                    : 'lucideFile') as ZIconName,
-                children: file.children
-                    ? fromMock(file.children, id)
-                    : undefined,
-            };
-        });
-    }
-
-    const nodes = $derived(
-        inTauri()
-            ? fromDisk('')
-            : fromMock(mockFiles[project?.name ?? ''] ?? []),
-    );
+    const nodes = $derived(fromDisk(''));
     let treeHeight = $state(400);
     let box: HTMLDivElement | undefined = $state();
 
@@ -323,22 +288,7 @@
         }
 
         expandAllMode = true;
-        if (inTauri()) {
-            void expandEveryFolder();
-            return;
-        }
-
-        const folders: string[] = [];
-        const collect = (items: ZTreeNode<null>[]) => {
-            for (const node of items) {
-                if (!node.children?.length) continue;
-                folders.push(node.id);
-                collect(node.children);
-            }
-        };
-        collect(nodes);
-        expanded = folders;
-        if (folders.length === 0) expandAllMode = false;
+        void expandEveryFolder();
     }
 
     // A file opens in the viewer beside the tree; folders only expand.

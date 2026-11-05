@@ -715,42 +715,52 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
             ),
         );
     }
-    let claude = if detect_selected(only, "claude") {
-        match claude_binary() {
-            Some(path) => {
-                match capture(&path, &["auth", "status"], Duration::from_secs(10)).await {
-                    Ok(out) => claude_login(&out.stdout),
-                    Err(_) => Login::default(),
-                }
+    // The slow CLI status probes run side by side: their waits add up to the slowest one, not to the sum.
+    let (claude, opencode, copilot, command_code) = tokio::join!(
+        async {
+            if !detect_selected(only, "claude") {
+                return Login::default();
             }
-            None => Login::default(),
-        }
-    } else {
-        Login::default()
-    };
+            match claude_binary() {
+                Some(path) => {
+                    match capture(&path, &["auth", "status"], Duration::from_secs(10)).await {
+                        Ok(out) => claude_login(&out.stdout),
+                        Err(_) => Login::default(),
+                    }
+                }
+                None => Login::default(),
+            }
+        },
+        async {
+            if detect_selected(only, "opencode") {
+                opencode::login_status().await
+            } else {
+                Login::default()
+            }
+        },
+        async {
+            if detect_selected(only, "copilot") {
+                github::login().await
+            } else {
+                Login::default()
+            }
+        },
+        async {
+            if detect_selected(only, "command-code") {
+                commandcode::login_status().await
+            } else {
+                Login::default()
+            }
+        },
+    );
     let codex = detect_selected(only, "codex")
         .then(codex_login)
         .unwrap_or_default();
     let antigravity = detect_selected(only, "agy")
         .then(antigravity_login)
         .unwrap_or_default();
-    let opencode = if detect_selected(only, "opencode") {
-        opencode::login_status().await
-    } else {
-        Login::default()
-    };
-    let copilot = if detect_selected(only, "copilot") {
-        github::login().await
-    } else {
-        Login::default()
-    };
     let workbuddy = if detect_selected(only, "workbuddy") {
         workbuddy::login_status()
-    } else {
-        Login::default()
-    };
-    let command_code = if detect_selected(only, "command-code") {
-        commandcode::login_status().await
     } else {
         Login::default()
     };

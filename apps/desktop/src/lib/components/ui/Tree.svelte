@@ -20,7 +20,7 @@
     /** Rows drawn above and below the visible window, so a short scroll does not show a gap. */
     const OVERSCAN = 8;
     /** How long a collapse or expand animates; scrolling never animates. */
-    const MOTION_MS = 220;
+    const MOTION_MS = 0;
 </script>
 
 <script lang="ts" generics="T">
@@ -230,7 +230,7 @@
             aria-expanded={item.expandable ? item.expanded : undefined}
             aria-selected={isSelected}
             aria-disabled={item.node.disabled || undefined}
-            class="tree-row group/tree-row relative flex w-full cursor-pointer items-center gap-1.5 pr-2 select-none text-muted-foreground hover:text-foreground data-[selected=true]:font-medium data-[selected=true]:text-foreground data-[disabled=true]:cursor-not-allowed data-[disabled=true]:opacity-50"
+            class="tree-row group/tree-row relative flex w-full cursor-pointer items-center gap-1.5 pr-2 select-none text-muted-foreground hover:text-foreground data-[selected=true]:text-foreground data-[disabled=true]:cursor-not-allowed data-[disabled=true]:opacity-50"
             style:height="{rowHeight}px"
             style:padding-left="{(item.level - 1) * indent}px"
             onclick={() => select(item)}
@@ -245,7 +245,7 @@
                 {#each { length: item.level - 1 }, depth (depth)}
                     <span
                         class="pointer-events-none absolute inset-y-0 w-px bg-[var(--z-tree-guide)]"
-                        style:left="{depth * indent + 10}px"
+                        style:left="{depth * indent + 8}px"
                         aria-hidden="true"
                     ></span>
                 {/each}

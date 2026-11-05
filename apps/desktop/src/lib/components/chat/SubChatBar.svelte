@@ -21,8 +21,8 @@
   const briefOpen = $derived(briefFor !== '' && briefFor === workspace.activeId);
 </script>
 
-  <div class="relative z-30 shrink-0 border-b border-border bg-background px-3 text-sm text-muted-foreground">
-    <div class="flex h-8 min-w-0 items-center gap-1.5">
+  <div class="relative z-30 shrink-0 bg-background text-sm text-muted-foreground">
+    <div class="flex h-10 min-w-0 items-center gap-1.5 border-b border-border px-3">
       {#if taskOfActive}
         <button type="button" class="grid size-6 shrink-0 cursor-pointer place-items-center rounded-md outline-none hover:bg-primary/10 hover:text-primary" aria-label="Back to {parentOfActive.title}" title="Back to parent chat" onclick={() => onback(parentOfActive.id)}>
           <ZIcon zType={'lucideArrowLeft' as ZIconName} class="size-3.5" />
