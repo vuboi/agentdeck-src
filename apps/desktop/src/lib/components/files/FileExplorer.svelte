@@ -13,7 +13,7 @@
     import { activeSession, workspace } from '../../chat/sessions.svelte';
     import { openProjectFile, viewer } from '../../files/file-viewer.svelte';
     import { inTauri } from '../../app/platform/history';
-    import { getPref, setPref } from '../../app/platform/prefs';
+    import { getPref, setPref, setPrefs } from '../../app/platform/prefs';
     import { toast } from '../../app/platform/toast';
     import { fileWrites } from '../../chat/runs/activity.svelte';
     import FileSearchPalette, { warmFiles } from './FileSearchPalette.svelte';
@@ -59,6 +59,24 @@
     // The listings are kept in IndexedDB too: a folder opened before shows at once, and the disk is read again behind it.
     const listingKey = (from: string, dir: string) =>
         `index.files.${from}|${dir}`;
+    // The saved listings are capped: the newest LISTING_MAX are kept (by last write), the others are removed.
+    // The order is one list under its own key (not under the `index.files.` prefix, so listings never read it).
+    const LISTING_ORDER = 'index.filesOrder';
+    const LISTING_MAX = 2000;
+    async function keepListing(key: string) {
+        const order = ((await getPref<string[]>(LISTING_ORDER)) ?? []).filter(
+            (item) => item !== key,
+        );
+        order.push(key);
+        const dropped = order.splice(
+            0,
+            Math.max(0, order.length - LISTING_MAX),
+        );
+        await setPrefs([
+            [LISTING_ORDER, order],
+            ...dropped.map((item): [string, unknown] => [item, null]),
+        ]);
+    }
 
     async function load(dir: string): Promise<Entry[]> {
         if (listing[dir]) return listing[dir];
@@ -80,7 +98,8 @@
                 const sorted = sortEntries(entries);
                 if (from === root) {
                     listing[dir] = sorted;
-                    void setPref(listingKey(from, dir), sorted);
+                    const key = listingKey(from, dir);
+                    void setPref(key, sorted).then(() => keepListing(key));
                 }
                 return sorted;
             })
