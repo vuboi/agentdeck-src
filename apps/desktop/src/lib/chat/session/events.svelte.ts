@@ -1297,6 +1297,9 @@ export function logCtx(sessionId: string, session?: SessionItem) {
 // A turn that says nothing for this long is written to the log once (an agent that hangs, a tool that never returns,
 // a member waiting on a message that never comes): that is the line to look for when the app seems frozen.
 const SILENT_AFTER_MS = 5 * 60_000;
+// A reply that is still written but says nothing this long, with no tool or sub-agent of its own running, lost its `done`:
+// it ends here, so its queue goes on without the user pressing Stop.
+const SILENT_END_MS = 10 * 60_000;
 export const lastEventAt = new SvelteMap<string, number>();
 export const lastEventKind = new SvelteMap<string, string>();
 const silentLogged = new SvelteSet<string>();
@@ -1384,6 +1387,21 @@ if (typeof window !== 'undefined') {
                     `last: ${lastEventKind.get(id) ?? '?'}`,
                     logCtx(id),
                 );
+            }
+            const lastKind = lastEventKind.get(id) ?? '';
+            if (
+                now - at > SILENT_END_MS &&
+                liveReplies[id]?.live &&
+                !lastKind.startsWith('tool_call') &&
+                lastKind !== 'task' &&
+                !needsUserInput(id)
+            ) {
+                logFlow(
+                    id,
+                    'silent',
+                    `no event for ${Math.round((now - at) / 60_000)} min with nothing running: ending the turn`,
+                );
+                stopTurn(id, true);
             }
         }
     }, 30_000);

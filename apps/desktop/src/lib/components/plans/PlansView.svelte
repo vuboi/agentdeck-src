@@ -12,7 +12,7 @@
     import { inTauri } from '../../app/platform/history';
     import { listen } from '../../app/platform/tauri-event';
     import { toast } from '../../app/platform/toast';
-    import { TRIGGER_ON } from '../../app/ui/popover';
+    import { TRIGGER_RING } from '../../app/ui/popover';
     import { openProjectFile } from '../../files/file-viewer.svelte';
     import { samePath } from '../../files/paths';
     import {
@@ -265,7 +265,7 @@
             zWave={false}
             zType="ghost"
             zSize="sm"
-            class="h-7 gap-1 px-2 {filterOpen ? TRIGGER_ON : ''}"
+            class="h-7 gap-1 px-2 {filterOpen ? TRIGGER_RING : ''}"
             aria-label="Filter plans by status"
             aria-haspopup="listbox"
             aria-expanded={filterOpen}

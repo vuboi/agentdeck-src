@@ -223,7 +223,7 @@
         if (clickedRow.endsWith(`:${id}`) && rowIds.has(clickedRow))
             return clickedRow;
         return (
-            ['session', 'list', 'pin', 'recent']
+            ['session', 'list', 'pin', 'recent', 'computer']
                 .map((key) => `${key}:${id}`)
                 .find((row) => rowIds.has(row)) ?? `session:${id}`
         );

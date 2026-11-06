@@ -44,12 +44,11 @@ fn handler_commands() -> Vec<String> {
         .collect()
 }
 
-/// The capability of the Preview's own copy of the app (see `inTauri` in the frontend). In a debug build the app
-/// commands are listed, so that copy, at the dev address only, can use them with real data; a release build has none of
-/// this and the capability grants nothing.
+/// The capability of the Preview's own copy of the app (see `inTauri` in the frontend). The app commands are listed
+/// so that copy, at the dev address only, can use them with real data.
 fn preview_capability(commands: &[String]) -> String {
     if commands.is_empty() {
-        return r#"{ "identifier": "debug-preview", "description": "Nothing in a release build.", "windows": ["main"], "permissions": [] }"#.to_string();
+        return r#"{ "identifier": "debug-preview", "description": "No app commands were found.", "windows": ["main"], "permissions": [] }"#.to_string();
     }
     let permissions = commands
         .iter()
@@ -108,9 +107,8 @@ fn main() {
         env::var("OUT_DIR").unwrap_or_else(|_| ".".into()),
     ));
 
-    let debug = env::var("PROFILE").is_ok_and(|profile| profile == "debug");
     let commands = handler_commands();
-    let preview_commands = if debug { commands.as_slice() } else { &[] };
+    let preview_commands = commands.as_slice();
     // A handler list that was not read would lock the app out: stop instead.
     if commands.len() < 10 {
         eprintln!("build.rs: could not read the command list of generate_handler! in src/lib.rs");

@@ -1,6 +1,6 @@
 <script lang="ts">
     import PickerPopover, { type PickerItem } from '../ui/PickerPopover.svelte';
-    import { ACTIVE_ON, listHeight } from '../../app/ui/popover';
+    import { listHeight } from '../../app/ui/popover';
     import { createTextHistory } from '../../app/text/text-history';
     import { onMount } from 'svelte';
     import { fade } from 'svelte/transition';
@@ -9,6 +9,8 @@
         ZPopover,
         ZSwitch,
         ZTabs,
+        zMergeClasses,
+        zSelectVariants,
         zTooltip,
     } from '@shival99/z-ui-svelte';
     import type { ZDropdownMenuItem } from '@shival99/z-ui-svelte';
@@ -778,7 +780,7 @@
         <div class="flex h-full min-h-0 flex-col gap-3">
             <div
                 bind:this={composerPane}
-                class="flex min-h-30 min-w-0 flex-col gap-3 overflow-hidden {resultsHeight !==
+                class="flex min-h-30 min-w-0 flex-col gap-3 overflow-clip [overflow-clip-margin:4px] {resultsHeight !==
                 null
                     ? 'flex-1'
                     : ''}"
@@ -1642,7 +1644,7 @@
                 <!-- The settings under the prompt: sent with it, and suggested with it by the prompt model. -->
                 <div
                     bind:this={filtersPane}
-                    class="flex shrink-0 flex-wrap items-center gap-1.5"
+                    class="-mx-1 flex shrink-0 flex-wrap items-center gap-1.5 px-1"
                     role="group"
                     aria-label="Image settings"
                 >
@@ -1650,12 +1652,20 @@
                         {@const chosen = settings[setting.key]}
                         <button
                             type="button"
-                            class="flex h-8 min-w-0 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring {settingOpen &&
-                            settingKey === setting.key
-                                ? ACTIVE_ON
-                                : ''} {chosen
-                                ? 'text-foreground'
-                                : 'text-muted-foreground'}"
+                            class={zMergeClasses(
+                                zSelectVariants({
+                                    zSize: 'sm',
+                                    zStatus:
+                                        settingOpen &&
+                                        settingKey === setting.key
+                                            ? 'open'
+                                            : 'default',
+                                }),
+                                'select-ring w-auto min-w-0',
+                                chosen
+                                    ? 'text-foreground'
+                                    : 'text-muted-foreground',
+                            )}
                             aria-haspopup="menu"
                             aria-expanded={settingOpen &&
                                 settingKey === setting.key}

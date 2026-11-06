@@ -65,16 +65,17 @@ input {
     text-overflow: ellipsis;
 }
 
-/* No focus outline or ring anywhere (the open row, a focused button, an input): state is shown by colour only. */
-:focus,
-:focus-visible,
-:focus-within,
-:focus::before,
-:focus::after,
-:focus-visible::before,
-:focus-visible::after,
-:focus-within::before,
-:focus-within::after {
+/* No focus outline or ring anywhere (the open row, a focused button, an input): state is shown by colour only.
+   z-ui's own select (.z-select-trigger) and app triggers marked .select-ring keep the ring their classes give them. */
+:focus:not(.z-select-trigger, .select-ring),
+:focus-visible:not(.z-select-trigger, .select-ring),
+:focus-within:not(.z-select-trigger, .select-ring),
+:focus:not(.z-select-trigger, .select-ring)::before,
+:focus:not(.z-select-trigger, .select-ring)::after,
+:focus-visible:not(.z-select-trigger, .select-ring)::before,
+:focus-visible:not(.z-select-trigger, .select-ring)::after,
+:focus-within:not(.z-select-trigger, .select-ring)::before,
+:focus-within:not(.z-select-trigger, .select-ring)::after {
     outline: none !important;
     --tw-ring-shadow: 0 0 #0000 !important;
     --tw-ring-offset-shadow: 0 0 #0000 !important;

@@ -540,7 +540,7 @@
                                         data-glide-item={item.disabled
                                             ? undefined
                                             : ''}
-                                        class="flex h-full w-full items-center gap-2.5 rounded-md px-2 text-left outline-none {item.disabled
+                                        class="flex h-full w-full items-center gap-2 rounded-sm px-2 text-left outline-none {item.disabled
                                             ? 'cursor-not-allowed opacity-50'
                                             : 'cursor-pointer'} {item.danger
                                             ? row.index === active

@@ -314,6 +314,13 @@ pub async fn drive_turn(
             watchdog.touch(); // any line, even one nobody understands, shows the CLI is alive
             let text = String::from_utf8_lossy(&bytes);
             let line = text.strip_suffix('\r').unwrap_or(&text);
+            if provider.id() == "antigravity" {
+                super::trace::note(
+                    req.owner.as_deref().unwrap_or("-"),
+                    "agy line",
+                    super::antigravity::trace_line(line),
+                );
+            }
             if let Some(open) = super::tail::agents_open(line) {
                 agents_open = open;
                 watchdog.set_background(open);
@@ -411,6 +418,19 @@ pub async fn drive_turn(
             child.wait().await
         }
     };
+    if provider.id() == "antigravity" {
+        super::trace::note(
+            req.owner.as_deref().unwrap_or("-"),
+            "agy exit",
+            format!(
+                "finished={finished} stalled={stalled} status={}",
+                match &status {
+                    Ok(status) => status.to_string(),
+                    Err(error) => error.to_string(),
+                }
+            ),
+        );
+    }
     if !finished {
         if let Some(event) = provider.finish(req) {
             emit(event);

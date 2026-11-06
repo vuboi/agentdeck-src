@@ -8,7 +8,6 @@
     import type { ZDropdownMenuItem, ZIconName } from '@shival99/z-ui-svelte';
     import MenuButton from '../ui/MenuButton.svelte';
     import ProjectSelect from '../ui/ProjectSelect.svelte';
-    import PickerPopover from '../ui/PickerPopover.svelte';
     import type { PickerItem } from '../ui/PickerPopover.svelte';
     import CodeView from '../files/CodeView.svelte';
     import {
@@ -17,7 +16,6 @@
         sessionCwd,
     } from '../../chat/sessions.svelte';
     import { toast } from '../../app/platform/toast';
-    import { TRIGGER_ON } from '../../app/ui/popover';
     import { joinPath } from '../../files/paths';
     import Markdown from '../ui/Markdown.svelte';
     import {
@@ -27,14 +25,11 @@
         selectArtifact,
         setArtifactQuery,
         canvasState,
-        type ArtifactInfo,
         type ArtifactState,
     } from '../../canvas/canvas.svelte';
     import { previewDocument } from '../../canvas/preview';
 
     let project: string | null = $state(null);
-    let artifactOpen = $state(false);
-    let artifactAnchor = $state<HTMLElement | null>(null);
     let codeMode = $state(false);
     let saving = $state(false);
     let artifactQuery = $state('');
@@ -158,11 +153,6 @@
         artifactState.items.map((item) => ({
             id: item.id,
             label: item.title,
-            hint: `${item.kind} · v${item.versions.at(-1)?.n ?? 1}`,
-            icon: item.agent ? undefined : ('lucidePanelsTopLeft' as ZIconName),
-            agent: item.agent as never,
-            selected: item.id === artifactState.selected,
-            data: item,
         })),
     );
     const versionItems = $derived(
@@ -196,10 +186,6 @@
     $effect(() => {
         if (root) setArtifactQuery(root, artifactQuery);
     });
-    function picked(item: PickerItem<ArtifactInfo>) {
-        if (root) selectArtifact(root, item.data.id);
-        artifactOpen = false;
-    }
     function pickedVersion(item: PickerItem<{ n: number }>) {
         if (root && current) void readArtifact(root, current.id, item.data.n);
     }
@@ -286,35 +272,33 @@
                         ?.name ?? path}
                 class="w-full! max-w-none! min-w-0 flex-1"
             />
-            <ZButton
-                bind:ref={artifactAnchor}
-                zWave={false}
-                zType="outline"
-                zSize="sm"
-                class="h-8 min-w-0 flex-1 justify-between! gap-2 px-2.5 text-sm font-normal {artifactOpen
-                    ? TRIGGER_ON
-                    : ''}"
-                aria-label="Choose artifact"
-                aria-haspopup="listbox"
-                aria-expanded={artifactOpen}
-                onclick={() => (artifactOpen = !artifactOpen)}
-            >
-                <span
-                    class="flex min-w-0 flex-1 items-center justify-between gap-2"
-                >
-                    <span class="truncate"
-                        >{current?.title ?? 'Choose artifact'}</span
-                    >
-                    <ZIcon
-                        zType="lucideChevronDown"
-                        class="size-3.5 shrink-0 text-muted-foreground"
-                    />
-                </span>
-            </ZButton>
             <span class="flex min-w-0 flex-1">
                 <ZSelect
                     zSize="sm"
                     class="h-8 w-full min-w-0 text-sm"
+                    zPosition="bottom-left"
+                    zPlaceholder="Choose artifact"
+                    zShowSearch
+                    zSearchServer
+                    zPlaceholderSearch="Search artifacts…"
+                    zDropdownWidth={260}
+                    zEnableLoadMore={artifactState.cursor !== null}
+                    zLoadingMore={artifactState.paging}
+                    zOptions={artifactItems.map((item) => ({
+                        label: item.label,
+                        value: item.id,
+                    }))}
+                    value={current?.id}
+                    onSearch={(keyword) => (artifactQuery = keyword)}
+                    onLoadMore={() => root && void loadMoreArtifacts(root)}
+                    onValueChange={(next) => {
+                        if (root && next) selectArtifact(root, String(next));
+                    }}
+                />
+            </span>
+            <span class="flex min-w-0 flex-1">
+                <ZSelect
+                    zSize="sm"
                     zPosition="bottom-left"
                     zPlaceholder="Version"
                     zShowSearch={false}
@@ -324,6 +308,7 @@
                         value: item.id,
                     }))}
                     value={version ? String(version.n) : undefined}
+                    class="h-8 w-full min-w-0 text-sm"
                     onValueChange={(next) => {
                         const item = versionItems.find(
                             (entry) => entry.id === next,
@@ -333,22 +318,6 @@
                 />
             </span>
         </div>
-        <PickerPopover
-            anchor={artifactAnchor}
-            bind:open={artifactOpen}
-            bind:query={artifactQuery}
-            items={artifactItems}
-            size="md"
-            search
-            heightReduction={140}
-            width={260}
-            label="Artifacts"
-            empty={artifactQuery ? 'No matching artifacts' : 'No artifacts yet'}
-            loading={artifactState.loading}
-            position="bottom-left"
-            onmore={() => root && void loadMoreArtifacts(root)}
-            onpick={picked}
-        />
         <div
             class="flex min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden"
             bind:clientWidth={actionsRoom}

@@ -10,16 +10,35 @@ const isWindows = process.platform === 'win32';
 // whisper-rs-sys runs bindgen, which needs the MSVC and Windows SDK headers, and CMake must pick the installed Visual
 // Studio. Only set when those folders exist and the caller has not set them, so other machines are not affected.
 function windowsBuildEnvironment() {
-    const programFiles =
+    const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+    const programFilesX86 =
         process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)';
-    const buildTools = join(
-        programFiles,
-        'Microsoft Visual Studio',
-        '2022',
-        'BuildTools',
+    const installations = [
+        {
+            root: join(
+                programFiles,
+                'Microsoft Visual Studio',
+                '18',
+                'Community',
+            ),
+            generator: 'Visual Studio 18 2026',
+        },
+        {
+            root: join(
+                programFilesX86,
+                'Microsoft Visual Studio',
+                '2022',
+                'BuildTools',
+            ),
+            generator: 'Visual Studio 17 2022',
+        },
+    ];
+    const installation = installations.find(({ root }) =>
+        existsSync(join(root, 'VC', 'Tools', 'MSVC')),
     );
-    const msvcRoot = join(buildTools, 'VC', 'Tools', 'MSVC');
-    const sdkRoot = join(programFiles, 'Windows Kits', '10', 'Include');
+    if (!installation) return {};
+    const msvcRoot = join(installation.root, 'VC', 'Tools', 'MSVC');
+    const sdkRoot = join(programFilesX86, 'Windows Kits', '10', 'Include');
     const llvmRoot = join(
         process.env.ProgramFiles ?? 'C:\\Program Files',
         'LLVM',
@@ -34,7 +53,14 @@ function windowsBuildEnvironment() {
     if (!msvc || !sdk || !clang) return {};
     const env = {};
     if (!process.env.CMAKE_GENERATOR)
-        env.CMAKE_GENERATOR = 'Visual Studio 17 2022';
+        env.CMAKE_GENERATOR = installation.generator;
+    const llvmBin = join(
+        process.env.ProgramFiles ?? 'C:\\Program Files',
+        'LLVM',
+        'bin',
+    );
+    if (!process.env.LIBCLANG_PATH && existsSync(join(llvmBin, 'libclang.dll')))
+        env.LIBCLANG_PATH = llvmBin;
     if (!process.env.BINDGEN_EXTRA_CLANG_ARGS) {
         // bindgen splits this value like a shell would: forward slashes keep backslashes from acting as escapes, and
         // spaces in the paths are escaped.

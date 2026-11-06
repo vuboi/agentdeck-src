@@ -364,6 +364,36 @@ pub fn models_listing(binary: std::ffi::OsString) -> String {
         .unwrap_or_default()
 }
 
+/// What the debug log keeps of one stdout line of `agy`: its event, step, state and tool. The text the agent wrote is
+/// never kept.
+pub fn trace_line(line: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return format!("unparsed {} bytes", line.len());
+    };
+    match value["event"].as_str().unwrap_or_default() {
+        "step_update" => {
+            let step = &value["step_update"];
+            format!(
+                "step_update index={} type={} state={} tool={} usage={}",
+                step["step_index"],
+                step["step_type"],
+                step["state"],
+                step["tool_name"],
+                step["usage"].is_object()
+            )
+        }
+        "result" => {
+            let result = &value["result"];
+            format!(
+                "result status={} denied={}",
+                result["status"],
+                result["denied_actions"].as_array().map_or(0, Vec::len)
+            )
+        }
+        other => format!("event={other}"),
+    }
+}
+
 /// A `%XX`-escaped path (as in a `file://` address) with the escapes resolved.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
