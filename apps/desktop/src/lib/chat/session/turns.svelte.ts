@@ -37,7 +37,8 @@ import {
 } from './state.svelte';
 import {
     liveReplies,
-    messagesOf,
+    messagesView,
+    ensureMessages,
     needsUserInput,
     replies,
     runReplies,
@@ -462,7 +463,7 @@ export function notifySessionWorkDone(sessionId: string) {
         )
             return;
     }
-    const last = [...messagesOf(sessionId)]
+    const last = [...messagesView(sessionId)]
         .reverse()
         .find((message) => message.role === 'assistant');
     const answer =
@@ -515,7 +516,7 @@ export const isRunning = (sessionId: string) =>
 export function stopChatWork(sessionId: string) {
     closeRunningActivity(sessionId);
     let changed = false;
-    for (const message of messagesOf(sessionId)) {
+    for (const message of ensureMessages(sessionId)) {
         for (const block of message.blocks) {
             if (
                 block.kind !== 'command' ||

@@ -82,7 +82,7 @@ export function logError(
                 ? undefined
                 : detail instanceof Error
                   ? `${detail.name}: ${detail.message}`
-                  : String(detail).slice(0, 1500);
+                  : String(detail).slice(0, 4000);
         const key = `${area}|${event}|${text?.slice(0, 120) ?? ''}|${ctx?.chat ?? ''}`;
         const now = Date.now();
         const seen = recent.get(key);

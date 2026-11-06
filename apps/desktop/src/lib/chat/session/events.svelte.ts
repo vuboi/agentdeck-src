@@ -118,7 +118,8 @@ import {
     liveAsks,
     liveHandouts,
     liveReplies,
-    messagesOf,
+    messagesView,
+    ensureMessages,
     needsUserInput,
     renderWaiters,
     replies,
@@ -200,7 +201,7 @@ function clearShellWait(turn: string | undefined, callId: string) {
 
 /** The request a run works on: the text of the newest user message sent at or before the run started. */
 function requestOf(sessionId: string, startedAt: number): string {
-    const list = messagesOf(sessionId);
+    const list = messagesView(sessionId);
     for (let index = list.length - 1; index >= 0; index--) {
         const message = list[index];
         if (message.role !== 'user') continue;
@@ -762,7 +763,7 @@ export function moveChatTo(
 
 /** The attachments of the user's latest request, sent again with a continuation (the request is what they were given). */
 function lastAttachments(sessionId: string): RecoveryState['attachments'] {
-    const asked = [...messagesOf(sessionId)]
+    const asked = [...messagesView(sessionId)]
         .reverse()
         .find((message) => message.role === 'user' && !hiddenPrompt(message));
     if (!asked) return { images: [], elements: [], files: [] };
@@ -923,7 +924,7 @@ async function runRecovery(
         // The provider changed without the user asking: the chat says so, in its own list, so the agents that answer
         // next are told it, and the user sees it.
         const at = new SvelteDate().toISOString();
-        messagesOf(session.id).push({
+        ensureMessages(session.id).push({
             id: nextId(),
             role: 'assistant',
             agent: from,
@@ -1256,7 +1257,7 @@ if (typeof window !== 'undefined') setInterval(checkResumes, 30_000);
 
 /** The words of the user's latest message, for a turn that carries on without it. */
 function lastRequest(sessionId: string): string {
-    const asked = [...messagesOf(sessionId)]
+    const asked = [...messagesView(sessionId)]
         .reverse()
         .find((message) => message.role === 'user' && !hiddenPrompt(message));
     return (
@@ -1421,7 +1422,7 @@ function requestChatSuggestions(
     const session = workspace.sessions.find((item) => item.id === sessionId);
     if (!session || (session.agent !== 'claude' && session.agent !== 'codex'))
         return;
-    const asked = messagesOf(sessionId).findLast(
+    const asked = messagesView(sessionId).findLast(
         (item) => item.role === 'user',
     );
     const prompt = (asked?.blocks ?? [])
@@ -1465,7 +1466,7 @@ function beginAutoTurn(sessionId: string, turn: string, messageId?: string) {
     const session = workspace.sessions.find((item) => item.id === sessionId);
     if (!session || runReplies.has(turn)) return;
     const besideForeground = Boolean(liveReplies[sessionId]?.live);
-    const list = messagesOf(sessionId);
+    const list = ensureMessages(sessionId);
     // Work the user stopped is not reported on: its "stopped" row is not a finished job.
     const candidates = activity.filter(
         (item) =>
@@ -1749,7 +1750,7 @@ function handleEventNow(
     if (ownedRun?.reply.dispatching) ownedRun.reply.dispatching = false;
     // Task ids correlate to their original cards even after the user has started a newer turn.
     if (event.kind === 'task') {
-        updateHistoricalTask(messagesOf(sessionId), event);
+        updateHistoricalTask(ensureMessages(sessionId), event);
     }
     const startsTailReply =
         event.kind === 'auto_turn' && turn?.startsWith('auto-');
@@ -1921,7 +1922,7 @@ function handleEventNow(
     const reply =
         ownedRun?.reply ??
         liveReplies[sessionId] ??
-        messagesOf(sessionId).find((item) => item.id === replies[sessionId]);
+        messagesView(sessionId).find((item) => item.id === replies[sessionId]);
     if (!session) return;
     // Codex writes a thread's rollout, and Claude its session file, only once a run has started. A run stopped before
     // that leaves an id with nothing to resume. The next message then starts a new conversation, instead of resuming
@@ -2143,7 +2144,7 @@ function handleEventNow(
     // A finished turn: this conversation has now seen every turn of the chat, its own reply included (see binding.ts).
     if (update.finished && event.kind !== 'error' && !ownedRun?.listener) {
         session.syncedSeq ??= {};
-        session.syncedSeq[agent] = messagesOf(sessionId).length;
+        session.syncedSeq[agent] = messagesView(sessionId).length;
     }
     // A finished reply whose question block was too broken for the deterministic parser: ask the session's own model to
     // repair the JSON, once, before the card would otherwise fall back to showing the raw block as text.
