@@ -126,7 +126,9 @@ export function projectChatWork(
         const titled = event.taskLabel || workTitle(event.input) || event.name;
         const live = ['running', 'background'].includes(event.status);
         const kind =
-            event.nativeTaskId || /agent|task|spawn/i.test(event.name)
+            event.nativeTaskId ||
+            event.childKind ||
+            /agent|task|spawn/i.test(event.name)
                 ? 'agent'
                 : 'command';
         // A background command of the provider: AgentDeck can end its process without stopping the chat's reply.
