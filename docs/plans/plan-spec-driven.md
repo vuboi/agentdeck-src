@@ -30,37 +30,37 @@ Phase 6 (làm sau, chỉ khi người dùng đồng ý) thêm: template spec ki�
 
 ## 1. Hiện trạng (đã đọc trong code)
 
-| Chỗ                                                                                     | Đang làm gì                                                                                                                                   | Liên quan phase |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| `apps/desktop/src-tauri/src/plans.rs:13-18`                                             | `WRITE_DIR = "docs/plans"`, `MAX_BODY = 256 KB`, 4 tool MCP, `MUTATION_LOCK`                                                                  | 1, 2, 5         |
-| `plans.rs:20-35` `PlanInfo`                                                             | id, path, title, status, agent, chat, source, created, updated, done, total, read_only                                                        | 1, 3            |
-| `plans.rs:37-47` `WriteReq`                                                             | title, body, status, id, agent, chat, source, base_updated                                                                                    | 2               |
-| `plans.rs:171` `parse_fm`, `:222` `update_key`, `:230` `render_fm`                      | Parser front matter phẳng                                                                                                                     | 1               |
-| `plans.rs:240` `counts`, `:709` `step_line`, `:713` `step_text`                         | Đếm bước `- [ ]` / `- [x]`                                                                                                                    | 1, 5            |
-| `plans.rs:476-606` `write`                                                              | `status` lấy từ tham số, mặc định `draft`. **MCP truyền `status: "approved"` thì được luôn** (`:483-486`, `:780`)                             | 2               |
-| `plans.rs:487-514`                                                                      | Auto-save cùng chat (`source` = `exit-plan-mode` / `codex-plan-mode`) cập nhật draft cũ                                                       | 2, 3            |
-| `plans.rs:631-643` `set_status`                                                         | Chỉ gọi từ Tauri `plans_set_status` (UI). Không ghi ai duyệt, lúc nào                                                                         | 2               |
-| `plans.rs:645-707` `set_step`                                                           | Tick bước; tự đổi status `draft/approved → doing`, đủ bước → `done`. **Không cần bằng chứng**                                                 | 5               |
-| `plans.rs:726-733` `tool_defs`                                                          | Mô tả 4 tool MCP                                                                                                                              | 2, 5            |
-| `plans.rs:735-828` `call`                                                               | Route MCP. `plan_write` emit `plan-changed`                                                                                                   | 2, 5            |
-| `apps/desktop/src-tauri/src/mcp.rs:952`                                                 | `instructions` của server MCP: "follow an approved plan, tick its steps with plan_step…"                                                      | 2, 5            |
-| `apps/desktop/src-tauri/src/lib.rs:717-789`                                             | Lệnh Tauri `plans_list/read/set_status/set_step/save`                                                                                         | 2, 3            |
-| `crates/adapters/src/agent/permission.rs:10-21, 95-102, 117-131`                        | 5 mode; mode `Plan` chỉ cho `Read` và `PlanWrite` (plan/artifact)                                                                             | 3               |
-| `apps/desktop/src/lib/chat/session/turns.svelte.ts:288-321`                             | `PERMISSION_MODE`, `chatTurnOptions`, `turnOptionsOf(sessionId)`                                                                              | 3               |
-| `apps/desktop/src/lib/chat/session/run.svelte.ts:805`                                   | `const permission = turnOptionsOf(session.id).permission;` → dùng ở `:808` (`runReplies`), `:995`, `:1185`                                    | 3               |
-| `run.svelte.ts:450, 485`                                                                | Prewarm cũng đọc `turnOptionsOf(...).permission`                                                                                              | 3               |
-| `run.svelte.ts:1093-1129`                                                               | Ghép hint đầu cuộc trò chuyện (`agentdeckLead(openHint, delegateHint, reminder, styleHint, memoryNote, profileNote, routing, LANGUAGE_RULE)`) | 4, 6            |
-| `apps/desktop/src/lib/components/chat/Composer.svelte:354-421`                          | State `permission` của từng chat, ghi vào `chatTurnOptions`                                                                                   | 3               |
-| `apps/desktop/src/lib/chat/session/events.svelte.ts:1633-1700+` `autoSavePlan`          | Claude `ExitPlanMode` → plan draft `source: exit-plan-mode`; Codex ở mode plan → `source: codex-plan-mode`                                    | 3               |
-| `apps/desktop/src/lib/plans/plans.svelte.ts`                                            | `plansCache[root]`, `loadPlans(root, refresh)`                                                                                                | 3               |
-| `apps/desktop/src/lib/components/plans/PlansView.svelte:113-157`                        | Menu: Open, Copy path, Set status (Approved/Doing/Done/Dropped)                                                                               | 2, 3, 4         |
-| `apps/desktop/src/lib/chat/slash.svelte.ts:144-159`                                     | `/plan`, `/plans` là template prompt                                                                                                          | 1, 4            |
-| `apps/desktop/src/lib/tasks/auto-review.ts:54-74` `reviewBrief`                         | Brief cho reviewer: chỉ request + file đổi                                                                                                    | 5               |
-| `apps/desktop/src/lib/chat/session/delegate-task.svelte.ts:1787-1827` `maybeAutoReview` | Gọi `reviewBrief(askText(source), paths, round)`                                                                                              | 5               |
-| `apps/desktop/src-tauri/src/delegate.rs:189-295` `DelegateArgs`, `parse_delegate`       | Tham số `delegate_task`: agent, model, role, task, wait, timeout_s, continue, depends_on, isolation                                           | 4               |
-| `apps/desktop/src-tauri/src/devtools.rs:29-35, 398-479` `run_checks`                    | Chạy script lint/typecheck/test/build của project                                                                                             | 5               |
-| `apps/desktop/src/lib/app/platform/automation.svelte.ts:12-31`                          | Store setting `automation` (compress, orchestrate, prehandle, review), lưu pref `chat.automation`                                             | 3               |
-| `apps/desktop/src-tauri/src/project_memory.rs`                                          | `.agentdeck/memory.md`, `.agentdeck/proposals.md` (chỉ lệnh Tauri, không có MCP)                                                              | 6               |
+| Chỗ | Đang làm gì | Liên quan phase |
+| --- | --- | --- |
+| `apps/desktop/src-tauri/src/plans.rs:13-18` | `WRITE_DIR = "docs/plans"`, `MAX_BODY = 256 KB`, 4 tool MCP, `MUTATION_LOCK` | 1, 2, 5 |
+| `plans.rs:20-35` `PlanInfo` | id, path, title, status, agent, chat, source, created, updated, done, total, read_only | 1, 3 |
+| `plans.rs:37-47` `WriteReq` | title, body, status, id, agent, chat, source, base_updated | 2 |
+| `plans.rs:171` `parse_fm`, `:222` `update_key`, `:230` `render_fm` | Parser front matter phẳng | 1 |
+| `plans.rs:240` `counts`, `:709` `step_line`, `:713` `step_text` | Đếm bước `- [ ]` / `- [x]` | 1, 5 |
+| `plans.rs:476-606` `write` | `status` lấy từ tham số, mặc định `draft`. **MCP truyền `status: "approved"` thì được luôn** (`:483-486`, `:780`) | 2 |
+| `plans.rs:487-514` | Auto-save cùng chat (`source` = `exit-plan-mode` / `codex-plan-mode`) cập nhật draft cũ | 2, 3 |
+| `plans.rs:631-643` `set_status` | Chỉ gọi từ Tauri `plans_set_status` (UI). Không ghi ai duyệt, lúc nào | 2 |
+| `plans.rs:645-707` `set_step` | Tick bước; tự đổi status `draft/approved → doing`, đủ bước → `done`. **Không cần bằng chứng** | 5 |
+| `plans.rs:726-733` `tool_defs` | Mô tả 4 tool MCP | 2, 5 |
+| `plans.rs:735-828` `call` | Route MCP. `plan_write` emit `plan-changed` | 2, 5 |
+| `apps/desktop/src-tauri/src/mcp.rs:952` | `instructions` của server MCP: "follow an approved plan, tick its steps with plan_step…" | 2, 5 |
+| `apps/desktop/src-tauri/src/lib.rs:717-789` | Lệnh Tauri `plans_list/read/set_status/set_step/save` | 2, 3 |
+| `crates/adapters/src/agent/permission.rs:10-21, 95-102, 117-131` | 5 mode; mode `Plan` chỉ cho `Read` và `PlanWrite` (plan/artifact) | 3 |
+| `apps/desktop/src/lib/chat/session/turns.svelte.ts:288-321` | `PERMISSION_MODE`, `chatTurnOptions`, `turnOptionsOf(sessionId)` | 3 |
+| `apps/desktop/src/lib/chat/session/run.svelte.ts:805` | `const permission = turnOptionsOf(session.id).permission;` → dùng ở `:808` (`runReplies`), `:995`, `:1185` | 3 |
+| `run.svelte.ts:450, 485` | Prewarm cũng đọc `turnOptionsOf(...).permission` | 3 |
+| `run.svelte.ts:1093-1129` | Ghép hint đầu cuộc trò chuyện (`agentdeckLead(openHint, delegateHint, reminder, styleHint, memoryNote, profileNote, routing, LANGUAGE_RULE)`) | 4, 6 |
+| `apps/desktop/src/lib/components/chat/Composer.svelte:354-421` | State `permission` của từng chat, ghi vào `chatTurnOptions` | 3 |
+| `apps/desktop/src/lib/chat/session/events.svelte.ts:1633-1700+` `autoSavePlan` | Claude `ExitPlanMode` → plan draft `source: exit-plan-mode`; Codex ở mode plan → `source: codex-plan-mode` | 3 |
+| `apps/desktop/src/lib/plans/plans.svelte.ts` | `plansCache[root]`, `loadPlans(root, refresh)` | 3 |
+| `apps/desktop/src/lib/components/plans/PlansView.svelte:113-157` | Menu: Open, Copy path, Set status (Approved/Doing/Done/Dropped) | 2, 3, 4 |
+| `apps/desktop/src/lib/chat/slash.svelte.ts:144-159` | `/plan`, `/plans` là template prompt | 1, 4 |
+| `apps/desktop/src/lib/tasks/auto-review.ts:54-74` `reviewBrief` | Brief cho reviewer: chỉ request + file đổi | 5 |
+| `apps/desktop/src/lib/chat/session/delegate-task.svelte.ts:1787-1827` `maybeAutoReview` | Gọi `reviewBrief(askText(source), paths, round)` | 5 |
+| `apps/desktop/src-tauri/src/delegate.rs:189-295` `DelegateArgs`, `parse_delegate` | Tham số `delegate_task`: agent, model, role, task, wait, timeout_s, continue, depends_on, isolation | 4 |
+| `apps/desktop/src-tauri/src/devtools.rs:29-35, 398-479` `run_checks` | Chạy script lint/typecheck/test/build của project | 5 |
+| `apps/desktop/src/lib/app/platform/automation.svelte.ts:12-31` | Store setting `automation` (compress, orchestrate, prehandle, review), lưu pref `chat.automation` | 3 |
+| `apps/desktop/src-tauri/src/project_memory.rs` | `.agentdeck/memory.md`, `.agentdeck/proposals.md` (chỉ lệnh Tauri, không có MCP) | 6 |
 
 Lỗ hổng chính, sắp theo phase:
 
@@ -91,13 +91,13 @@ Lỗ hổng chính, sắp theo phase:
 title: Thêm export CSV cho báo cáo
 status: draft
 agent: claude
-chat: 3f2a… # chat tạo plan (có sẵn)
+chat: 3f2a…            # chat tạo plan (có sẵn)
 source: exit-plan-mode # có sẵn
 created: 2026-11-05T10:00:00.000Z
 updated: 2026-11-05T10:05:00.000Z
-approved_at: 2026-11-05T10:06:00.000Z # MỚI: lúc người dùng duyệt; xoá khi plan về draft
-run_chat: 9c1b… # MỚI: chat đang làm theo plan (P4)
-gate: off # MỚI, tuỳ chọn: chat gắn plan này không bị ép mode plan (P3)
+approved_at: 2026-11-05T10:06:00.000Z   # MỚI: lúc người dùng duyệt; xoá khi plan về draft
+run_chat: 9c1b…                          # MỚI: chat đang làm theo plan (P4)
+gate: off                                # MỚI, tuỳ chọn: chat gắn plan này không bị ép mode plan (P3)
 ---
 ```
 
@@ -109,11 +109,11 @@ gate: off # MỚI, tuỳ chọn: chat gắn plan này không bị ép mode plan 
 
 ```markdown
 - [ ] Thêm hàm `toCsv(rows)` trong src/lib/report/csv.ts
-    - files: src/lib/report/csv.ts, src/lib/report/csv.test.ts
-    - verify: `pnpm --filter desktop test csv` pass
+  - files: src/lib/report/csv.ts, src/lib/report/csv.test.ts
+  - verify: `pnpm --filter desktop test csv` pass
 - [x] Nút Export trong ReportPage
-    - verify: bấm Export tải file .csv có header đúng
-    - evidence: 2026-11-05T11:20:00.000Z · claude · chạy pnpm test csv: 4 passed; mở app bấm Export, file có 3 cột
+  - verify: bấm Export tải file .csv có header đúng
+  - evidence: 2026-11-05T11:20:00.000Z · claude · chạy pnpm test csv: 4 passed; mở app bấm Export, file có 3 cột
 ```
 
 Luật parse (viết trong Rust, có test):
@@ -135,22 +135,22 @@ Luật parse (viết trong Rust, có test):
 **Việc làm** (`apps/desktop/src-tauri/src/plans.rs`):
 
 1. Thêm struct:
-    ```rust
-    #[derive(Clone, Debug, Default, Serialize, PartialEq)]
-    #[serde(rename_all = "camelCase")]
-    pub struct PlanStep {
-        pub number: usize,        // 1-based, như plan_step
-        pub text: String,         // = step_text(line)
-        pub done: bool,
-        pub files: Vec<String>,   // tách theo dấu phẩy, trim, bỏ rỗng, bỏ dấu backtick bao quanh
-        pub verify: Option<String>,
-        pub evidence: Option<String>,
-        /// Byte offset của dòng bước và hết khối dòng con, để P5 chèn evidence đúng chỗ.
-        #[serde(skip)]
-        pub span: (usize, usize),
-    }
-    pub fn steps(body: &str) -> Vec<PlanStep>
-    ```
+   ```rust
+   #[derive(Clone, Debug, Default, Serialize, PartialEq)]
+   #[serde(rename_all = "camelCase")]
+   pub struct PlanStep {
+       pub number: usize,        // 1-based, như plan_step
+       pub text: String,         // = step_text(line)
+       pub done: bool,
+       pub files: Vec<String>,   // tách theo dấu phẩy, trim, bỏ rỗng, bỏ dấu backtick bao quanh
+       pub verify: Option<String>,
+       pub evidence: Option<String>,
+       /// Byte offset của dòng bước và hết khối dòng con, để P5 chèn evidence đúng chỗ.
+       #[serde(skip)]
+       pub span: (usize, usize),
+   }
+   pub fn steps(body: &str) -> Vec<PlanStep>
+   ```
 2. `steps()` dùng đúng `step_line` / `step_text` hiện có. Không viết parser bước thứ hai.
 3. Thêm `pub fn front_key(text: &str, name: &str) -> Option<String>` nếu cần cho P2/P3; nếu đã đủ với `parse_fm` + `key` thì không thêm.
 4. Thêm vào `PlanInfo` (`plans.rs:22`): `approved_at: String` (rỗng nếu chưa có), `run_chat: String`, `gate: String`. Điền trong `info()` (`plans.rs:271`). Frontend `PlanInfo` (`apps/desktop/src/lib/plans/plans.svelte.ts:5-18`) thêm `approvedAt`, `runChat`, `gate`.
@@ -187,25 +187,25 @@ Chạy hai lệnh trong VS dev shell (xem `docs` / memory build: crate desktop c
 **Việc làm — Rust (`plans.rs`):**
 
 1. Tách nguồn ghi. `write()` nhận thêm biết ai gọi. Cách tối thiểu: dùng `req.source` có sẵn. Định nghĩa:
-    - `source == "mcp"` → **agent**.
-    - `source ∈ {"exit-plan-mode", "codex-plan-mode"}` → **auto-save**, cũng coi như agent.
-    - Lệnh Tauri `plans_save` (`lib.rs:767`) truyền `source` từ frontend; frontend hiện truyền `exit-plan-mode` / `codex-plan-mode`. Không có đường UI nào ghi body với quyền người dùng ⇒ coi mọi `write()` là agent. **Không thêm tham số mới.**
+   - `source == "mcp"` → **agent**.
+   - `source ∈ {"exit-plan-mode", "codex-plan-mode"}` → **auto-save**, cũng coi như agent.
+   - Lệnh Tauri `plans_save` (`lib.rs:767`) truyền `source` từ frontend; frontend hiện truyền `exit-plan-mode` / `codex-plan-mode`. Không có đường UI nào ghi body với quyền người dùng ⇒ coi mọi `write()` là agent. **Không thêm tham số mới.**
 2. Trong `write()` (`plans.rs:483-486`):
-    - Nếu `req.status` là `approved`, `doing` hoặc `done` → trả lỗi: `"only the user can set a plan to approved/doing/done; save it as draft and ask the user to approve it in Plans"`.
-    - Cho phép `draft` và `dropped` như cũ.
+   - Nếu `req.status` là `approved`, `doing` hoặc `done` → trả lỗi: `"only the user can set a plan to approved/doing/done; save it as draft and ask the user to approve it in Plans"`.
+   - Cho phép `draft` và `dropped` như cũ.
 3. Sửa plan đã duyệt: trong `write()`, khi `existing` có status `approved` hoặc `doing`:
-    - Nếu body mới khác body cũ (so sau khi chuẩn hoá `\r\n` → `\n` và trim cuối) → đặt status `draft`, xoá `approved_at`, giữ `run_chat`.
-    - Nếu body giống hệt → giữ status (agent ghi lại y nguyên không làm mất duyệt).
-    - Kết quả trả về tool phải nói rõ: `saved <id> (status=draft — the plan changed after approval, ask the user to approve it again)`.
-    - Plan status `done` sửa body → cũng về `draft` (đây là mở lại plan). Plan `dropped` sửa body → giữ `dropped`.
+   - Nếu body mới khác body cũ (so sau khi chuẩn hoá `\r\n` → `\n` và trim cuối) → đặt status `draft`, xoá `approved_at`, giữ `run_chat`.
+   - Nếu body giống hệt → giữ status (agent ghi lại y nguyên không làm mất duyệt).
+   - Kết quả trả về tool phải nói rõ: `saved <id> (status=draft — the plan changed after approval, ask the user to approve it again)`.
+   - Plan status `done` sửa body → cũng về `draft` (đây là mở lại plan). Plan `dropped` sửa body → giữ `dropped`.
 4. `set_status()` (`plans.rs:631`):
-    - `approved` → ghi `approved_at = now()`.
-    - `draft` → xoá `approved_at`.
-    - Các status khác giữ `approved_at` như cũ.
-    - Thêm `touch_updated(&mut fm)` trước `atomic_write`. Hiện `set_status` (`plans.rs:631-643`) **không** gọi nó, nên `updated` không đổi khi duyệt và `base_updated` của agent không phát hiện được.
+   - `approved` → ghi `approved_at = now()`.
+   - `draft` → xoá `approved_at`.
+   - Các status khác giữ `approved_at` như cũ.
+   - Thêm `touch_updated(&mut fm)` trước `atomic_write`. Hiện `set_status` (`plans.rs:631-643`) **không** gọi nó, nên `updated` không đổi khi duyệt và `base_updated` của agent không phát hiện được.
 5. Cập nhật mô tả tool (`plans.rs:728-731`):
-    - `plan_write`: thêm "Status can only be draft or dropped. Approval is the user's: after saving, tell the user to approve it in the Plans tab. Changing an approved plan sends it back to draft."
-    - `plan_list`: giữ, thêm "Only work on code for a plan whose status is approved or doing."
+   - `plan_write`: thêm "Status can only be draft or dropped. Approval is the user's: after saving, tell the user to approve it in the Plans tab. Changing an approved plan sends it back to draft."
+   - `plan_list`: giữ, thêm "Only work on code for a plan whose status is approved or doing."
 6. Cập nhật `instructions` MCP (`mcp.rs:952`), câu về Plans thành: "Plans: plan_list shows plans every AgentDeck agent shares. Only the user approves a plan (in the Plans tab); do not start code changes for a plan that is still draft. While working on an approved plan, tick each step with plan_step, and pass evidence for steps that have a verify line. Save a new plan with plan_write when you plan multi-step work."
 
 **Việc làm — UI (`PlansView.svelte`):**
@@ -262,52 +262,32 @@ Khi cổng bật: permission thực của lượt = `'plan'`, bất kể Compose
 
 1. `apps/desktop/src/lib/app/platform/automation.svelte.ts:12-17`: thêm `requirePlanApproval: false`. Pref cũ không có key → giữ `false` (do `Object.assign`).
 2. File mới `apps/desktop/src/lib/plans/plan-gate.ts` (thuần, không import store, để node test được):
-    ```ts
-    export type GatePlan = Pick<
-        PlanInfo,
-        | 'id'
-        | 'status'
-        | 'chat'
-        | 'runChat'
-        | 'source'
-        | 'gate'
-        | 'updated'
-        | 'readOnly'
-    >;
-    export function boundPlan(
-        plans: GatePlan[],
-        chatId: string,
-    ): GatePlan | null;
-    export function gated(input: {
-        enabled: boolean;
-        worker: boolean;
-        plan: GatePlan | null;
-    }): boolean;
-    export function effectivePermission(
-        chosen: Permission,
-        isGated: boolean,
-    ): Permission; // isGated ? 'plan' : chosen
-    ```
+   ```ts
+   export type GatePlan = Pick<PlanInfo, 'id' | 'status' | 'chat' | 'runChat' | 'source' | 'gate' | 'updated' | 'readOnly'>;
+   export function boundPlan(plans: GatePlan[], chatId: string): GatePlan | null;
+   export function gated(input: { enabled: boolean; worker: boolean; plan: GatePlan | null }): boolean;
+   export function effectivePermission(chosen: Permission, isGated: boolean): Permission; // isGated ? 'plan' : chosen
+   ```
 3. File mới `apps/desktop/src/lib/plans/plan-gate.svelte.ts` (nối store):
-    ```ts
-    export function gatePlanOf(sessionId: string): PlanInfo | null; // đọc plansCache[projectOf(session).path]
-    export function permissionOf(sessionId: string): Permission; // effectivePermission(turnOptionsOf(id).permission, gated(...))
-    ```
-    - `projectOf` / `sessionCwd`: dùng hàm có sẵn trong `chat/sessions.svelte`. Lấy root bằng `projectOf(session)?.path` giống `autoSavePlan` (`events.svelte.ts:1653`).
-    - Nếu `plansCache[root]` chưa có, gọi `void loadPlans(root)` và coi như chưa gắn (không chặn). Ghi chú điều này trong comment.
+   ```ts
+   export function gatePlanOf(sessionId: string): PlanInfo | null; // đọc plansCache[projectOf(session).path]
+   export function permissionOf(sessionId: string): Permission;     // effectivePermission(turnOptionsOf(id).permission, gated(...))
+   ```
+   - `projectOf` / `sessionCwd`: dùng hàm có sẵn trong `chat/sessions.svelte`. Lấy root bằng `projectOf(session)?.path` giống `autoSavePlan` (`events.svelte.ts:1653`).
+   - Nếu `plansCache[root]` chưa có, gọi `void loadPlans(root)` và coi như chưa gắn (không chặn). Ghi chú điều này trong comment.
 4. `run.svelte.ts`:
-    - `:805` → `const permission = permissionOf(session.id);`
-    - `:450` và `:485` (prewarm) → `PERMISSION_MODE[permissionOf(session.id)]`.
-    - Không đổi chỗ khác. `:995` và `:1185` đã dùng biến `permission` ở `:805` — kiểm tra lại scope; nếu không cùng scope thì đổi theo cùng cách.
-    - `runReplies.set(... permission ...)` ở `:808` nhận permission thực ⇒ `autoSavePlan` của Codex (`events.svelte.ts:1686`) sẽ tự lưu plan khi chat bị ép mode plan. Đây là hành vi mong muốn; ghi trong PR.
+   - `:805` → `const permission = permissionOf(session.id);`
+   - `:450` và `:485` (prewarm) → `PERMISSION_MODE[permissionOf(session.id)]`.
+   - Không đổi chỗ khác. `:995` và `:1185` đã dùng biến `permission` ở `:805` — kiểm tra lại scope; nếu không cùng scope thì đổi theo cùng cách.
+   - `runReplies.set(... permission ...)` ở `:808` nhận permission thực ⇒ `autoSavePlan` của Codex (`events.svelte.ts:1686`) sẽ tự lưu plan khi chat bị ép mode plan. Đây là hành vi mong muốn; ghi trong PR.
 5. Nạp plan cho chat đang mở: khi chat active đổi, gọi `loadPlans(root)` (một `$effect` trong `plan-gate.svelte.ts` hoặc trong component Chat; chọn chỗ có sẵn effect theo `workspace.activeId`, đừng tạo effect toàn cục mới nếu đã có chỗ phù hợp).
 6. Lắng nghe `plan-changed` (đã có trong `PlansView.svelte:94`) — cần thêm một listener ở module scope trong `plan-gate.svelte.ts` để refresh `plansCache` khi tab Plans không mở (giống cách `canvas.svelte.ts` lắng nghe `artifact-changed` ở module scope). Chỉ đăng ký khi `inTauri() && !isPreviewCopy()`.
 7. **UI — dải báo trong chat** (Composer hoặc ngay trên Composer, tìm chỗ hiện cảnh báo có sẵn như queue/limit để copy style):
-    - Khi `gated` → một dòng: `Plan "<title>" chưa duyệt — chat chạy ở chế độ Plan (chỉ đọc).` + nút `Approve` + nút `Open plan` + menu `…` có `Run without approval` (ghi `gate: off`).
-    - Nút Approve gọi `plans_set_status(root, id, 'approved')`.
-    - `Open plan` dùng `openProjectFile(plan.path, root)`.
-    - Style: `border`, nền phẳng, chữ `text-sm`, icon `lucideClipboardList`. Không màu mới, không badge.
-    - Trigger chọn permission của Composer: khi gated, hiển thị tooltip "Đang bị ép Plan bởi plan chưa duyệt" (không đổi giá trị chọn).
+   - Khi `gated` → một dòng: `Plan "<title>" chưa duyệt — chat chạy ở chế độ Plan (chỉ đọc).` + nút `Approve` + nút `Open plan` + menu `…` có `Run without approval` (ghi `gate: off`).
+   - Nút Approve gọi `plans_set_status(root, id, 'approved')`.
+   - `Open plan` dùng `openProjectFile(plan.path, root)`.
+   - Style: `border`, nền phẳng, chữ `text-sm`, icon `lucideClipboardList`. Không màu mới, không badge.
+   - Trigger chọn permission của Composer: khi gated, hiển thị tooltip "Đang bị ép Plan bởi plan chưa duyệt" (không đổi giá trị chọn).
 8. **Rust — ghi `gate: off`:** thêm lệnh Tauri `plans_set_gate(root, id, gate: Option<String>)` trong `lib.rs` gần `plans_set_status`, gọi hàm mới `plans::set_gate(root, id, off: bool)` (khoá `MUTATION_LOCK`, `ensure_frontmatter`, `update_key("gate","off")` hoặc xoá key, `touch_updated`, emit `plan-changed`). Đăng ký trong `generate_handler!` (`lib.rs:2781`). `build.rs` tự sinh permission; commit file `permissions/autogenerated/plans_set_gate.toml` mới sinh ra.
 9. **Công tắc:** công tắc Auto review hiện nằm trong popover model của chat (`apps/desktop/src/lib/components/chat/ModelPicker.svelte:546`, bind `automation.review`). Thêm công tắc "Require approved plan" ngay dưới nó, cùng markup. Mô tả ngắn: "A chat that saved a plan stays in Plan mode until you approve that plan." Quy tắc "sửa ModelPicker thì sửa ImageGenerator" trong `AGENTS.md` nói về cấu trúc danh sách model; công tắc này chỉ thuộc chat, không thêm vào ImageGenerator. Nếu không chắc, hỏi người dùng.
 
@@ -344,31 +324,31 @@ Khi cổng bật: permission thực của lượt = `'plan'`, bất kể Compose
 
 1. `plans.rs`: hàm `set_run_chat(root, id, chat: &str)` (khoá, `update_key("run_chat", chat)`, `touch_updated`, ghi). Lệnh Tauri `plans_set_run_chat` trong `lib.rs`, đăng ký `generate_handler!`, commit file permission sinh ra.
 2. `plans.rs`: hàm `step_brief(root, id, number) -> Result<String, String>` trả text ngắn cho worker:
-    ```
-    Plan <id> "<title>" (status=<status>), step <n>/<total>: <text>
-    Files: <files hoặc "not listed">
-    Verify: <verify hoặc "not listed">
-    When this step is done and verified, report the evidence (commands run and their result). Do not tick plan steps yourself; the lead ticks them with plan_step.
-    ```
+   ```
+   Plan <id> "<title>" (status=<status>), step <n>/<total>: <text>
+   Files: <files hoặc "not listed">
+   Verify: <verify hoặc "not listed">
+   When this step is done and verified, report the evidence (commands run and their result). Do not tick plan steps yourself; the lead ticks them with plan_step.
+   ```
 3. `delegate.rs`:
-    - `DelegateArgs` (`:191`) thêm `plan_id: Option<String>`, `plan_step: Option<usize>`.
-    - `parse_delegate` (`:235`): đọc `plan_id` (text), `plan_step` (số ≥ 1, chấp nhận chuỗi số như `seconds_of` đang làm). Có `plan_step` mà không có `plan_id` → lỗi `"plan_step needs plan_id"`.
-    - Mô tả tool trong `tool_defs` (`:112-130`): thêm 2 thuộc tính, mô tả: "plan_id and plan_step: the approved plan and the 1-based step this worker does. AgentDeck adds the step, its files and its verify line to the task."
-    - Ở chỗ dựng prompt cho worker (tìm nơi `task` được gửi sang frontend `onDelegateCall` / payload JSON `:503`): thêm `plan_id`, `plan_step` vào payload. **Ghép brief ở Rust** bằng `plans::step_brief` trước `task`, để mọi provider nhận giống nhau. Nếu plan không tồn tại hoặc status không phải `approved`/`doing` → lỗi trả về agent: `"plan <id> is <status>; only an approved plan can be delegated"`.
-    - Test trong `delegate.rs`: parse có/không plan; `plan_step` thiếu `plan_id` lỗi; chuỗi `"2"` thành 2.
+   - `DelegateArgs` (`:191`) thêm `plan_id: Option<String>`, `plan_step: Option<usize>`.
+   - `parse_delegate` (`:235`): đọc `plan_id` (text), `plan_step` (số ≥ 1, chấp nhận chuỗi số như `seconds_of` đang làm). Có `plan_step` mà không có `plan_id` → lỗi `"plan_step needs plan_id"`.
+   - Mô tả tool trong `tool_defs` (`:112-130`): thêm 2 thuộc tính, mô tả: "plan_id and plan_step: the approved plan and the 1-based step this worker does. AgentDeck adds the step, its files and its verify line to the task."
+   - Ở chỗ dựng prompt cho worker (tìm nơi `task` được gửi sang frontend `onDelegateCall` / payload JSON `:503`): thêm `plan_id`, `plan_step` vào payload. **Ghép brief ở Rust** bằng `plans::step_brief` trước `task`, để mọi provider nhận giống nhau. Nếu plan không tồn tại hoặc status không phải `approved`/`doing` → lỗi trả về agent: `"plan <id> is <status>; only an approved plan can be delegated"`.
+   - Test trong `delegate.rs`: parse có/không plan; `plan_step` thiếu `plan_id` lỗi; chuỗi `"2"` thành 2.
 4. MCP instructions (`mcp.rs:952`): thêm "When you hand a step of an approved plan to another agent, pass plan_id and plan_step to delegate_task."
 
 **Việc làm — UI:**
 
 5. `PlansView.svelte` menu: thêm `Approve & run` (khi draft) và `Run` (khi approved). Hành động:
-    - (Approve & run) gọi `plans_set_status(approved)`.
-    - Tạo chat mới trong project của plan (tìm hàm tạo chat có sẵn, ví dụ hàm mà nút "New session" gọi; dùng lại, đừng viết mới), agent = agent mặc định của chat mới.
-    - Gọi `plans_set_run_chat(root, id, newChatId)`.
-    - Gửi prompt đầu tiên (template, đặt trong `slash.svelte.ts` cạnh `/plan` để dễ sửa):
-        ```
-        Work on the approved plan <id> ("<title>"). Read it with plan_read. Do the steps in order. After each step, run its verify line, then tick it with plan_step and pass evidence (the commands you ran and their result). If a step turns out wrong, stop and tell me; do not rewrite the plan without asking.
-        ```
-    - Chuyển màn hình sang chat mới.
+   - (Approve & run) gọi `plans_set_status(approved)`.
+   - Tạo chat mới trong project của plan (tìm hàm tạo chat có sẵn, ví dụ hàm mà nút "New session" gọi; dùng lại, đừng viết mới), agent = agent mặc định của chat mới.
+   - Gọi `plans_set_run_chat(root, id, newChatId)`.
+   - Gửi prompt đầu tiên (template, đặt trong `slash.svelte.ts` cạnh `/plan` để dễ sửa):
+     ```
+     Work on the approved plan <id> ("<title>"). Read it with plan_read. Do the steps in order. After each step, run its verify line, then tick it with plan_step and pass evidence (the commands you ran and their result). If a step turns out wrong, stop and tell me; do not rewrite the plan without asking.
+     ```
+   - Chuyển màn hình sang chat mới.
 6. Thêm slash `/run-plan <id>` dùng cùng template (cho người gõ tay). Nếu không có id → template bảo agent gọi `plan_list` và hỏi người dùng chọn plan approved.
 7. Hàng plan trong PlansView: nếu có `runChat` và chat đó còn tồn tại trong `workspace.sessions` → thêm item menu `Open chat` (focus chat đó).
 
@@ -396,11 +376,11 @@ Khi cổng bật: permission thực của lượt = `'plan'`, bất kể Compose
 **Việc làm — Rust (`plans.rs`):**
 
 1. `set_step(root, id, step, done, evidence: Option<&str>, agent: &str)`:
-    - Đổi chữ ký; cập nhật mọi chỗ gọi (`call()` `:815`, lệnh Tauri `plans_set_step` `lib.rs:742`).
-    - Khi `done == true` và bước có `verify` (dùng `steps()` của P1) và `evidence` rỗng/thiếu → lỗi: `"step <n> has a verify line: pass evidence (the commands you ran and their result)"`.
-    - Khi có `evidence`: cắt còn tối đa 2000 ký tự, thay xuống dòng bằng `; `, rồi ghi/ thay dòng con `evidence:` của bước đó: `  - evidence: <now()> · <agent hoặc "user"> · <text>`. Dùng `span` của `PlanStep` để chèn ngay sau khối dòng con của bước (hoặc thay dòng evidence cũ). Thụt lề = thụt của bước + 2 dấu cách.
-    - Khi `done == false`: giữ dòng evidence (lịch sử), không xoá.
-    - Lệnh Tauri (UI tick tay) truyền `evidence: None`, `agent: ""` — **UI được tick không cần evidence** (người dùng tự chịu). Chỉ MCP bị bắt buộc. Thực hiện bằng tham số `require_evidence: bool` (MCP: true, Tauri: false) thay vì so `agent`.
+   - Đổi chữ ký; cập nhật mọi chỗ gọi (`call()` `:815`, lệnh Tauri `plans_set_step` `lib.rs:742`).
+   - Khi `done == true` và bước có `verify` (dùng `steps()` của P1) và `evidence` rỗng/thiếu → lỗi: `"step <n> has a verify line: pass evidence (the commands you ran and their result)"`.
+   - Khi có `evidence`: cắt còn tối đa 2000 ký tự, thay xuống dòng bằng `; `, rồi ghi/ thay dòng con `evidence:` của bước đó: `  - evidence: <now()> · <agent hoặc "user"> · <text>`. Dùng `span` của `PlanStep` để chèn ngay sau khối dòng con của bước (hoặc thay dòng evidence cũ). Thụt lề = thụt của bước + 2 dấu cách.
+   - Khi `done == false`: giữ dòng evidence (lịch sử), không xoá.
+   - Lệnh Tauri (UI tick tay) truyền `evidence: None`, `agent: ""` — **UI được tick không cần evidence** (người dùng tự chịu). Chỉ MCP bị bắt buộc. Thực hiện bằng tham số `require_evidence: bool` (MCP: true, Tauri: false) thay vì so `agent`.
 2. `call()` `plan_step`: đọc `args["evidence"]` (text), `args["agent"]` (text, tuỳ chọn). Trả về thêm `; evidence saved` khi có.
 3. `tool_defs` `plan_step`: thêm thuộc tính `evidence` (string) và `agent` (string). Mô tả: "For a step with a verify line, done=true needs evidence: the commands you ran and what they showed."
 4. `plan_read` output (`:757-773`): không đổi định dạng (agent vẫn đọc body thô có dòng con).
@@ -408,15 +388,15 @@ Khi cổng bật: permission thực của lượt = `'plan'`, bất kể Compose
 **Việc làm — auto review (`apps/desktop/src/lib/tasks/auto-review.ts`, `delegate-task.svelte.ts:1787-1827`):**
 
 5. `reviewBrief(request, paths, round, plan?: { id: string; title: string; steps: { number: number; text: string; done: boolean; verify?: string; evidence?: string }[] })`.
-    - Khi có `plan`: thêm một đoạn sau "User's request":
-        ```
-        Plan <id> "<title>" this work follows:
-        - [x] 1. <text> — verify: <verify> — evidence: <evidence>
-        - [ ] 2. <text> — verify: <verify>
-        For each ticked step, check the change does what the step says and its verify line holds (run it when it is cheap). A ticked step whose verify does not hold is a FAIL. Do not fail unticked steps.
-        ```
-    - Cắt mỗi dòng ở 300 ký tự, tối đa 40 bước (giống `PATHS_MAX`).
-    - Hàm vẫn thuần (không import store); test được bằng node.
+   - Khi có `plan`: thêm một đoạn sau "User's request":
+     ```
+     Plan <id> "<title>" this work follows:
+     - [x] 1. <text> — verify: <verify> — evidence: <evidence>
+     - [ ] 2. <text> — verify: <verify>
+     For each ticked step, check the change does what the step says and its verify line holds (run it when it is cheap). A ticked step whose verify does not hold is a FAIL. Do not fail unticked steps.
+     ```
+   - Cắt mỗi dòng ở 300 ký tự, tối đa 40 bước (giống `PATHS_MAX`).
+   - Hàm vẫn thuần (không import store); test được bằng node.
 6. Lấy dữ liệu bước cho reviewer: cần bước đã parse. Thêm lệnh Tauri `plans_steps(root, id) -> Vec<PlanStep>` gọi `plans::steps(&body)`. Trong `maybeAutoReview` (async được không? hiện là sync `function`): đổi thành gọi `void` một hàm async nhỏ lấy steps rồi `startTask(...)`. Giữ nguyên điều kiện `shouldAutoReview`. Chat không gắn plan → không đổi gì.
 7. Test node cho `reviewBrief` có/không plan (thêm vào test hiện có của auto-review nếu có; nếu chưa có, tạo `auto-review.test.ts`).
 
@@ -440,9 +420,9 @@ Mỗi mục dưới đây là một commit riêng. Không làm mục nào khi ch
 **6.1 Template spec (`/spec`):**
 
 - Slash mới `/spec <mô tả>` trong `slash.svelte.ts`: prompt yêu cầu agent viết plan có 3 phần trong cùng một file:
-    - `## Requirements`: user story + acceptance criteria dạng EARS (`WHEN <điều kiện> THE SYSTEM SHALL <hành vi>`), đánh số `R1`, `R2`…
-    - `## Design`: quyết định, file/module chạm vào, dữ liệu, rủi ro.
-    - `## Tasks`: checklist `- [ ]`, mỗi bước có `- verify:` và `- covers: R1, R2`.
+  - `## Requirements`: user story + acceptance criteria dạng EARS (`WHEN <điều kiện> THE SYSTEM SHALL <hành vi>`), đánh số `R1`, `R2`…
+  - `## Design`: quyết định, file/module chạm vào, dữ liệu, rủi ro.
+  - `## Tasks`: checklist `- [ ]`, mỗi bước có `- verify:` và `- covers: R1, R2`.
 - Rust: `steps()` đọc thêm dòng con `covers:`. `plan_write` cảnh báo (không lỗi) nếu có `## Requirements` mà có R không được bước nào `covers` — trả trong text kết quả.
 - PlansView: hàng plan có `R x/y covered` khi plan có Requirements.
 - Giữ `/plan` gọn cho việc nhỏ.
@@ -512,23 +492,23 @@ P1 (parser) ──► P2 (duyệt thật) ──► P3 (cổng trong chat) ─�
 
 ## 8. Danh sách file dự kiến đổi
 
-| File                                                                                                                  | Phase         | Đổi gì                                                                                         |
-| --------------------------------------------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------- |
-| `apps/desktop/src-tauri/src/plans.rs`                                                                                 | 1, 2, 3, 4, 5 | `PlanStep`, `steps()`, key mới, luật duyệt, `set_gate`, `set_run_chat`, `step_brief`, evidence |
-| `apps/desktop/src-tauri/src/lib.rs`                                                                                   | 3, 4, 5       | Lệnh `plans_set_gate`, `plans_set_run_chat`, `plans_steps`; đổi chữ ký `plans_set_step`        |
-| `apps/desktop/src-tauri/src/mcp.rs`                                                                                   | 2, 4          | Câu Plans trong `instructions`                                                                 |
-| `apps/desktop/src-tauri/src/delegate.rs`                                                                              | 4             | `plan_id`, `plan_step`                                                                         |
-| `apps/desktop/src-tauri/permissions/autogenerated/plans_set_gate.toml`, `plans_set_run_chat.toml`, `plans_steps.toml` | 3, 4, 5       | Sinh bởi build, commit                                                                         |
-| `apps/desktop/src/lib/plans/plans.svelte.ts`                                                                          | 1             | `PlanInfo` thêm `approvedAt`, `runChat`, `gate`                                                |
-| `apps/desktop/src/lib/plans/plan-gate.ts` (+ `.test.ts`)                                                              | 3             | Hàm thuần                                                                                      |
-| `apps/desktop/src/lib/plans/plan-gate.svelte.ts`                                                                      | 3, 4          | Nối store, listener `plan-changed`                                                             |
-| `apps/desktop/src/lib/app/platform/automation.svelte.ts`                                                              | 3             | `requirePlanApproval`                                                                          |
-| `apps/desktop/src/lib/chat/session/run.svelte.ts`                                                                     | 3, 4          | `permissionOf`, `planNote`                                                                     |
-| `apps/desktop/src/lib/components/chat/Composer.svelte` (hoặc component dải báo gần nó)                                | 3             | Dải báo plan chưa duyệt                                                                        |
-| `apps/desktop/src/lib/components/plans/PlansView.svelte`                                                              | 2, 4          | Approve, Approve & run, Run, Open chat                                                         |
-| `apps/desktop/src/lib/components/settings/…` (nơi có công tắc Auto review)                                            | 3             | Công tắc mới                                                                                   |
-| `apps/desktop/src/lib/chat/slash.svelte.ts`                                                                           | 4 (6.1)       | Template run plan, `/run-plan` (`/spec`)                                                       |
-| `apps/desktop/src/lib/tasks/auto-review.ts` (+ test)                                                                  | 5             | `reviewBrief` nhận plan                                                                        |
-| `apps/desktop/src/lib/chat/session/delegate-task.svelte.ts`                                                           | 5             | `maybeAutoReview` lấy steps                                                                    |
-| `docs/user-guides/plans-and-canvas.md`                                                                                | 2–5           | Cập nhật hướng dẫn: duyệt, cổng, evidence                                                      |
-| `docs/release-notes/vX.Y.Z.md`                                                                                        | cuối          | "What's new" + "Fixes" (theo quy ước release notes)                                            |
+| File | Phase | Đổi gì |
+| --- | --- | --- |
+| `apps/desktop/src-tauri/src/plans.rs` | 1, 2, 3, 4, 5 | `PlanStep`, `steps()`, key mới, luật duyệt, `set_gate`, `set_run_chat`, `step_brief`, evidence |
+| `apps/desktop/src-tauri/src/lib.rs` | 3, 4, 5 | Lệnh `plans_set_gate`, `plans_set_run_chat`, `plans_steps`; đổi chữ ký `plans_set_step` |
+| `apps/desktop/src-tauri/src/mcp.rs` | 2, 4 | Câu Plans trong `instructions` |
+| `apps/desktop/src-tauri/src/delegate.rs` | 4 | `plan_id`, `plan_step` |
+| `apps/desktop/src-tauri/permissions/autogenerated/plans_set_gate.toml`, `plans_set_run_chat.toml`, `plans_steps.toml` | 3, 4, 5 | Sinh bởi build, commit |
+| `apps/desktop/src/lib/plans/plans.svelte.ts` | 1 | `PlanInfo` thêm `approvedAt`, `runChat`, `gate` |
+| `apps/desktop/src/lib/plans/plan-gate.ts` (+ `.test.ts`) | 3 | Hàm thuần |
+| `apps/desktop/src/lib/plans/plan-gate.svelte.ts` | 3, 4 | Nối store, listener `plan-changed` |
+| `apps/desktop/src/lib/app/platform/automation.svelte.ts` | 3 | `requirePlanApproval` |
+| `apps/desktop/src/lib/chat/session/run.svelte.ts` | 3, 4 | `permissionOf`, `planNote` |
+| `apps/desktop/src/lib/components/chat/Composer.svelte` (hoặc component dải báo gần nó) | 3 | Dải báo plan chưa duyệt |
+| `apps/desktop/src/lib/components/plans/PlansView.svelte` | 2, 4 | Approve, Approve & run, Run, Open chat |
+| `apps/desktop/src/lib/components/settings/…` (nơi có công tắc Auto review) | 3 | Công tắc mới |
+| `apps/desktop/src/lib/chat/slash.svelte.ts` | 4 (6.1) | Template run plan, `/run-plan` (`/spec`) |
+| `apps/desktop/src/lib/tasks/auto-review.ts` (+ test) | 5 | `reviewBrief` nhận plan |
+| `apps/desktop/src/lib/chat/session/delegate-task.svelte.ts` | 5 | `maybeAutoReview` lấy steps |
+| `docs/user-guides/plans-and-canvas.md` | 2–5 | Cập nhật hướng dẫn: duyệt, cổng, evidence |
+| `docs/release-notes/vX.Y.Z.md` | cuối | "What's new" + "Fixes" (theo quy ước release notes) |
