@@ -346,7 +346,7 @@
     aria-label="Usage"
 >
     <div
-        class="flex shrink-0 items-center gap-2 border-b border-border px-1.5 py-1.5"
+        class="tool-header flex shrink-0 items-center gap-2 border-b border-border px-1.5"
     >
         <ZTabs
             zTabs={RANGES.map(({ value, label }) => ({ value, label }))}

@@ -158,7 +158,7 @@ export function parseCustomModel(value: string | null | undefined) {
 }
 
 /** What a local model's thinking can be set to: off, or a level (sent as `reasoning_effort`). */
-const chattable = () =>
+export const chattable = () =>
     connectors.custom.filter(
         (provider) => provider.enabled && provider.kind !== 'anthropic',
     );
@@ -326,6 +326,7 @@ export const SKILL_PROVIDER_IDS = [
     'opencode',
     'antigravity',
     'copilot',
+    'command-code',
 ] as const satisfies readonly BuiltInProviderId[];
 /** Providers whose native MCP configuration can be edited by the MCP Store. */
 export const MCP_PROVIDER_IDS = [
@@ -333,6 +334,8 @@ export const MCP_PROVIDER_IDS = [
     'codex',
     'antigravity',
     'copilot',
+    'opencode',
+    'command-code',
 ] as const satisfies readonly BuiltInProviderId[];
 
 /** Built-in provider rows for Store selectors, sourced from the same registry as the model picker. */

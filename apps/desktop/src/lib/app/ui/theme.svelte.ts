@@ -2,6 +2,9 @@ import {
     neutralTokens,
     primaryTokens,
     radiusTokens,
+    surfaceTokens,
+    type DarkStyle,
+    type LightStyle,
     type Mode,
     type Neutral,
     type Primary,
@@ -31,6 +34,21 @@ export const SANS_FONTS = [
         label: 'Be Vietnam Pro',
         stack: "'Be Vietnam Pro', ui-sans-serif, system-ui, sans-serif",
     },
+    {
+        value: 'geist',
+        label: 'Geist',
+        stack: "'Geist Variable', ui-sans-serif, system-ui, sans-serif",
+    },
+    {
+        value: 'roboto',
+        label: 'Roboto',
+        stack: "'Roboto Variable', ui-sans-serif, system-ui, sans-serif",
+    },
+    {
+        value: 'manrope',
+        label: 'Manrope',
+        stack: "'Manrope Variable', ui-sans-serif, system-ui, sans-serif",
+    },
 ] as const;
 /** Fonts of code and monospace text. `stack` null: the system default (no override). */
 export const MONO_FONTS = [
@@ -45,6 +63,21 @@ export const MONO_FONTS = [
         label: 'Cascadia Code',
         stack: "'Cascadia Code Variable', ui-monospace, monospace",
     },
+    {
+        value: 'fira-code',
+        label: 'Fira Code',
+        stack: "'Fira Code Variable', ui-monospace, monospace",
+    },
+    {
+        value: 'source-code-pro',
+        label: 'Source Code Pro',
+        stack: "'Source Code Pro Variable', ui-monospace, monospace",
+    },
+    {
+        value: 'geist-mono',
+        label: 'Geist Mono',
+        stack: "'Geist Mono Variable', ui-monospace, monospace",
+    },
 ] as const;
 export type SansFont = (typeof SANS_FONTS)[number]['value'];
 export type MonoFont = (typeof MONO_FONTS)[number]['value'];
@@ -57,6 +90,8 @@ type Saved = {
     fontSize: number;
     uiFont: SansFont;
     codeFont: MonoFont;
+    darkStyle: DarkStyle;
+    lightStyle: LightStyle;
 };
 const DEFAULTS: Saved = {
     primary: 'violet',
@@ -67,6 +102,8 @@ const DEFAULTS: Saved = {
     fontSize: UI_FONT_SIZE.default,
     uiFont: 'system',
     codeFont: 'system',
+    darkStyle: 'charcoal',
+    lightStyle: 'white',
 };
 // The corner radii live in app.css (--radius-small / --radius-large). `--radius` itself is what z-ui falls back to when
 // something reads it directly: the large size.
@@ -145,6 +182,10 @@ class Theme {
     /** The font of the app's text and of the code text (see SANS_FONTS / MONO_FONTS). */
     uiFont = $state<SansFont>(initial.uiFont);
     codeFont = $state<MonoFont>(initial.codeFont);
+    /** The dark surfaces (see DARK_STYLES); used only while the app is dark. */
+    darkStyle = $state<DarkStyle>(initial.darkStyle);
+    /** The light surfaces (see LIGHT_STYLES); used only while the app is light. */
+    lightStyle = $state<LightStyle>(initial.lightStyle);
     private systemDark = $state(media.matches);
 
     readonly dark = $derived(
@@ -157,6 +198,10 @@ class Theme {
     settledKey = $state('');
     private readonly tokens = $derived({
         ...neutralTokens(this.neutral, this.dark),
+        ...surfaceTokens(
+            this.dark,
+            this.dark ? this.darkStyle : this.lightStyle,
+        ),
         ...primaryTokens(this.primary, this.dark),
         ...radiusTokens(this.radius),
     });
@@ -244,6 +289,8 @@ class Theme {
                         fontSize: this.uiFontSize,
                         uiFont: this.uiFont,
                         codeFont: this.codeFont,
+                        darkStyle: this.darkStyle,
+                        lightStyle: this.lightStyle,
                     };
                     localStorage.setItem(KEY, JSON.stringify(saved));
                 } catch {

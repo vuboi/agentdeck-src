@@ -8,13 +8,14 @@ User requirement: skill install/sync/update must reach the AI provider's real sk
 
 Paths below are AgentDeck's configured destinations, not a guarantee that every native CLI version supports every alias. Verify discovery against the installed runtime when adding/changing a provider.
 
-| Provider | Global destination | Project destination |
-| --- | --- | --- |
-| Claude | `~/.claude/skills/<name>` | `<project>/.claude/skills/<name>` |
-| Codex | `~/.codex/skills/<name>`; also reads `~/.agents/skills` | `<project>/.codex/skills/<name>` and `<project>/.agents/skills/<name>` |
-| GitHub Copilot | `~/.copilot/skills/<name>` | `<project>/.github/skills/<name>` |
-| OpenCode | `~/.config/opencode/skills/<name>`; legacy read alias `~/.config/opencode/skill` | `<project>/.opencode/skills/<name>` |
-| Antigravity | `~/.gemini/config/skills/<name>` | `<project>/.agents/skills/<name>` |
+| Provider       | Global destination                                                               | Project destination                                                    |
+| -------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Claude         | `~/.claude/skills/<name>`                                                        | `<project>/.claude/skills/<name>`                                      |
+| Codex          | `~/.codex/skills/<name>`; also reads `~/.agents/skills`                          | `<project>/.codex/skills/<name>` and `<project>/.agents/skills/<name>` |
+| GitHub Copilot | `~/.copilot/skills/<name>`                                                       | `<project>/.github/skills/<name>`                                      |
+| OpenCode       | `~/.config/opencode/skills/<name>`; legacy read alias `~/.config/opencode/skill` | `<project>/.opencode/skills/<name>`                                    |
+| Antigravity    | `~/.gemini/config/skills/<name>`                                                 | `<project>/.agents/skills/<name>`                                      |
+| Command Code   | `~/.commandcode/skills/<name>`                                                   | `<project>/.commandcode/skills/<name>`                                 |
 
 OpenCode's native paths are documented at <https://opencode.ai/docs/skills>. Codex aliases and Antigravity paths above reflect the current repository reader; keep version-specific verification explicit rather than guessing a folder from the provider ID.
 
@@ -36,6 +37,17 @@ OpenCode's native paths are documented at <https://opencode.ai/docs/skills>. Cod
 4. Extend provider registry and Store assignment UI, plus catalog compatibility filters. A picker entry alone is insufficient.
 5. Verify install, replacement (including removed upstream files), disable/unassign, and removal for both scopes. Check native discovery and that independent folders survive.
 6. Keep MCP configuration paths separate: skills directories are not MCP config locations. Use `mcp_manage.rs` and `mcp_providers.rs` for MCP scopes and enable/disable.
+
+## OpenCode MCP
+
+- OpenCode's servers live in `~/.config/opencode/opencode.json` under `mcp`. A local server keeps its command and arguments in one array (`command`), its env in `environment`, and `enabled: false` turns it off. `mcp_manage.rs` converts them to the shape `servers_in` reads and writes them back without touching other keys.
+- Project-scoped OpenCode MCP is not supported: the MCP picker marks it `Not supported`.
+
+## Connectors (API providers)
+
+- A configured connector (`CustomProvider`) is a row in the Store skill and MCP provider pickers, as in the model picker. Its row id is `custom:<id>` (`connector-targets.ts`).
+- A connector's list is stored on the connector record: `skills` (library skill names) and `mcp` (server names). Unset means the default: the skills and servers of Claude, Codex and Antigravity. A restricted connector shows `Not supported`.
+- No native folder or CLI config is written for a connector. `custom_send` passes the lists to `custom_chat.rs`, which filters the skills and MCP servers it offers.
 
 ## Editable sources and update badges
 

@@ -63,7 +63,6 @@ import {
     promoteShellCall,
     trackActivity,
 } from '../runs/activity.svelte';
-import { recordProjectActivity } from '../runs/project-activity.svelte';
 import { guide } from '../../app/ui/guide.svelte';
 import { releaseBrowserChat } from '../../browser/browser.svelte';
 import {
@@ -774,7 +773,7 @@ function lastAttachments(sessionId: string): RecoveryState['attachments'] {
 
 /**
  * The steps a turn's normal end runs, for a failed turn that is not continued: the work of its parent (a worker's report,
- * a workflow, the tasks waiting on it), the browser tabs it held, the project activity. Then the queue goes on.
+ * a workflow, the tasks waiting on it), the browser tabs it held. Then the queue goes on.
  */
 function finalizeTurn(
     sessionId: string,
@@ -782,29 +781,12 @@ function finalizeTurn(
     reason: string,
     stopped: boolean,
 ) {
-    const session = workspace.sessions.find((item) => item.id === sessionId);
     failSessionWork(sessionId);
     onDelegateDone(sessionId, reply, reason);
     finishWorkflowTurn(sessionId, true, reply);
     finishWorkflowIntegration(sessionId, reply, true);
     endWaitingTasks(sessionId, stopped);
     releaseBrowserChat(sessionId);
-    if (session) {
-        const project = workspace.projects.find(
-            (item) => item.id === session.projectId,
-        );
-        void recordProjectActivity({
-            root: project?.path ?? '',
-            project: project?.name ?? '',
-            sessionId,
-            chatTitle: session.title,
-            agent: reply.agent ?? session.agent,
-            model: reply.model ?? session.model,
-            status: stopped ? 'stopped' : 'failed',
-            reply,
-            note: stopped ? undefined : reason,
-        });
-    }
     applyPendingSwitch(sessionId);
     sendNextQueued(sessionId);
 }
@@ -2418,30 +2400,6 @@ function handleEventNow(
             if (update.finished && !recovering) {
                 // The turn is over: the Preview tabs it held are free again for another chat to reuse.
                 releaseBrowserChat(sessionId);
-                const project = workspace.projects.find(
-                    (item) => item.id === session.projectId,
-                );
-                const status =
-                    event.kind === 'done'
-                        ? 'completed'
-                        : event.kind === 'error' && event.message === 'stopped'
-                          ? 'stopped'
-                          : 'failed';
-                void recordProjectActivity({
-                    root: project?.path ?? '',
-                    project: project?.name ?? '',
-                    sessionId: session.id,
-                    chatTitle: session.title,
-                    agent: reply.agent ?? session.agent,
-                    model: reply.model ?? session.model,
-                    status,
-                    request: liveAsks[sessionId],
-                    reply,
-                    note:
-                        event.kind === 'error' && event.message !== 'stopped'
-                            ? event.message
-                            : undefined,
-                });
             }
             delete replies[sessionId];
             delete liveReplies[sessionId];

@@ -14,6 +14,8 @@ fn chat(id: &str) -> ChatMeta {
         active_agent: None,
         created_at: "2026-11-01T09:00:00Z".to_string(),
         updated_at: "2026-11-01T09:00:00Z".to_string(),
+        last_user_at: "2026-11-01T09:00:00Z".to_string(),
+        expires_at: "2026-11-15T09:00:00Z".to_string(),
     }
 }
 
@@ -411,12 +413,11 @@ fn migrates_an_indexeddb_dump_once() {
 
     let mut index = ChatIndex::open_in_memory().expect("open");
     let report = index.migrate_legacy(&dump, false).expect("migrate");
-    assert_eq!(report.chats, 3);
-    assert_eq!(report.bindings, 5);
-    assert_eq!(report.messages, 5);
-    assert_eq!(report.skipped, 1);
-    // chat-a took claude-s1 first, so chat-b's claude binding is kept without its native id.
-    assert_eq!(report.conflicts.len(), 1);
+    assert_eq!(report.chats, 1);
+    assert_eq!(report.bindings, 3);
+    assert_eq!(report.messages, 3);
+    assert_eq!(report.skipped, 0);
+    assert!(report.conflicts.is_empty());
 
     // Chat a: local turns and the other agent's turn, merged by time.
     let page = index
@@ -459,43 +460,19 @@ fn migrates_an_indexeddb_dump_once() {
         Some("chat-a".to_string())
     );
 
-    // Chat b: transcript turns carry their native message ids, and the repeated one is dropped.
-    let chat_b = index
-        .open_page("chat-b", None, 100)
-        .expect("page")
-        .expect("chat");
-    assert_eq!(chat_b.messages.len(), 2);
-    assert_eq!(
-        chat_b.messages[0].message.native,
-        Some(NativeRef {
-            provider: "claude".to_string(),
-            msg_id: "n1".to_string()
-        })
-    );
-    assert_eq!(chat_b.bindings[0].native_id, None);
-    assert_eq!(chat_b.bindings[0].path, None);
-
-    // The alias that is not the current session is a closed binding; the known one keeps its file path.
+    // The alias that is not the current session is a closed binding; native ids do not carry provider file paths.
     let alias = page
         .bindings
         .iter()
         .find(|b| b.id == "chat-a#codex#cx-0")
         .expect("alias binding");
     assert_eq!(alias.state, BindingState::Closed);
-    assert_eq!(claude.path.as_deref(), Some("C:/h/s1.jsonl"));
-
-    // Chat c has no turns yet, only a pending binding.
-    let chat_c = index
-        .open_page("chat-c", None, 100)
-        .expect("page")
-        .expect("chat");
-    assert!(chat_c.messages.is_empty());
-    assert_eq!(chat_c.bindings[0].state, BindingState::Pending);
+    assert_eq!(claude.path, None);
 
     // Running it again returns the stored report and writes nothing.
     let again = index.migrate_legacy(&dump, false).expect("again");
     assert_eq!(again, report);
-    assert_eq!(index.list_chats().expect("list").len(), 3);
+    assert_eq!(index.list_chats().expect("list").len(), 1);
     assert_eq!(page_of(&index, "chat-a").len(), 3);
 
     let status = index.legacy_status().expect("status");
@@ -511,7 +488,7 @@ fn migrates_an_indexeddb_dump_once() {
     // Forced: clears and imports again with the same result.
     let forced = index.migrate_legacy(&dump, true).expect("forced");
     assert_eq!(forced, report);
-    assert_eq!(index.list_chats().expect("list").len(), 3);
+    assert_eq!(index.list_chats().expect("list").len(), 1);
 }
 
 #[test]

@@ -6,7 +6,11 @@ use std::sync::{Mutex, OnceLock};
 use rusqlite::Connection;
 
 /// Every migration of `app.db`, in order. Never reorder or edit one that shipped; add the next one at the end.
-const MIGRATIONS: &[&str] = &[crate::usage_log::SCHEMA_1, crate::audit_db::SCHEMA_1];
+const MIGRATIONS: &[&str] = &[
+    crate::usage_log::SCHEMA_1,
+    crate::audit_db::SCHEMA_1,
+    crate::plans::SCHEMA_1,
+];
 
 static CONN: OnceLock<Mutex<Connection>> = OnceLock::new();
 

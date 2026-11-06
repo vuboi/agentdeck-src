@@ -255,6 +255,10 @@ export type CustomProvider = {
     /** Uses the native WorkBuddy connector credential and gateway request headers. */
     workbuddy?: boolean;
     nativeAuth?: 'workbuddy' | 'muse-code';
+    /** Library skills this connector may use. Unset: the default, the skills of Claude, Codex and Antigravity. */
+    skills?: string[];
+    /** MCP servers this connector may use. Unset: the default, the servers those CLIs already have enabled. */
+    mcp?: string[];
 };
 /** The Claude Console's API credit: the key the `credit:` Claude models run on, and the Console sign-in that reads
  * the credit left. Both stay on this computer only. */

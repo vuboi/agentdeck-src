@@ -5,13 +5,11 @@
     import DevTools from '../browser/DevTools.svelte';
     import FileViewer from '../files/FileViewer.svelte';
     import TasksView from '../tasks/TasksView.svelte';
-    import PlansView from '../plans/PlansView.svelte';
     import CanvasView from '../canvas/CanvasView.svelte';
     import McpView from '../settings/McpView.svelte';
     import StoreView from '../store/StoreView.svelte';
     import WorkflowView from '../tasks/WorkflowView.svelte';
     import UsageView from '../settings/UsageView.svelte';
-    import ProjectActivityView from '../tasks/ProjectActivityView.svelte';
     import ImageGenerator from '../files/ImageGenerator.svelte';
     import AgentsPanel from './AgentsPanel.svelte';
 
@@ -28,8 +26,6 @@
     <ImageGenerator />
 {:else if tool === 'Tasks' || tool === 'Audit'}
     <TasksView />
-{:else if tool === 'Plans'}
-    <PlansView />
 {:else if tool === 'Canvas'}
     <CanvasView />
 {:else if tool === 'Workflow'}
@@ -42,8 +38,6 @@
     <StoreView />
 {:else if tool === 'Usage'}
     <UsageView />
-{:else if tool === 'Activity'}
-    <ProjectActivityView />
 {:else if tool === 'Agents'}
     <AgentsPanel />
 {:else}

@@ -185,6 +185,8 @@ export async function sendCustomTurn(args: {
     /** WorkBuddy uses the OpenAI wire format with Tencent-specific gateway headers. */
     workbuddy?: boolean;
     authMode?: 'workbuddy' | 'muse-code';
+    skills?: string[] | null;
+    mcp?: string[] | null;
 }): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('custom_send', args);

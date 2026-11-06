@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -5,19 +6,38 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{params, params_from_iter, Connection};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::Emitter;
 use unicode_normalization::UnicodeNormalization;
 
 const WRITE_DIR: &str = "docs/plans";
 const MAX_BODY: usize = 256 * 1024;
+/// The most rows one page of the Plans list returns.
+const PAGE_MAX: usize = 100;
+
+/// The index of the Plans list in `app.db`: one row per plan file, its metadata kept as JSON in `info`.
+pub const SCHEMA_1: &str = "
+CREATE TABLE plans (
+    root TEXT NOT NULL,
+    id TEXT NOT NULL,
+    mtime INTEGER NOT NULL,
+    size INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    updated_ms INTEGER NOT NULL,
+    info TEXT NOT NULL,
+    PRIMARY KEY (root, id)
+);
+CREATE INDEX plans_order ON plans (root, status, updated_ms);
+";
 
 const TOOLS: [&str; 4] = ["plan_list", "plan_read", "plan_write", "plan_step"];
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 static MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanInfo {
     pub id: String,
@@ -473,7 +493,8 @@ pub(crate) fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
     })
 }
 
-pub fn list(root: &Path, status: Option<&str>) -> Result<Vec<PlanInfo>, String> {
+/// The id of every plan file of a project and of the global folder, without reading them.
+fn ids(root: &Path) -> Result<Vec<String>, String> {
     let mut found = Vec::new();
     for folder in [root.join("docs/plans"), root.join("docs/superpowers/plans")] {
         if !folder.exists() {
@@ -484,16 +505,12 @@ pub fn list(root: &Path, status: Option<&str>) -> Result<Vec<PlanInfo>, String> 
             if path.extension().and_then(|s| s.to_str()) != Some("md") {
                 continue;
             }
-            let id = path
-                .strip_prefix(root)
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .replace('\\', "/");
-            if let Ok((item, _)) = read(root, &id) {
-                if status.is_none_or(|s| s == item.status) {
-                    found.push(item);
-                }
-            }
+            found.push(
+                path.strip_prefix(root)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            );
         }
     }
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
@@ -504,17 +521,24 @@ pub fn list(root: &Path, status: Option<&str>) -> Result<Vec<PlanInfo>, String> 
                 if path.extension().and_then(|s| s.to_str()) != Some("md") {
                     continue;
                 }
-                let id = format!(
+                found.push(format!(
                     "claude-global/{}",
                     path.file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or_default()
-                );
-                if let Ok((item, _)) = read(root, &id) {
-                    if status.is_none_or(|s| s == item.status) {
-                        found.push(item);
-                    }
-                }
+                ));
+            }
+        }
+    }
+    Ok(found)
+}
+
+pub fn list(root: &Path, status: Option<&str>) -> Result<Vec<PlanInfo>, String> {
+    let mut found = Vec::new();
+    for id in ids(root)? {
+        if let Ok((item, _)) = read(root, &id) {
+            if status.is_none_or(|s| s == item.status) {
+                found.push(item);
             }
         }
     }
@@ -525,6 +549,167 @@ pub fn list(root: &Path, status: Option<&str>) -> Result<Vec<PlanInfo>, String> 
     });
     found.truncate(100);
     Ok(found)
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanRow {
+    /// The project the row was read for (the global plans show under the first project).
+    pub root: String,
+    pub plan: PlanInfo,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanPage {
+    pub items: Vec<PlanRow>,
+    /// Offset of the next page, or None at the end.
+    pub next_cursor: Option<i64>,
+}
+
+fn sql_err(error: rusqlite::Error) -> String {
+    error.to_string()
+}
+
+/// Modified time (ms) and size of a plan file. Read before the file, so a change made while it is read is seen again by
+/// the next sync.
+fn stamp(root: &Path, id: &str) -> Option<(i64, i64)> {
+    let (path, _) = path_for(root, id, false).ok()?;
+    let meta = fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    Some((mtime, meta.len() as i64))
+}
+
+/// Brings the index of one project up to date: files whose stamp changed are read again, rows of deleted files go.
+fn sync(conn: &mut Connection, root: &str) -> Result<(), String> {
+    let root_path = Path::new(root);
+    let mut known: HashMap<String, (i64, i64)> = HashMap::new();
+    {
+        let mut statement = conn
+            .prepare("SELECT id, mtime, size FROM plans WHERE root = ?1")
+            .map_err(sql_err)?;
+        let rows = statement
+            .query_map([root], |row| {
+                Ok((row.get::<_, String>(0)?, (row.get(1)?, row.get(2)?)))
+            })
+            .map_err(sql_err)?;
+        for row in rows {
+            let (id, indexed) = row.map_err(sql_err)?;
+            known.insert(id, indexed);
+        }
+    }
+    let tx = conn.transaction().map_err(sql_err)?;
+    let mut live = HashSet::new();
+    for id in ids(root_path)? {
+        let Some(current) = stamp(root_path, &id) else {
+            continue;
+        };
+        live.insert(id.clone());
+        if known.get(&id) == Some(&current) {
+            continue;
+        }
+        let Ok((info, _)) = read(root_path, &id) else {
+            continue;
+        };
+        let updated_ms = timestamp_millis(&info.updated).unwrap_or_default() as i64;
+        let json = serde_json::to_string(&info).map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT OR REPLACE INTO plans (root, id, mtime, size, status, updated_ms, info) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![root, id, current.0, current.1, info.status, updated_ms, json],
+        )
+        .map_err(sql_err)?;
+    }
+    for id in known.keys().filter(|id| !live.contains(*id)) {
+        tx.execute(
+            "DELETE FROM plans WHERE root = ?1 AND id = ?2",
+            params![root, id],
+        )
+        .map_err(sql_err)?;
+    }
+    tx.commit().map_err(sql_err)
+}
+
+/// One page of the rows of `roots`, newest first. `scope` is `local` (the project's own plans) or `global`.
+fn query_page(
+    conn: &Connection,
+    roots: &[String],
+    scope: &str,
+    status: Option<&str>,
+    cursor: i64,
+    limit: usize,
+) -> Result<PlanPage, String> {
+    if roots.is_empty() {
+        return Ok(PlanPage {
+            items: Vec::new(),
+            next_cursor: None,
+        });
+    }
+    let limit = limit.clamp(1, PAGE_MAX);
+    let cursor = cursor.max(0);
+    let scope_sql = match scope {
+        "local" => "id NOT LIKE 'claude-global/%'",
+        "global" => "id LIKE 'claude-global/%'",
+        _ => return Err("invalid plan scope".into()),
+    };
+    let marks = vec!["?"; roots.len()].join(", ");
+    let mut query = format!("SELECT root, info FROM plans WHERE root IN ({marks}) AND {scope_sql}");
+    let mut args: Vec<SqlValue> = roots
+        .iter()
+        .map(|root| SqlValue::Text(root.clone()))
+        .collect();
+    if let Some(status) = status {
+        query.push_str(" AND status = ?");
+        args.push(SqlValue::Text(status.into()));
+    }
+    query.push_str(" ORDER BY updated_ms DESC, id LIMIT ? OFFSET ?");
+    // One row past the page tells whether another page exists.
+    args.push(SqlValue::Integer(limit as i64 + 1));
+    args.push(SqlValue::Integer(cursor));
+    let mut statement = conn.prepare(&query).map_err(sql_err)?;
+    let found: Vec<(String, String)> = statement
+        .query_map(params_from_iter(args.iter()), |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(sql_err)?
+        .collect::<Result<_, _>>()
+        .map_err(sql_err)?;
+    let has_more = found.len() > limit;
+    let items = found
+        .into_iter()
+        .take(limit)
+        .filter_map(|(root, info)| {
+            serde_json::from_str::<PlanInfo>(&info)
+                .ok()
+                .map(|plan| PlanRow { root, plan })
+        })
+        .collect();
+    Ok(PlanPage {
+        items,
+        next_cursor: has_more.then_some(cursor + limit as i64),
+    })
+}
+
+/// A page of the Plans list. The first page (cursor 0) syncs the index of each root first; later pages only read it.
+pub fn page(
+    roots: &[String],
+    scope: &str,
+    status: Option<&str>,
+    cursor: i64,
+    limit: usize,
+) -> Result<PlanPage, String> {
+    crate::app_db::with_conn(|conn| {
+        if cursor <= 0 {
+            for root in roots {
+                sync(conn, root)?;
+            }
+        }
+        query_page(conn, roots, scope, status, cursor, limit)
+    })
 }
 
 pub fn read(root: &Path, id: &str) -> Result<(PlanInfo, String), String> {
@@ -969,6 +1154,56 @@ mod tests {
         fs::create_dir_all(&p).expect("temp root");
         p
     }
+    #[test]
+    fn pages_follow_the_sorted_list_and_resync_changed_files() {
+        let root = temp();
+        let plans = root.join("docs/plans");
+        fs::create_dir_all(&plans).expect("plans dir");
+        for (name, updated) in [
+            ("a", "2026-01-01T00:00:00Z"),
+            ("b", "2026-01-02T00:00:00Z"),
+            ("c", "2026-01-03T00:00:00Z"),
+        ] {
+            fs::write(
+                plans.join(format!("{name}.md")),
+                format!("---\ntitle: {name}\nstatus: draft\nupdated: {updated}\n---\n- [ ] step\n"),
+            )
+            .expect("plan");
+        }
+        let mut conn = Connection::open_in_memory().expect("memory db");
+        conn.execute_batch(SCHEMA_1).expect("schema");
+        let root_text = root.to_string_lossy().into_owned();
+        let roots = vec![root_text.clone()];
+        sync(&mut conn, &root_text).expect("sync");
+
+        let first = query_page(&conn, &roots, "local", None, 0, 2).expect("first page");
+        let titles: Vec<&str> = first
+            .items
+            .iter()
+            .map(|row| row.plan.title.as_str())
+            .collect();
+        assert_eq!(titles, ["c", "b"]);
+        assert_eq!(first.next_cursor, Some(2));
+        let last = query_page(&conn, &roots, "local", None, 2, 2).expect("last page");
+        assert_eq!(last.items.len(), 1);
+        assert_eq!(last.next_cursor, None);
+
+        // A changed file is read again, and a deleted file leaves the index.
+        fs::write(
+            plans.join("c.md"),
+            "---\ntitle: c\nstatus: dropped\nupdated: 2026-01-03T00:00:00Z\n---\n- [ ] step\n",
+        )
+        .expect("edit");
+        fs::remove_file(plans.join("a.md")).expect("delete");
+        sync(&mut conn, &root_text).expect("resync");
+        let drafts = query_page(&conn, &roots, "local", Some("draft"), 0, 10).expect("drafts");
+        assert_eq!(drafts.items.len(), 1);
+        assert_eq!(drafts.items[0].plan.title, "b");
+        let all = query_page(&conn, &roots, "local", None, 0, 10).expect("all");
+        assert_eq!(all.items.len(), 2);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
     fn req(title: &str, body: &str) -> WriteReq {
         WriteReq {
             title: title.into(),

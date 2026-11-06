@@ -3,7 +3,11 @@
 // of "Thinking". These tests pin the wording and the cases where the line stays as it was.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { backgroundTaskName, waitingLabel } from './blocks.ts';
+import {
+    backgroundTaskName,
+    openBackgroundTasks,
+    waitingLabel,
+} from './blocks.ts';
 import type { Block } from '../mock.ts';
 
 const done: Block = { kind: 'response', text: 'Checking.', streaming: false };
@@ -74,5 +78,53 @@ test('backgroundTaskName: subagent_type first, then description, then the tool n
     assert.equal(
         backgroundTaskName({ name: 'Bash', input: 'not json' }),
         'Bash',
+    );
+});
+
+const activityItem = (
+    over: Partial<{
+        sessionId: string;
+        background: boolean;
+        status: string;
+        name: string;
+        input: string;
+    }>,
+) => ({
+    sessionId: 'chat-1',
+    background: true,
+    status: 'running',
+    name: 'Agent',
+    input: '{"subagent_type":"codex:codex-rescue"}',
+    ...over,
+});
+
+test('openBackgroundTasks: only running background tasks of this chat', () => {
+    const items = [
+        activityItem({}),
+        activityItem({ status: 'background' }),
+        activityItem({ status: 'ok' }),
+        activityItem({ background: false }),
+        activityItem({ sessionId: 'chat-2' }),
+    ];
+    assert.deepEqual(openBackgroundTasks(items, 'chat-1'), [
+        { name: 'codex:codex-rescue' },
+        { name: 'codex:codex-rescue' },
+    ]);
+    assert.deepEqual(openBackgroundTasks([], 'chat-1'), []);
+});
+
+test('a finished background task no longer holds the reply: no waiting label', () => {
+    const items = [activityItem({ status: 'ok' })];
+    assert.equal(
+        waitingLabel([done], openBackgroundTasks(items, 'chat-1')),
+        null,
+    );
+});
+
+test('the reply waits for a background task of its chat: the label names it', () => {
+    const items = [activityItem({})];
+    assert.equal(
+        waitingLabel([done], openBackgroundTasks(items, 'chat-1')),
+        'Waiting for 1 background task · codex:codex-rescue',
     );
 });

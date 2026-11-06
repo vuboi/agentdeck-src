@@ -1,4 +1,5 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { invoke } from '@tauri-apps/api/core';
 import { chatFiles } from './chat-files';
 import { messages as mockMessages, type Message, type Block } from '../mock';
 import {
@@ -7,13 +8,10 @@ import {
     inTauri,
     type HistorySession,
     type HistorySource,
-    listHistory,
     type HistoryMessage,
     clock,
     toBlocks,
     loadHistoryPage,
-    renameHistory,
-    deleteHistory,
 } from '../../app/platform/history';
 import {
     restoreCommandImages,
@@ -52,6 +50,7 @@ import {
     sessionPlacementsReady,
     forgetSessionPlacement,
     workspace,
+    type Agent,
     type Project,
     type SessionItem,
 } from './state.svelte';
@@ -79,13 +78,7 @@ import {
 } from './events.svelte';
 import { backlog } from './delegate-task.svelte';
 import { mergeTranscripts } from './transcript-merge';
-import {
-    chatMetaOf,
-    ledger,
-    ledgerOn,
-    ledgerReadOn,
-    readLedgerChat,
-} from '../index/ledger';
+import { chatMetaOf, ledger, ledgerOn, readLedgerChat } from '../index/ledger';
 import { responseText, tailStart } from './held';
 
 // ---------- real history (Claude Code and Codex, read-only) ----------
@@ -196,6 +189,18 @@ export const history = $state({
     scanning: inTauri() && !fakeData,
 });
 
+type AgentDeckChatMeta = {
+    id: string;
+    title: string;
+    projectId: string | null;
+    cwd: string | null;
+    activeAgent: string | null;
+    createdAt: string;
+    updatedAt: string;
+    lastUserAt: string;
+    expiresAt: string;
+};
+
 // Older indexes treated every cwd as a project; never paint those classifications during startup.
 /** The chat history index, kept in IndexedDB (prefs.ts `index.` collection). */
 const HISTORY_INDEX = 'index.history';
@@ -262,7 +267,7 @@ function sameFiles(a: NativeFile[] | undefined, b: NativeFile[]): boolean {
     );
 }
 
-/** Replaces the mock workspace with what Claude Code and Codex already saved on this machine. */
+/** Replaces Recent Chat with chats created by AgentDeck and stored in SQLite. */
 export async function importHistory({ refresh = false } = {}) {
     if (fakeData) {
         history.imported = true;
@@ -273,75 +278,50 @@ export async function importHistory({ refresh = false } = {}) {
         history.loading = false;
         return;
     }
-    await Promise.all([
-        restored,
-        addedReady,
-        sessionPlacementsReady,
-        mixedReady,
-    ]);
-    // Show the last known index at once, then refresh it: indexing every file takes a moment.
+    await Promise.all([restored, addedReady, sessionPlacementsReady]);
     if (!refresh) history.scanning = true;
-    if (!refresh)
-        try {
-            const cached =
-                (await getPref<HistorySession[]>(HISTORY_INDEX)) ?? [];
-            if (cached.length > 0) {
-                // A stale cache must not replace the restored active id with its first row. That used to make the
-                // subsequent full import preserve the wrong session even when it found the session the user had open.
-                const activeId = workspace.activeId;
-                const hasActive = cached.some((item) => item.id === activeId);
-                const hasLocalActive = localSessions().some(
-                    (item) => item.id === activeId,
-                );
-                if (!activeId || hasActive || hasLocalActive) {
-                    applyHistory(cached);
-                    history.imported = true;
-                    // The cached list is on screen: the loader is only for a start with no list to show.
-                    history.scanning = false;
-                }
-            }
-        } catch {
-            // A bad cache is simply ignored.
-        }
     history.loading = true;
     try {
-        const found = await listHistory();
-        const keep = workspace.activeId;
-        const keepSession = workspace.sessions.find((item) => item.id === keep);
-        const keepIsLocal = localSessions().some((item) => item.id === keep);
-        if (found.length === 0 && (!keep || keepIsLocal)) return;
-        applyHistory(found);
-        // `applyHistory` folds a new provider thread (for example Codex after continuing a Claude chat) back into the
-        // AgentDeck session id. Check the merged list, not the raw provider ids, or that valid alias looks missing and
-        // the refresh opens a brand-new draft instead of keeping the continued chat active.
-        if (workspace.sessions.some((item) => item.id === keep))
-            workspace.activeId = keep;
-        else if (keep && keepSession) {
-            // The provider can lag briefly after the first turn writes its transcript. Keep the AgentDeck-created chat
-            // visible during this refresh; creating a new draft here clears the active tab and makes the UI jump away.
-            if (!workspace.sessions.some((item) => item.id === keep))
-                workspace.sessions = [keepSession, ...workspace.sessions];
-            workspace.activeId = keep;
-        } else if (keep && !keepIsLocal) newSession(NO_PROJECT);
+        const found = await invoke<AgentDeckChatMeta[]>('chat_list');
+        const current = new SvelteMap(
+            workspace.sessions.map((item) => [item.id, item]),
+        );
+        const indexed = new SvelteSet(found.map((item) => item.id));
+        const sessions = found.map((item) => {
+            const previous = current.get(item.id);
+            return {
+                ...previous,
+                id: item.id,
+                projectId: item.projectId ?? NO_PROJECT,
+                workingDirectory: item.cwd ?? undefined,
+                title: item.title || previous?.title || 'New session',
+                agent: (item.activeAgent ??
+                    previous?.agent ??
+                    'claude') as Agent,
+                model: previous?.model ?? '',
+                status: 'idle' as const,
+                draft: false,
+                made: true,
+                source: undefined,
+                path: undefined,
+                updatedAt: item.updatedAt || item.createdAt,
+            };
+        });
+        const localOnly = [...current.values()].filter(
+            (item) =>
+                !indexed.has(item.id) &&
+                (item.draft ||
+                    item.side ||
+                    (item.made && !item.path && !item.source)),
+        );
+        workspace.sessions = [...sessions, ...localOnly];
+        if (
+            !workspace.activeId ||
+            !workspace.sessions.some((item) => item.id === workspace.activeId)
+        )
+            workspace.activeId = sessions[0]?.id;
+        indexedIds = new SvelteSet();
         history.imported = true;
-        // Quietly warm the transcripts of the newest chats while the app is idle.
-        const warm = () =>
-            workspace.sessions
-                .filter((item) => item.path)
-                .sort((a, b) =>
-                    (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
-                )
-                .slice(0, 4)
-                .forEach((item) => void prefetchTranscript(item));
-        if ('requestIdleCallback' in window)
-            window.requestIdleCallback(warm, { timeout: 3000 });
-        else setTimeout(warm, 800);
-        try {
-            // The index lives in IndexedDB (no size limit like localStorage): the next start shows it at once.
-            void setPref(HISTORY_INDEX, JSON.parse(JSON.stringify(found)));
-        } catch {
-            // Only an optimisation.
-        }
     } catch (error) {
         chat.error = String(error);
     } finally {
@@ -363,6 +343,7 @@ function knownParent(id: string, ids: Set<string>): string | undefined {
         : undefined;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function applyHistory(all: HistorySession[]) {
     indexedIds = new Set(all.map((item) => item.id));
     // The sub chats that exist now keep their parent through this import.
@@ -1015,7 +996,15 @@ function mergeWorkMessages(
             };
             matched++;
         } else if (extra.autoTurn) {
-            restored.push(extra);
+            // Placed before the first message that is later in time; the file's own order is kept as it is.
+            const time = Date.parse(extra.at ?? '');
+            const later = Number.isNaN(time)
+                ? -1
+                : restored.findIndex(
+                      (message) => Date.parse(message.at ?? '') > time,
+                  );
+            if (later >= 0) restored.splice(later, 0, extra);
+            else restored.push(extra);
             autoPushed++;
         } else {
             dropped.push({
@@ -1056,19 +1045,7 @@ function mergeWorkMessages(
             dropped: dropped.length,
             droppedDetail: dropped,
         });
-    return restored.sort(byInstant);
-}
-
-/**
- * Orders two messages by their instant, so `Z` and an offset (`+07:00`) compare as the times they are. A message
- * without a time sorts by its text, as it always did.
- */
-function byInstant(a: Message, b: Message): number {
-    const timeA = Date.parse(a.at ?? '');
-    const timeB = Date.parse(b.at ?? '');
-    if (!Number.isNaN(timeA) && !Number.isNaN(timeB) && timeA !== timeB)
-        return timeA - timeB;
-    return (a.at ?? '').localeCompare(b.at ?? '');
+    return restored;
 }
 
 /** Reattaches AgentDeck-only work report metadata that provider history cannot represent. */
@@ -1404,19 +1381,15 @@ async function readTranscript(session: SessionItem | undefined) {
         // The ledger is read (plan storage-sqlite P5.3) when IndexedDB has no copy of the chat, or when the read flag is on
         // and the copy has turns. IndexedDB is still written either way.
         const copy = localMessages[session.id];
-        const wantLedger =
-            ledgerOn() &&
-            !mockIds.has(session.id) &&
-            (copy === undefined || (ledgerReadOn() && copy.length > 0));
+        const wantLedger = ledgerOn() && !mockIds.has(session.id);
         const fromLedger = wantLedger
             ? await readLedgerChat(session.id).catch(() => null)
             : null;
-        const shown =
-            ledgerReadOn() && fromLedger?.length
-                ? fromLedger
-                : (copy ??
-                  fromLedger ??
-                  (mockIds.has(session.id) ? mockMessages : []));
+        const shown = fromLedger?.length
+            ? fromLedger
+            : (copy ??
+              fromLedger ??
+              (mockIds.has(session.id) ? mockMessages : []));
         const messages =
             messagesById.get(session.id) ??
             (await restoreCommandImages(session.id, shown));
@@ -1528,20 +1501,17 @@ async function patchCache(
     }
 }
 
-/** Renames the chat; for Claude and Codex sessions the name is written into the tool's own storage. */
+/** Renames the AgentDeck chat in its local state. */
 export async function renameSession(id: string, title: string) {
     const session = workspace.sessions.find((item) => item.id === id);
     const next = title.trim();
     if (!session || !next) return;
-    if (session.path && session.source)
-        await renameHistory(session.source, session.path, next);
     session.title = next;
     patchCache((list) =>
         list.map((item) => (item.id === id ? { ...item, title: next } : item)),
     );
 }
 
-/** Deletes the chat; Claude and Codex sessions are moved to ~/.agentdeck/trash, so they vanish there too. */
 /** An idle warm CLI can have touched the transcript recently without a visible turn. Release only this chat before the adapter moves its file; other chats keep running. */
 export async function releaseCli(id: string) {
     if (!inTauri()) return;
@@ -1627,18 +1597,14 @@ async function forgetSessions(removed: SessionItem[], trashed = false) {
 const DELETE_IDLE_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
- * Deletes the local chats idle for 14 days: from the list, the IndexedDB copy and the ledger, for good. Imported chats
- * (with a history file) are never deleted here. Returns the ids deleted.
+ * Deletes AgentDeck chats idle for 14 days: from the list and ledger, for good. Native provider sessions are untouched.
  */
 export async function deleteIdleChats(now = Date.now()): Promise<string[]> {
     if (!inTauri() || !ledgerOn()) return [];
     const idle = workspace.sessions.filter(
         (item) =>
-            !item.path &&
-            !item.source &&
             !item.draft &&
             item.status === 'idle' &&
-            item.id !== workspace.activeId &&
             now - Date.parse(item.updatedAt ?? '') > DELETE_IDLE_MS,
     );
     await forgetSessions(idle);
@@ -1651,8 +1617,6 @@ export async function deleteSession(id: string) {
     // A run of the chat ends with it: its CLI is stopped and the events that still arrive have nowhere to go.
     stopTurn(id);
     await releaseCli(id);
-    if (session.path && session.source)
-        await deleteHistory(session.source, session.path);
     await forgetSessions([session]);
 }
 
@@ -1664,12 +1628,7 @@ export async function deleteSessions(ids: string[]): Promise<string[]> {
     await Promise.all(
         sessions.map(async (session) => {
             await releaseCli(session.id);
-            try {
-                if (session.path && session.source)
-                    await deleteHistory(session.source, session.path);
-            } catch {
-                failed.add(session.id);
-            }
+            // AgentDeck chat deletion never removes the provider's native session or transcript.
         }),
     );
     await forgetSessions(sessions.filter((item) => !failed.has(item.id)));

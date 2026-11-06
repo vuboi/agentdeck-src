@@ -33,6 +33,49 @@ const SHELLS = new Set([
     'bat',
     'console',
 ]);
+// A block with no language (or `text`) gets the run button when every line starts with a known command: a command the
+// agent wrote as plain text (`cd …`, `pnpm tauri dev`) runs in the terminal like a shell block.
+const COMMANDS = new Set([
+    'cd',
+    'pnpm',
+    'npm',
+    'npx',
+    'yarn',
+    'git',
+    'node',
+    'python',
+    'python3',
+    'pip',
+    'cargo',
+    'rustc',
+    'tauri',
+    'netstat',
+    'taskkill',
+    'ls',
+    'dir',
+    'cat',
+    'echo',
+    'mkdir',
+    'rm',
+    'cp',
+    'mv',
+    'curl',
+    'docker',
+    'make',
+    'go',
+    'kill',
+    'export',
+]);
+function runnable(language: string, text: string): boolean {
+    const lang = language.toLowerCase();
+    if (SHELLS.has(lang)) return true;
+    if (lang !== '' && lang !== 'text') return false;
+    const lines = text.split('\n').filter((line) => line.trim() !== '');
+    return (
+        lines.length > 0 &&
+        lines.every((line) => COMMANDS.has(line.trim().split(/\s+/)[0]))
+    );
+}
 const COPY_ICON =
     svg(
         'ic-copy',
@@ -140,7 +183,7 @@ marked.use({
             return (
                 `<div class="md-code" data-lang="${escapeHtml(language)}">` +
                 `<div class="md-code-head"><span class="md-code-kind" title="${escapeHtml(language || 'text')}" aria-label="${escapeHtml(language || 'text')}">${KIND_ICON.code}<span class="md-code-lang">${escapeHtml(language || 'text')}</span></span><span class="md-code-actions">` +
-                (SHELLS.has(language.toLowerCase())
+                (runnable(language, text)
                     ? `<button type="button" data-run title="Run in terminal" aria-label="Run in terminal">${RUN_ICON}</button>`
                     : '') +
                 `<button type="button" data-copy title="Copy" aria-label="Copy code">${COPY_ICON}</button></span></div>` +

@@ -10,19 +10,34 @@
     // the current one has been readable for a moment, and the ones in between are skipped.
     // `hold`: how long a line stays readable before the next one may replace it (a state label that flips between
     // "Reasoning" and "Thinking" wants a longer hold than a step name).
+    // `dots`: the animated "..." after the line. It lives inside the line, so when the line is cut to fit, the dots take
+    // the place of the cut-off ellipsis instead of stacking after it.
     let {
         text,
         shimmer = false,
         class: className = '',
         containerClass = '',
         hold = 420,
+        dots = false,
     }: {
         text: string;
         shimmer?: boolean;
         class?: string;
         containerClass?: string;
         hold?: number;
+        dots?: boolean;
     } = $props();
+
+    const outerClass = $derived(
+        dots
+            ? 'flex min-w-0 whitespace-nowrap'
+            : 'block min-w-0 truncate whitespace-nowrap',
+    );
+    const textClass = $derived(
+        dots
+            ? 'block min-w-0 overflow-hidden whitespace-nowrap'
+            : 'block truncate',
+    );
 
     const reduced =
         typeof matchMedia === 'function' &&
@@ -80,23 +95,30 @@
     <span
         class="pointer-events-none invisible absolute left-0 top-0 w-max whitespace-nowrap {className}"
         aria-hidden="true"
-        {@attach measure}>{shown}</span
+        {@attach measure}
+        >{shown}{#if dots}<span class="loading-dots ml-0.5 inline-flex"
+                ><span>.</span><span>.</span><span>.</span></span
+            >{/if}</span
     >
     <!-- Keyed on the shown line only. A shimmer change alone (the title goes from the summary to a running step, or
          back) swaps the inner text inside the same slot without replaying the slide-in of the line. -->
     {#key shown}
         <span
-            class="col-start-1 row-start-1 block min-w-0 truncate whitespace-nowrap"
+            class="col-start-1 row-start-1 {outerClass}"
             in:fly={{ y: 7, duration: ms(200), easing: cubicOut }}
             out:fly={{ y: -7, duration: ms(150), easing: cubicOut }}
         >
             {#if shimmer}
-                <ZShimmerText
-                    class="block truncate {className}"
-                    zText={shown}
-                />
+                <ZShimmerText class="{textClass} {className}" zText={shown} />
             {:else}
-                <span class="block truncate {className}">{shown}</span>
+                <span class="{textClass} {className}">{shown}</span>
+            {/if}
+            {#if dots}
+                <span
+                    class="loading-dots ml-0.5 inline-flex shrink-0 {className}"
+                    aria-hidden="true"
+                    ><span>.</span><span>.</span><span>.</span></span
+                >
             {/if}
         </span>
     {/key}

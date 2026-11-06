@@ -292,7 +292,7 @@
                         animate:flip={{ duration: 300, easing: cubicOut }}
                     >
                         <div
-                            class="sticky top-0 z-10 flex min-h-12 min-w-0 items-start gap-3 bg-card/95 px-3 py-2 shadow-sm backdrop-blur-sm"
+                            class="flex min-h-12 min-w-0 items-start gap-3 bg-card px-3 py-2"
                         >
                             <button
                                 type="button"

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { historyWith, native, row } from './support/history-harness.mjs';
+import { responseText } from '../src/lib/chat/session/held.ts';
 
 const chatSession = () => ({
     id: 'chat',
@@ -103,5 +104,22 @@ test('a reply that the file holds with a follow-up in the same message keeps its
                 block.kind === 'response' && block.text === 'Follow-up B',
         ),
         'the follow-up text stays after the card',
+    );
+});
+
+test('a reply with no time in its file stays after the turn before it when a work card comes back', async () => {
+    // A file message without a time keeps its place in the file. Sorting the restored list by instant put it first.
+    const messages = await openWith(
+        [
+            native('u1', 'user', '2026-11-03T01:00:00Z', 'start'),
+            native('a1', 'assistant', '2026-11-03T01:00:05Z', 'Done A'),
+            native('a2', 'assistant', '', 'Next reply'),
+        ],
+        [archivedReply()],
+    );
+    // The list comes from the module's realm: compare its text, not the array object.
+    assert.equal(
+        JSON.stringify(messages.map((message) => responseText(message))),
+        JSON.stringify(['start', 'Done A', 'Next reply']),
     );
 });

@@ -138,7 +138,7 @@
     <FlowTemplates />
     {#if delegateRuns.length > 0}
         <div
-            class="flex shrink-0 items-center gap-2 border-b border-border px-1.5 py-1.5 text-sm"
+            class="tool-header flex shrink-0 items-center gap-2 border-b border-border px-1.5 text-sm"
         >
             <ZTabs
                 zTabs={RANGES.map(({ value, label }) => ({ value, label }))}

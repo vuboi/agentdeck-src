@@ -8,7 +8,13 @@ import { toast } from '../app/platform/toast';
 // much the agents used them. Usage is counted from the Tasks log (every tool call is in it), so it covers every
 // server with no extra bookkeeping.
 
-export type McpAgent = 'claude' | 'codex' | 'antigravity' | 'copilot';
+export type McpAgent =
+    | 'claude'
+    | 'codex'
+    | 'antigravity'
+    | 'copilot'
+    | 'opencode'
+    | 'command-code';
 export type McpEntry = {
     id: string;
     name: string;

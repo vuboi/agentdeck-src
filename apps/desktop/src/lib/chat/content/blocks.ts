@@ -727,6 +727,27 @@ export function backgroundTaskName(item: {
     return item.name;
 }
 
+/** The background tasks of `sessionId` still open (running or background): the ones a reply can be waiting for. */
+export function openBackgroundTasks(
+    items: readonly {
+        sessionId: string;
+        background: boolean;
+        status: string;
+        name: string;
+        input: string;
+    }[],
+    sessionId: string,
+): { name: string }[] {
+    return items
+        .filter(
+            (item) =>
+                item.sessionId === sessionId &&
+                item.background &&
+                (item.status === 'running' || item.status === 'background'),
+        )
+        .map((item) => ({ name: backgroundTaskName(item) }));
+}
+
 /** The live line while a reply only waits for background tasks of the provider, or null when it does something else
  *  (streams, runs a command, waits for an approval). `open`: the tasks still running in the chat. */
 export function waitingLabel(

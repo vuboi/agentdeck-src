@@ -83,9 +83,11 @@
     } from '../../plans/plan-gate.svelte';
     import { openProjectFile } from '../../files/file-viewer.svelte';
     import ModelPicker from './ModelPicker.svelte';
+    import { baseModel, creditModel } from '../../agents/credit-model';
     import ComposerQueue from './ComposerQueue.svelte';
     import BackgroundTasks from './BackgroundTasks.svelte';
     import { chatWork } from '../../chat/session/work.svelte';
+    import { backgroundWait } from '../../chat/runs/live-line.svelte';
     import { hasTurnWork } from '../../chat/session/turns.svelte';
     import ComposerChips from './ComposerChips.svelte';
     import {
@@ -191,6 +193,14 @@
         typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
     const waiting = $derived(queued[sessionId] ?? []);
     const waitingForUser = $derived(needsUserInput(sessionId));
+    // The queued message waits for the turn above, and that turn only waits for its background tasks: the queue says so.
+    const waitingAbove = $derived.by(() => {
+        if (waiting.length === 0) return false;
+        const reply = messagesView(sessionId).find(
+            (item) => item.id === replies[sessionId],
+        );
+        return Boolean(reply && backgroundWait(reply, sessionId) !== null);
+    });
     const contextReply = $derived(
         [...messagesView(sessionId)]
             .reverse()
@@ -438,7 +448,15 @@
                 pendingSwitch[sessionId] = waiting;
             }
             agent = waiting?.agent ?? current?.agent ?? saved.agent;
-            model = waiting?.model ?? current?.model ?? saved.model;
+            // The user's own pick is saved as `credit:<model>`, but the chat's route (from its transcript) records the plain
+            // id: the saved Console credit pick of the same model wins, or a reload would drop it to the plan's model.
+            const creditPick =
+                creditModel(saved.model) &&
+                baseModel(current?.model ?? '') === creditModel(saved.model)
+                    ? saved.model
+                    : undefined;
+            model =
+                waiting?.model ?? creditPick ?? current?.model ?? saved.model;
             effort = saved.effort;
             fast = saved.fast;
             permission = saved.permission;
@@ -1120,6 +1138,7 @@
             {sessionId}
             {waiting}
             {waitingForUser}
+            {waitingAbove}
             onedit={editQueued}
             embedded
         />
@@ -1133,6 +1152,7 @@
             {sessionId}
             {waiting}
             {waitingForUser}
+            {waitingAbove}
             onedit={editQueued}
         />
     {/if}

@@ -10,11 +10,6 @@ export const TOOLS: Tool[] = [
     { value: 'Images', label: 'Images', icon: 'lucideImage' as ZIconName },
     { value: 'Tasks', label: 'Tasks', icon: 'lucideListChecks' as ZIconName },
     {
-        value: 'Plans',
-        label: 'Plans',
-        icon: 'lucideClipboardList' as ZIconName,
-    },
-    {
         value: 'Canvas',
         label: 'Canvas',
         icon: 'lucidePanelsTopLeft' as ZIconName,
@@ -26,11 +21,6 @@ export const TOOLS: Tool[] = [
         icon: 'lucideWorkflow' as ZIconName,
     },
     { value: 'Usage', label: 'Usage', icon: 'lucideActivity' as ZIconName },
-    {
-        value: 'Activity',
-        label: 'Activity log',
-        icon: 'lucideHistory' as ZIconName,
-    },
 ];
 
 /** Tools that have a window but no tab in the panel. MCP moved into the Store; it stays here so a layout or window saved

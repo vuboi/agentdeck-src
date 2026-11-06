@@ -103,10 +103,16 @@ pub(crate) fn append_disabled(found: &mut Vec<Raw>) {
         {
             continue;
         }
-        let Some(agent) = ["claude", "codex", "copilot", "antigravity"]
-            .into_iter()
-            .find(|a| *a == row.agent)
-        else {
+        let Some(agent) = [
+            "claude",
+            "codex",
+            "copilot",
+            "antigravity",
+            "opencode",
+            "command-code",
+        ]
+        .into_iter()
+        .find(|a| *a == row.agent) else {
             continue;
         };
         let Some(value) = secret(&row.vault).and_then(|s| serde_json::from_str::<Value>(&s).ok())
@@ -115,7 +121,12 @@ pub(crate) fn append_disabled(found: &mut Vec<Raw>) {
         };
         let mut map = serde_json::Map::new();
         map.insert(row.name, value);
-        for mut raw in mcp_manage::servers_in(&Value::Object(map), agent, &row.scope, &row.source) {
+        let servers = if agent == "opencode" {
+            mcp_manage::opencode_servers_in(&Value::Object(map), &row.scope, &row.source)
+        } else {
+            mcp_manage::servers_in(&Value::Object(map), agent, &row.scope, &row.source)
+        };
+        for mut raw in servers {
             raw.disabled = true;
             found.push(raw);
         }
@@ -151,10 +162,10 @@ fn map<'a>(
     } else {
         root
     };
-    let key = if raw.agent == "codex" {
-        "mcp_servers"
-    } else {
-        "mcpServers"
+    let key = match raw.agent {
+        "codex" => "mcp_servers",
+        "opencode" => "mcp",
+        _ => "mcpServers",
     };
     root[key]
         .as_object_mut()
@@ -286,7 +297,16 @@ pub async fn mcp_provider_set(id: String, agent: String, enabled: bool) -> Resul
 
 fn set(id: &str, agent: &str, enabled: bool) -> Result<(), String> {
     let _guard = MUTATIONS.lock().map_err(|e| e.to_string())?;
-    if !["claude", "codex", "copilot", "antigravity"].contains(&agent) {
+    if ![
+        "claude",
+        "codex",
+        "copilot",
+        "antigravity",
+        "opencode",
+        "command-code",
+    ]
+    .contains(&agent)
+    {
         return Err("Unsupported MCP provider".into());
     }
     let raws = mcp_manage::read_all();
@@ -352,7 +372,7 @@ fn set(id: &str, agent: &str, enabled: bool) -> Result<(), String> {
                     .as_object_mut()
                     .ok_or("Invalid server")?
                     .remove("enabled");
-                if agent == "codex" {
+                if matches!(agent, "codex" | "opencode" | "command-code") {
                     value["enabled"] = json!(true);
                 }
                 write_config(path, &root)

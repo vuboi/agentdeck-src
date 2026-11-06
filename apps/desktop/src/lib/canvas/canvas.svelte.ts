@@ -93,7 +93,7 @@ if (inTauri() && !isPreviewCopy()) {
 }
 
 export function stateFor(root: string): ArtifactState {
-    return (canvasState[root] ??= {
+    canvasState[root] ??= {
         items: [],
         query: '',
         cursor: null,
@@ -103,7 +103,8 @@ export function stateFor(root: string): ArtifactState {
         content: '',
         loading: false,
         error: '',
-    });
+    };
+    return canvasState[root];
 }
 
 export async function loadArtifacts(

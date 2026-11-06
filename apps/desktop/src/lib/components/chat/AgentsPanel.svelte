@@ -246,6 +246,7 @@
                 multiple
                 size="sm"
                 fitContent
+                maxHeight={240}
                 position="bottom-right"
                 width={280}
                 tooltip="left"

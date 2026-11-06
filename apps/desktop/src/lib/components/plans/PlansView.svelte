@@ -1,49 +1,64 @@
 <script lang="ts">
     import { onMount, untrack } from 'svelte';
-    import { ZButton, ZIcon } from '@shival99/z-ui-svelte';
+    import { ZButton, ZIcon, createVirtualizer } from '@shival99/z-ui-svelte';
     import type { ZDropdownMenuItem, ZIconName } from '@shival99/z-ui-svelte';
     import ProjectSelect from '../ui/ProjectSelect.svelte';
-    import PickerPopover from '../ui/PickerPopover.svelte';
+    import PickerPopover, { type PickerItem } from '../ui/PickerPopover.svelte';
     import MenuButton from '../ui/MenuButton.svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
     import MarkdownPreviewModal from '../ui/MarkdownPreviewModal.svelte';
     import { workspace } from '../../chat/sessions.svelte';
     import { readProjectFile } from '../../files/files';
-    import { ago } from '../../chat/content/blocks';
-    import { ticker } from '../../app/platform/clock.svelte';
     import { inTauri } from '../../app/platform/history';
     import { listen } from '../../app/platform/tauri-event';
     import { toast } from '../../app/platform/toast';
     import { TRIGGER_ON } from '../../app/ui/popover';
     import { openProjectFile } from '../../files/file-viewer.svelte';
-    import { relativeTo, samePath } from '../../files/paths';
+    import { samePath } from '../../files/paths';
     import {
-        loadPlans,
-        plansCache,
-        type PlanInfo,
+        loadMorePlanPage,
+        loadPlanPage,
+        planPages,
+        type PlanRow,
     } from '../../plans/plans.svelte';
 
-    type Row = { plan: PlanInfo; root: string };
-
-    // A plan opens in a modal, as an activity log entry does: its text, and what to do with it.
-    let viewing = $state<Row | null>(null);
+    // A plan opens in a modal, as an activity log entry does: its text, and what to do with it. The text is read first,
+    // so the modal opens at its full size with the content in it (not empty, then grown).
+    let viewing = $state<PlanRow | null>(null);
     let viewOpen = $state(false);
     let viewText = $state('');
     let viewSeq = 0;
-    async function openPlan(row: Row) {
+    async function openPlan(row: PlanRow) {
         const seq = ++viewSeq;
-        viewing = row;
-        viewText = '';
-        viewOpen = true;
         try {
             const text = await readProjectFile(row.root, row.plan.path);
-            if (seq === viewSeq) viewText = text;
+            if (seq !== viewSeq) return;
+            viewing = row;
+            viewText = text;
+            viewOpen = true;
         } catch (error) {
             if (seq !== viewSeq) return;
-            viewOpen = false;
             toast.error(`Could not open plan: ${String(error)}`);
         }
     }
+    // The search button of the file view looks through the plans, by title, with the project name after it.
+    let {
+        findOpen = $bindable(false),
+        from = null,
+    }: { findOpen?: boolean; from?: HTMLElement | null } = $props();
+    const findItems = $derived<PickerItem<PlanRow>[]>(
+        planPages.local.items.map((row) => ({
+            id: `${row.root}:${row.plan.path}`,
+            label: row.plan.title,
+            hint: projectName(row.root),
+            icon: 'lucideFileText' as ZIconName,
+            data: row,
+        })),
+    );
+    const projectName = (root: string) =>
+        workspace.projects.find((item) => item.path === root)?.name ??
+        root.split(/[\\/]/).filter(Boolean).pop() ??
+        root;
     const STATUSES: { value: string; label: string; icon: ZIconName }[] = [
         { value: '', label: 'All', icon: 'lucideListChecks' },
         { value: 'draft', label: 'Draft', icon: 'lucideFileText' },
@@ -64,32 +79,9 @@
             ? [project]
             : projectOptions,
     );
-    const loading = $derived(roots.some((root) => plansCache[root]?.loading));
-    const errors = $derived(
-        roots.flatMap((root) =>
-            plansCache[root]?.error
-                ? [{ root, error: plansCache[root].error }]
-                : [],
-        ),
-    );
-    const rows = $derived(
-        roots
-            .flatMap((root) =>
-                (plansCache[root]?.items ?? []).map((plan) => ({ plan, root })),
-            )
-            .filter(({ plan }) => !status || plan.status === status),
-    );
-    const local = $derived(
-        rows.filter(({ plan }) => !plan.id.startsWith('claude-global/')),
-    );
-    // Each root includes the same global directory; show each global file once in the shared section.
-    const global = $derived(
-        rows.filter(
-            ({ plan }, index) =>
-                plan.id.startsWith('claude-global/') &&
-                rows.findIndex((row) => row.plan.path === plan.path) === index,
-        ),
-    );
+    const local = $derived(planPages.local.items);
+    const loading = $derived(planPages.local.loading);
+    const listError = $derived(planPages.local.error);
     const filterItems = $derived(
         STATUSES.map((item) => ({
             id: item.value,
@@ -101,21 +93,21 @@
     );
 
     function refresh() {
-        for (const root of roots) void loadPlans(root, true);
+        const selectedRoots = roots;
+        const selectedStatus = status;
+        void loadPlanPage('local', selectedRoots, selectedStatus);
     }
     $effect(() => {
-        const selectedRoots = roots;
-        untrack(() => {
-            for (const root of selectedRoots) void loadPlans(root, true);
-        });
+        void roots;
+        void status;
+        untrack(refresh);
     });
     onMount(() => {
         if (!inTauri()) return;
         let disposed = false;
         let unlisten: (() => void) | undefined;
         void listen<{ root: string }>('plan-changed', ({ payload }) => {
-            const root = roots.find((item) => samePath(item, payload.root));
-            if (root) void loadPlans(root, true);
+            if (roots.some((item) => samePath(item, payload.root))) refresh();
         })
             .then((stop) => {
                 if (disposed) stop();
@@ -132,7 +124,7 @@
         };
     });
 
-    async function setStatus(row: Row, value: string) {
+    async function setStatus(row: PlanRow, value: string) {
         try {
             const { invoke } = await import('@tauri-apps/api/core');
             await invoke('plans_set_status', {
@@ -140,12 +132,12 @@
                 id: row.plan.id,
                 status: value,
             });
-            await loadPlans(row.root, true);
+            refresh();
         } catch (error) {
             toast.error(`Could not update plan: ${String(error)}`);
         }
     }
-    function menu(row: Row): ZDropdownMenuItem[] {
+    function menu(row: PlanRow): ZDropdownMenuItem[] {
         return [
             {
                 label: 'Open',
@@ -186,13 +178,49 @@
                 : []),
         ];
     }
+
+    const ROW_HEIGHT = 48;
+    const rowKey = (row: PlanRow | undefined, index: number) =>
+        row ? `${row.root}:${row.plan.id}` : String(index);
+    let scroller = $state<HTMLDivElement>();
+    const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+        count: 0,
+        getScrollElement: () => scroller ?? null,
+        estimateSize: () => ROW_HEIGHT,
+        getItemKey: (index) => rowKey(local[index], index),
+        overscan: 8,
+    });
+    $effect(() => {
+        const count = local.length;
+        const element = scroller;
+        untrack(() =>
+            $virtualizer.setOptions({
+                count,
+                getScrollElement: () => element ?? null,
+                estimateSize: () => ROW_HEIGHT,
+                getItemKey: (index) => rowKey(local[index], index),
+                overscan: 8,
+            }),
+        );
+    });
+    const shown = $derived($virtualizer.getVirtualItems());
+    const total = $derived($virtualizer.getTotalSize());
+    function measureRow(node: HTMLDivElement) {
+        $virtualizer.measureElement(node);
+    }
+    // Rows are read a page at a time: when the rendered rows reach the end of those read, read the next page.
+    $effect(() => {
+        const last = shown.at(-1)?.index ?? -1;
+        if (last >= local.length - 10)
+            untrack(() => void loadMorePlanPage('local'));
+    });
 </script>
 
-{#snippet planRow(row: Row)}
+{#snippet planRow(row: PlanRow)}
     <div class="flex items-center gap-2 border-b border-border px-2">
         <button
             type="button"
-            class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-2 text-left outline-none hover:bg-muted/40 focus-visible:bg-muted/40"
+            class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1.5 text-left outline-none hover:bg-muted/40 focus-visible:bg-muted/40"
             onclick={() => void openPlan(row)}
         >
             {#if row.plan.agent}
@@ -207,14 +235,9 @@
                 <span class="block truncate text-sm font-medium"
                     >{row.plan.title}</span
                 >
-                <span
-                    class="mt-1 block text-xs text-muted-foreground [overflow-wrap:anywhere]"
+                <span class="block truncate text-xs text-muted-foreground"
+                    >{projectName(row.root)}</span
                 >
-                    {row.plan.status} · {row.plan.done}/{row.plan.total} steps · {ago(
-                        row.plan.updated,
-                        ticker.min,
-                    )} · {relativeTo(row.root, row.plan.path)}
-                </span>
             </span>
         </button>
         <MenuButton items={menu(row)} label={`Actions for ${row.plan.title}`} />
@@ -227,7 +250,7 @@
     aria-label="Plans"
 >
     <div
-        class="flex shrink-0 flex-wrap items-center gap-2 border-b border-border p-2"
+        class="tool-header flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-1.5"
     >
         <ProjectSelect
             bind:value={project}
@@ -279,19 +302,25 @@
             <ZIcon zType="lucideRefreshCw" class="size-4" />
         </ZButton>
     </div>
-    <div class="min-h-0 flex-1 overflow-y-auto" aria-busy={loading}>
-        {#each errors as item (item.root)}
+    <div
+        bind:this={scroller}
+        class="min-h-0 flex-1 overflow-y-auto"
+        aria-busy={loading}
+    >
+        {#if listError}
             <p class="m-0 p-3 text-xs text-destructive" role="alert">
-                Could not load plans for {workspace.projects.find(
-                    (project) => project.path === item.root,
-                )?.name ?? item.root}: {item.error}
+                Could not load plans: {listError}
             </p>
-        {/each}
-        {#if local.length === 0 && (loading || errors.length === 0)}
+        {/if}
+        {#if local.length === 0 && (loading || !listError)}
             <div
-                class="flex flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
+                class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
             >
-                <ZIcon zType="lucideClipboardList" class="size-8 opacity-60" />
+                <ZIcon
+                    zType="lucideClipboardList"
+                    zSize="24"
+                    class="opacity-60"
+                />
                 <p class="m-0 max-w-56 text-sm leading-normal" role="status">
                     {loading
                         ? 'Loading plans…'
@@ -299,25 +328,39 @@
                 </p>
             </div>
         {:else}
-            {#each local as row (`${row.root}:${row.plan.id}`)}
-                {@render planRow(row)}
-            {/each}
+            <div class="relative" style:height="{total}px">
+                {#each shown as item (item.key)}
+                    {#if local[item.index]}
+                        <div
+                            class="absolute inset-x-0 top-0"
+                            style:transform="translateY({item.start}px)"
+                            data-index={item.index}
+                            use:measureRow
+                        >
+                            {@render planRow(local[item.index])}
+                        </div>
+                    {/if}
+                {/each}
+            </div>
         {/if}
-        <details class="border-t border-border">
-            <summary
-                class="cursor-pointer px-2 py-2 text-xs font-medium text-muted-foreground outline-none hover:bg-muted/40 focus-visible:bg-muted/40"
-                >Claude (global)</summary
-            >
-            {#each global as row (row.plan.path)}
-                {@render planRow(row)}
-            {:else}
-                <p class="m-0 px-2 py-2 text-xs text-muted-foreground">
-                    No global plans.
-                </p>
-            {/each}
-        </details>
     </div>
 </div>
+
+<PickerPopover
+    anchor={from}
+    bind:open={findOpen}
+    items={findItems}
+    search
+    label="Find a plan"
+    placeholder="Search plans by title"
+    empty="No plans"
+    size="sm"
+    position="bottom-right"
+    onpick={(item) => {
+        findOpen = false;
+        void openPlan(item.data);
+    }}
+/>
 
 {#if viewing}<MarkdownPreviewModal
         bind:open={viewOpen}

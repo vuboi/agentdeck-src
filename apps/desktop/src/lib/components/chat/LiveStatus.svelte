@@ -31,10 +31,7 @@
             />
         {/key}
     </span>
-    <SwapLine text={line.label} shimmer hold={900} /><span
-        class="loading-dots -ml-1.5 inline-flex"
-        aria-hidden="true"><span>.</span><span>.</span><span>.</span></span
-    >
+    <SwapLine text={line.label} shimmer dots hold={900} />
     <!-- A fixed box for the seconds: their width changes with each tick, the box does not, so the text does not shift. -->
     <span class="inline-block min-w-[6ch] text-left tabular-nums"
         >{seconds}</span

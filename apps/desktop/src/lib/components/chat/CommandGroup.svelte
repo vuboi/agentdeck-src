@@ -466,14 +466,11 @@
             <SwapLine
                 text={current.label}
                 shimmer
+                dots
                 class="stream-label"
                 containerClass="min-w-0"
                 hold={900}
-            /><span
-                class="loading-dots stream-label -ml-1.5 inline-flex"
-                aria-hidden="true"
-                ><span>.</span><span>.</span><span>.</span></span
-            >
+            />
         {:else}
             <!-- Always an icon, by the kind of work: the step running now, else what the group did most (terminal, file edit,
            search, skill, a plug for an MCP tool). The bulb only for a group that holds nothing but reasoning. -->
@@ -509,15 +506,12 @@
                       ? status.label
                       : summarize(items)}
                 shimmer={Boolean(runningStep) || working || Boolean(status)}
+                dots={Boolean(status)}
                 hold={status ? 900 : 420}
                 class="font-medium"
                 containerClass="min-w-0"
             />
             {#if status}<span
-                    class="loading-dots stream-label -ml-1.5 inline-flex shrink-0"
-                    aria-hidden="true"
-                    ><span>.</span><span>.</span><span>.</span></span
-                ><span
                     class="stream-label inline-block min-w-[3ch] shrink-0 tabular-nums"
                     >{seconds}</span
                 >{/if}

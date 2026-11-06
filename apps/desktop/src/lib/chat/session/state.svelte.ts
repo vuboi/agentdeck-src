@@ -24,6 +24,7 @@ import { listen } from '../../app/platform/tauri-event';
 import { lastChat } from './turns.svelte';
 import { prewarmChat } from './run.svelte';
 import { folderName } from './history.svelte';
+import { migrateChatIndexOnce } from './chat-index';
 import {
     restoreCommandImages,
     stripCommandImageData,
@@ -725,7 +726,8 @@ async function restoreSidebarOnce(): Promise<void> {
     await setPref(P55_SIDEBAR_RESTORED, true);
 }
 
-const localReady = wipeLocalChatsOnce()
+const localReady = migrateChatIndexOnce()
+    .then(() => wipeLocalChatsOnce())
     .catch(() => {
         // Backup or removal failed: the chats stay where they are, and the next start tries again.
     })

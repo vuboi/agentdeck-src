@@ -827,7 +827,7 @@
     aria-label="Tasks"
 >
     <div
-        class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-1.5 text-[0.8125rem]"
+        class="tool-header flex shrink-0 items-center gap-2 border-b border-border px-1.5 text-[0.8125rem]"
     >
         <span class="font-medium">Tasks</span>
         {#if runningCount > 0}

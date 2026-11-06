@@ -685,6 +685,7 @@ pub async fn connectors_detect(only: Option<String>) -> Detected {
                     None => None,
                 };
                 let version = match &found {
+                    Some(path) if id == "command-code" => commandcode::version(path).await,
                     Some(path) => version_of(path).await,
                     None => None,
                 };

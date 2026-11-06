@@ -63,6 +63,8 @@ pub struct ChatMeta {
     pub active_agent: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub last_user_at: String,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

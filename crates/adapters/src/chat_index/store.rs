@@ -19,8 +19,8 @@ impl ChatIndex {
     /// Creates the chat, or updates its title, folder, project and agent. `created_at` is kept once it is set.
     pub fn save_chat(&mut self, chat: &ChatMeta) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO chats (id, title, project_id, cwd, active_agent, created_at, updated_at, deleted_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)
+            "INSERT INTO chats (id, title, project_id, cwd, active_agent, created_at, updated_at, last_user_at, expires_at, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, COALESCE(NULLIF(?9, ''), strftime('%Y-%m-%dT%H:%M:%fZ', CASE WHEN ?8 = '' THEN ?6 ELSE ?8 END, '+14 days')), NULL)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 project_id = excluded.project_id,
@@ -35,7 +35,9 @@ impl ChatIndex {
                 chat.cwd,
                 chat.active_agent,
                 chat.created_at,
-                chat.updated_at
+                chat.updated_at,
+                chat.last_user_at,
+                chat.expires_at
             ],
         )?;
         Ok(())
@@ -46,7 +48,7 @@ impl ChatIndex {
         Ok(self
             .conn
             .query_row(
-                "SELECT id, title, project_id, cwd, active_agent, created_at, updated_at
+                "SELECT id, title, project_id, cwd, active_agent, created_at, updated_at, last_user_at, expires_at
                  FROM chats WHERE id = ?1 AND deleted_at IS NULL",
                 [chat_id],
                 chat_from_row,
@@ -55,13 +57,22 @@ impl ChatIndex {
     }
 
     /// Every live chat, most recently updated first.
-    pub fn list_chats(&self) -> Result<Vec<ChatMeta>> {
+    pub fn list_chats(&mut self) -> Result<Vec<ChatMeta>> {
+        self.purge_expired()?;
         let mut statement = self.conn.prepare(
-            "SELECT id, title, project_id, cwd, active_agent, created_at, updated_at
+            "SELECT id, title, project_id, cwd, active_agent, created_at, updated_at, last_user_at, expires_at
              FROM chats WHERE deleted_at IS NULL ORDER BY updated_at DESC, id",
         )?;
         let rows = statement.query_map([], chat_from_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Deletes chats whose user inactivity window has elapsed. Native provider sessions and files are untouched.
+    pub fn purge_expired(&mut self) -> Result<usize> {
+        Ok(self.conn.execute(
+            "DELETE FROM chats WHERE deleted_at IS NULL AND expires_at <> '' AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            [],
+        )?)
     }
 
     /// Adds a binding to a chat, or updates the binding with the same id. Fails with `NativeBound` when the native
@@ -130,6 +141,7 @@ impl ChatIndex {
         let mut report = AppendReport::default();
         let mut writers = HashSet::new();
         let mut last_time = None;
+        let mut last_user_at = None;
         let mut seq = last_seq(&tx, chat_id)?;
         for message in messages {
             if is_known(&tx, chat_id, message.native.as_ref())? {
@@ -145,6 +157,9 @@ impl ChatIndex {
             if !message.time.is_empty() {
                 last_time = Some(message.time.clone());
             }
+            if message.role == "user" && !message.time.is_empty() {
+                last_user_at = Some(message.time.clone());
+            }
         }
         for binding_id in &writers {
             tx.execute(
@@ -155,6 +170,12 @@ impl ChatIndex {
         if let Some(time) = last_time {
             tx.execute(
                 "UPDATE chats SET updated_at = ?1 WHERE id = ?2",
+                params![time, chat_id],
+            )?;
+        }
+        if let Some(time) = last_user_at {
+            tx.execute(
+                "UPDATE chats SET last_user_at = ?1, expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', ?1, '+14 days') WHERE id = ?2",
                 params![time, chat_id],
             )?;
         }
@@ -650,6 +671,8 @@ fn chat_from_row(row: &Row) -> rusqlite::Result<ChatMeta> {
         active_agent: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        last_user_at: row.get(7)?,
+        expires_at: row.get(8)?,
     })
 }
 

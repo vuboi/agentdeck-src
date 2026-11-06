@@ -16,7 +16,14 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::connectors::{capture, codex_home, command, failure, which, KillTree};
 
-const AGENTS: [&str; 4] = ["claude", "codex", "antigravity", "copilot"];
+const AGENTS: [&str; 6] = [
+    "claude",
+    "codex",
+    "antigravity",
+    "copilot",
+    "opencode",
+    "command-code",
+];
 
 /// One server as one config file has it.
 #[derive(Clone, Debug, Default)]
@@ -190,6 +197,30 @@ pub(crate) fn read_all() -> Vec<Raw> {
                 "user",
                 &copilot.to_string_lossy(),
             ));
+        }
+        let command_code = home.join(".commandcode").join("mcp.json");
+        if let Ok(json) = std::fs::read_to_string(&command_code)
+            .map_err(drop)
+            .and_then(|text| serde_json::from_str::<Value>(&text).map_err(drop))
+        {
+            found.extend(servers_in(
+                &json["mcpServers"],
+                "command-code",
+                "user",
+                &command_code.to_string_lossy(),
+            ));
+        }
+        if let Ok(opencode) = opencode_config() {
+            if let Ok(json) = std::fs::read_to_string(&opencode)
+                .map_err(drop)
+                .and_then(|text| serde_json::from_str::<Value>(&text).map_err(drop))
+            {
+                found.extend(opencode_servers_in(
+                    &json["mcp"],
+                    "user",
+                    &opencode.to_string_lossy(),
+                ));
+            }
         }
     }
     let codex = codex_home().join("config.toml");
@@ -762,6 +793,29 @@ pub async fn mcp_add(spec: AddSpec) -> Result<Vec<AgentResult>, String> {
             });
             continue;
         }
+        if agent == "command-code" {
+            let result =
+                command_code_config().and_then(|path| write_command_code_server_at(&path, &spec));
+            results.push(AgentResult {
+                agent: agent.clone(),
+                ok: result.is_ok(),
+                message: result
+                    .err()
+                    .unwrap_or_else(|| "saved to Command Code MCP config".into()),
+            });
+            continue;
+        }
+        if agent == "opencode" {
+            let result = opencode_config().and_then(|path| write_opencode_server_at(&path, &spec));
+            results.push(AgentResult {
+                agent: agent.clone(),
+                ok: result.is_ok(),
+                message: result
+                    .err()
+                    .unwrap_or_else(|| "saved to OpenCode MCP config".into()),
+            });
+            continue;
+        }
         results.push(match add_args(agent, &spec) {
             Ok(args) => run_cli(agent, args).await,
             Err(message) => AgentResult {
@@ -809,6 +863,7 @@ pub async fn mcp_remove(
                 "claude" => ".mcp.json",
                 "codex" => ".codex/config.toml",
                 "copilot" => ".copilot/mcp-config.json",
+                "command-code" => ".mcp.json",
                 _ => continue,
             };
             let result = crate::store::sync::remove_project_mcp(
@@ -842,6 +897,28 @@ pub async fn mcp_remove(
             });
             continue;
         }
+        if agent == "command-code" {
+            let result = command_code_config().and_then(|path| remove_mcp_server_at(&path, &name));
+            results.push(AgentResult {
+                agent: agent.clone(),
+                ok: result.is_ok(),
+                message: result
+                    .err()
+                    .unwrap_or_else(|| "removed from Command Code MCP config".into()),
+            });
+            continue;
+        }
+        if agent == "opencode" {
+            let result = opencode_config().and_then(|path| remove_opencode_server_at(&path, &name));
+            results.push(AgentResult {
+                agent: agent.clone(),
+                ok: result.is_ok(),
+                message: result
+                    .err()
+                    .unwrap_or_else(|| "removed from OpenCode MCP config".into()),
+            });
+            continue;
+        }
         let mut args: Vec<String> = vec!["mcp".into(), "remove".into()];
         if agent == "claude" {
             args.extend(["-s".to_string(), "user".to_string()]);
@@ -850,6 +927,135 @@ pub async fn mcp_remove(
         results.push(run_cli(agent, args).await);
     }
     Ok(results)
+}
+
+/// Command Code's user config, `~/.commandcode/mcp.json`, whose servers live under `mcpServers`.
+fn command_code_config() -> Result<PathBuf, String> {
+    Ok(crate::home_folder()?.join(".commandcode").join("mcp.json"))
+}
+
+/// Adds or replaces one server in Command Code's MCP config, keeping every other entry.
+fn write_command_code_server_at(path: &std::path::Path, spec: &AddSpec) -> Result<(), String> {
+    let mut root = match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str::<Value>(&text)
+            .map_err(|error| format!("Command Code MCP config is invalid: {error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(error) => return Err(error.to_string()),
+    };
+    let Some(object) = root.as_object_mut() else {
+        return Err("Command Code MCP config is not a JSON object".into());
+    };
+    let servers = object
+        .entry("mcpServers")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("Command Code MCP config has an invalid mcpServers value")?;
+    let server = if spec.transport == "http" {
+        json!({"transport": "http", "url": spec.target, "headers": pairs_from_lines(&spec.headers)})
+    } else {
+        json!({"transport": "stdio", "command": spec.target, "args": spec.args, "env": pairs_from_lines(&spec.env)})
+    };
+    servers.insert(spec.name.clone(), server);
+    let parent = path
+        .parent()
+        .ok_or("Command Code config has no parent folder")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string_pretty(&root).map_err(|error| error.to_string())?;
+    std::fs::write(path, text).map_err(|error| error.to_string())
+}
+
+/// Removes one server from a `mcpServers` config file without affecting other entries.
+fn remove_mcp_server_at(path: &std::path::Path, name: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let mut root: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if let Some(servers) = root.get_mut("mcpServers").and_then(Value::as_object_mut) {
+        servers.remove(name);
+    }
+    let text = serde_json::to_string_pretty(&root).map_err(|error| error.to_string())?;
+    std::fs::write(path, text).map_err(|error| error.to_string())
+}
+
+/// OpenCode's user config, `opencode.json`, whose servers live under `mcp`.
+fn opencode_config() -> Result<PathBuf, String> {
+    Ok(crate::home_folder()?
+        .join(".config")
+        .join("opencode")
+        .join("opencode.json"))
+}
+
+/// OpenCode's `mcp` map: a local server keeps its command and arguments in one list, and `enabled: false` turns it off.
+/// The entries are turned into the shape `servers_in` reads, so they show like the other agents' servers.
+pub(crate) fn opencode_servers_in(map: &Value, scope: &str, source: &str) -> Vec<Raw> {
+    let Some(object) = map.as_object() else {
+        return Vec::new();
+    };
+    let converted: serde_json::Map<String, Value> = object
+        .iter()
+        .map(|(name, item)| {
+            let server = if item["type"].as_str() == Some("remote") {
+                json!({
+                    "type": "http",
+                    "url": item["url"],
+                    "headers": item["headers"],
+                    "enabled": item["enabled"],
+                })
+            } else {
+                let list = strings(&item["command"]);
+                json!({
+                    "type": "stdio",
+                    "command": list.first().cloned().unwrap_or_default(),
+                    "args": list.iter().skip(1).cloned().collect::<Vec<String>>(),
+                    "env": item["environment"],
+                    "enabled": item["enabled"],
+                })
+            };
+            (name.clone(), server)
+        })
+        .collect();
+    servers_in(&Value::Object(converted), "opencode", scope, source)
+}
+
+/// Adds or replaces one server in OpenCode's config, keeping every other key and server in the file.
+fn write_opencode_server_at(path: &std::path::Path, spec: &AddSpec) -> Result<(), String> {
+    let mut root = match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str::<Value>(&text)
+            .map_err(|error| format!("OpenCode config is invalid: {error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(error) => return Err(error.to_string()),
+    };
+    let Some(object) = root.as_object_mut() else {
+        return Err("OpenCode config is not a JSON object".into());
+    };
+    let servers = object
+        .entry("mcp")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("OpenCode config has an invalid mcp value")?;
+    let server = if spec.transport == "http" {
+        json!({"type": "remote", "url": spec.target, "headers": pairs_from_lines(&spec.headers), "enabled": true})
+    } else {
+        let mut command = vec![spec.target.clone()];
+        command.extend(spec.args.iter().cloned());
+        json!({"type": "local", "command": command, "environment": pairs_from_lines(&spec.env), "enabled": true})
+    };
+    servers.insert(spec.name.clone(), server);
+    let parent = path
+        .parent()
+        .ok_or("OpenCode config has no parent folder")?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string_pretty(&root).map_err(|error| error.to_string())?;
+    std::fs::write(path, text).map_err(|error| error.to_string())
+}
+
+/// Removes one server from OpenCode's config without affecting other entries.
+fn remove_opencode_server_at(path: &std::path::Path, name: &str) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let mut root: Value = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if let Some(servers) = root.get_mut("mcp").and_then(Value::as_object_mut) {
+        servers.remove(name);
+    }
+    let text = serde_json::to_string_pretty(&root).map_err(|error| error.to_string())?;
+    std::fs::write(path, text).map_err(|error| error.to_string())
 }
 
 /// Writes a Copilot SDK MCP server while retaining other servers in the user's config.
@@ -1396,5 +1602,60 @@ mod tests {
         bad = spec("stdio", "npx");
         bad.agents = vec!["rm".into()];
         assert!(check(&bad).is_err());
+    }
+
+    #[test]
+    fn opencode_config_round_trips_local_and_remote_servers() {
+        let dir =
+            std::env::temp_dir().join(format!("agentdeck-opencode-mcp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("opencode.json");
+        std::fs::create_dir_all(&dir).expect("makes the folder");
+        std::fs::write(
+            &path,
+            r#"{"model":"x","mcp":{"old":{"type":"local","command":["node","a.js"],"enabled":false}}}"#,
+        )
+        .expect("writes the config");
+
+        write_opencode_server_at(&path, &spec("stdio", "npx")).expect("adds a local server");
+        let mut remote = spec("http", "https://example.test/mcp");
+        remote.name = "remote".into();
+        remote.headers = vec!["Authorization: Bearer t".into()];
+        write_opencode_server_at(&path, &remote).expect("adds a remote server");
+
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("json");
+        assert_eq!(root["model"], "x", "other keys are kept");
+        assert_eq!(
+            root["mcp"]["files"]["command"],
+            json!(["npx", "-y", "server"])
+        );
+        assert_eq!(root["mcp"]["files"]["environment"]["TOKEN"], "abc");
+        assert_eq!(root["mcp"]["remote"]["type"], "remote");
+
+        let raws = opencode_servers_in(&root["mcp"], "user", "opencode.json");
+        let old = raws.iter().find(|raw| raw.name == "old").expect("listed");
+        assert!(old.disabled, "enabled false stays disabled");
+        assert_eq!(old.command.as_deref(), Some("node"));
+        assert_eq!(old.args, vec!["a.js".to_string()]);
+        let files = raws.iter().find(|raw| raw.name == "files").expect("listed");
+        assert_eq!(files.transport, "stdio");
+        assert_eq!(files.env.get("TOKEN").map(String::as_str), Some("abc"));
+        let remote = raws
+            .iter()
+            .find(|raw| raw.name == "remote")
+            .expect("listed");
+        assert_eq!(remote.transport, "http");
+        assert_eq!(
+            remote.headers.get("Authorization").map(String::as_str),
+            Some("Bearer t")
+        );
+
+        remove_opencode_server_at(&path, "files").expect("removes");
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("reads")).expect("json");
+        assert!(root["mcp"].get("files").is_none());
+        assert!(root["mcp"].get("remote").is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

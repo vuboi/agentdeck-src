@@ -1029,6 +1029,8 @@ export function startTurn(
                     restricted: Boolean(provider.restricted),
                     workbuddy: Boolean(provider.workbuddy),
                     authMode: provider.nativeAuth,
+                    skills: provider.skills ?? null,
+                    mcp: provider.mcp ?? null,
                 }),
                 PREPARE_LIMIT_MS,
                 'starting the provider',

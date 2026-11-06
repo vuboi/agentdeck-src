@@ -22,6 +22,7 @@
         label = 'Menu',
         onselect,
         onenter,
+        onleave,
     }: {
         items: ZDropdownMenuItem[];
         open?: boolean;
@@ -33,6 +34,7 @@
         label?: string;
         onselect?: () => void;
         onenter?: () => void;
+        onleave?: () => void;
     } = $props();
 
     // A right click has no element to sit on: a 1px box at the pointer is the anchor.
@@ -51,7 +53,8 @@
                 id: `${uid}:${out.length}`,
                 label: item.label,
                 icon: item.icon as ZIconName | undefined,
-                iconSrc: (item as ZDropdownMenuItem & { iconSrc?: string }).iconSrc,
+                iconSrc: (item as ZDropdownMenuItem & { iconSrc?: string })
+                    .iconSrc,
                 shortcut: item.shortcut,
                 selected: item.checked,
                 disabled: item.disabled,
@@ -71,7 +74,11 @@
         anchor: HTMLElement;
     } | null>(null);
     // Read live items so an asynchronous Open with lookup updates an already hovered submenu.
-    const subItems = $derived(sub ? rows.find((row) => row.id === sub?.rowId)?.data.submenu ?? [] : []);
+    const subItems = $derived(
+        sub
+            ? (rows.find((row) => row.id === sub?.rowId)?.data.submenu ?? [])
+            : [],
+    );
     let subOpen = $state(false);
     let closeSubTimer: ReturnType<typeof setTimeout> | undefined;
     function clearSubTimer() {
@@ -96,7 +103,9 @@
         }
         sub = { rowId: row.id, anchor: element };
         subOpen = true;
-        (row.data as ZDropdownMenuItem & { onSubmenuOpen?: () => void }).onSubmenuOpen?.();
+        (
+            row.data as ZDropdownMenuItem & { onSubmenuOpen?: () => void }
+        ).onSubmenuOpen?.();
     }
     function leaveRow(row: PickerItem<ZDropdownMenuItem>) {
         if (!row.data.submenu?.length && !sub) return;
@@ -157,6 +166,7 @@
     onhover={hover}
     onrowleave={leaveRow}
     {onenter}
+    {onleave}
 />
 
 {#if sub}

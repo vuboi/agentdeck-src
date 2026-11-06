@@ -16,7 +16,7 @@
 </script>
 
 <div
-    class="flex flex-wrap gap-2 pt-1"
+    class="flex flex-wrap gap-2 pt-2"
     role="group"
     aria-label="Suggested prompts"
 >

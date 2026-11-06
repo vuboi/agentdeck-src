@@ -1,16 +1,15 @@
 //! Tauri commands over the chat index (`~/.agentdeck/chats.db`, the ledger and bindings in `ag_adapters::chat_index`).
 //!
 //! The index is opened on first use and kept open. Every command runs its SQLite work on a blocking thread, so the
-//! UI thread never waits on the database. Reading a native session (`chat_sync_native`) happens outside the lock.
+//! UI thread never waits on the database.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use ag_adapters::chat_index::{
     AppendReport, ArchiveEntry, Binding, ChatIndex, ChatIndexError, ChatMeta, ChatPage, LegacyDump,
-    MigrationReport, MigrationStatus, NativeRef, NewMessage,
+    MigrationReport, MigrationStatus, NewMessage,
 };
-use ag_adapters::history::{self, HistoryMessage, Source};
 
 /// The one open index. `None` until the first command runs.
 static INDEX: Mutex<Option<ChatIndex>> = Mutex::new(None);
@@ -177,39 +176,6 @@ pub async fn chat_attachments_sweep(cutoff: String) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Reads every native session bound to the chat and merges the turns it has not seen yet. Each binding's file is read
-/// with the same reader the history list uses, and only the path inside its history folder is accepted.
-#[tauri::command]
-pub async fn chat_sync_native(chat_id: String) -> Result<AppendReport, String> {
-    let owner = chat_id.clone();
-    let bindings = with_index(move |index| index.bindings(&owner)).await?;
-    let roots = crate::roots()?;
-    let mut total = AppendReport::default();
-    for binding in bindings {
-        let (Some(path), Some(source)) = (binding.path.clone(), source_of(&binding.provider))
-        else {
-            continue;
-        };
-        let roots = roots.clone();
-        let read = tauri::async_runtime::spawn_blocking(move || {
-            history::load(&roots, source, &PathBuf::from(path))
-        })
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
-        let messages: Vec<NewMessage> = read
-            .iter()
-            .map(|message| native_turn(&binding, message))
-            .collect();
-        let owner = chat_id.clone();
-        let report =
-            with_index(move |index| index.sync_native(&owner, &binding.id, &messages)).await?;
-        total.inserted += report.inserted;
-        total.skipped += report.skipped;
-    }
-    Ok(total)
-}
-
 /// Removes a chat and its ledger. Returns the native files its bindings pointed at; the caller moves them to the trash.
 #[tauri::command]
 pub async fn chat_delete(chat_id: String) -> Result<Vec<String>, String> {
@@ -312,39 +278,6 @@ pub async fn chat_backup_latest() -> Result<Option<String>, String> {
     })
     .await
     .map_err(|error| error.to_string())?
-}
-
-fn source_of(provider: &str) -> Option<Source> {
-    match provider {
-        "claude" => Some(Source::Claude),
-        "codex" => Some(Source::Codex),
-        "copilot" => Some(Source::Copilot),
-        "antigravity" => Some(Source::Antigravity),
-        _ => None,
-    }
-}
-
-/// A native turn in the shape the chat view keeps: its id, role, time and blocks, plus the native id used for dedupe.
-fn native_turn(binding: &Binding, message: &HistoryMessage) -> NewMessage {
-    NewMessage {
-        client_id: None,
-        role: message.role.clone(),
-        agent: Some(binding.provider.clone()),
-        model: message.model.clone(),
-        binding_id: Some(binding.id.clone()),
-        time: message.time.clone(),
-        native: Some(NativeRef {
-            provider: binding.provider.clone(),
-            msg_id: message.id.clone(),
-        }),
-        blocks: serde_json::json!({
-            "id": message.id,
-            "role": message.role,
-            "time": message.time,
-            "model": message.model,
-            "blocks": message.blocks,
-        }),
-    }
 }
 
 #[cfg(test)]

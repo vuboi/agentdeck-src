@@ -12,10 +12,21 @@
 @import '@fontsource-variable/inter/index.css';
 @import '@fontsource-variable/jetbrains-mono/index.css';
 @import '@fontsource-variable/cascadia-code/index.css';
+@import '@fontsource-variable/fira-code/index.css';
+@import '@fontsource-variable/source-code-pro/index.css';
+@import '@fontsource-variable/geist-mono/index.css';
+@import '@fontsource-variable/geist/index.css';
+@import '@fontsource-variable/roboto/index.css';
+@import '@fontsource-variable/manrope/index.css';
 
 html,
 body {
     background-color: var(--background);
+}
+
+/* The header row of a workspace tool (Tasks, Activity log, Usage, Canvas, Workflow): one height for all of them. */
+.tool-header {
+    height: 37.5px;
 }
 
 /* ZChatNavigator's preview reserves an empty question row when a turn has no title. */

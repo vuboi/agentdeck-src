@@ -387,7 +387,6 @@
                 ? Math.min(MIN.tools, toolsPanelWidth)
                 : 0}px"
             style:opacity={showTools && toolsPanelWidth > 0 ? 1 : 0}
-            aria-hidden={!showTools || toolsPanelWidth === 0}
             inert={!showTools || toolsPanelWidth === 0}
         >
             {#if (showTools && toolsPanelWidth > 0) || layout.toolsWidthAnimating}

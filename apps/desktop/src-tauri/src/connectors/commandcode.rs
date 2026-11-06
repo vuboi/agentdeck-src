@@ -9,8 +9,14 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::runtime::{command, KillTree};
+use super::runtime::{command, version_with, KillTree};
 use super::{capture, which, Login};
+
+/// Reads `command-code --version`. The CLI starts its background updater on every run unless told not to, so the
+/// start-up probe passes `--no-auto-update` too.
+pub(crate) async fn version(path: &Path) -> Option<String> {
+    version_with(path, &["--version", "--no-auto-update"]).await
+}
 
 /// Reads `command-code status --json`; the CLI answers `{"authenticated": bool, "version": "..."}`.
 pub(crate) async fn login_status() -> Login {

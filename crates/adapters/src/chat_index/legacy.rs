@@ -184,26 +184,12 @@ fn import(
     dicts: &crate::codec::Dicts,
 ) -> Result<MigrationReport> {
     let mut ids = BTreeSet::new();
-    ids.extend(dump.mixed.keys().map(String::as_str));
     ids.extend(dump.local_messages.keys().map(String::as_str));
-    ids.extend(dump.transcripts.keys().map(String::as_str));
     ids.extend(dump.other_turns.keys().map(String::as_str));
-    ids.extend(dump.chat_info.keys().map(String::as_str));
-
-    let paths: HashMap<(String, String), String> = dump
-        .history_paths
-        .iter()
-        .map(|item| {
-            (
-                (item.provider.clone(), item.native_id.clone()),
-                item.path.clone(),
-            )
-        })
-        .collect();
 
     let mut report = MigrationReport::default();
     for chat_id in ids {
-        import_chat(tx, dump, chat_id, &paths, dicts, &mut report)?;
+        import_chat(tx, dump, chat_id, dicts, &mut report)?;
     }
     Ok(report)
 }
@@ -252,7 +238,6 @@ fn import_chat(
     tx: &Transaction,
     dump: &LegacyDump,
     chat_id: &str,
-    paths: &HashMap<(String, String), String>,
     dicts: &crate::codec::Dicts,
     report: &mut MigrationReport,
 ) -> Result<()> {
@@ -273,15 +258,14 @@ fn import_chat(
         planned.extend(extra);
     }
 
-    let (own, from_transcript) = match dump.local_messages.get(chat_id) {
-        Some(list) => (list.as_slice(), false),
-        None => (
-            dump.transcripts
-                .get(chat_id)
-                .map_or(&[][..], |transcript| transcript.messages.as_slice()),
-            true,
-        ),
-    };
+    // Provider transcript files are never a source for AgentDeck history. A chat without local AgentDeck messages
+    // may still carry native bindings and task metadata, but its provider transcript stays outside this ledger.
+    let (own, from_transcript) = (
+        dump.local_messages
+            .get(chat_id)
+            .map_or(&[][..], Vec::as_slice),
+        false,
+    );
     let others = dump.other_turns.get(chat_id).map_or(&[][..], Vec::as_slice);
     let mut ordered = Vec::new();
     let mut seen_ids = HashSet::new();
@@ -338,12 +322,8 @@ fn import_chat(
                 binding.native_id = None;
             }
         }
-        // A session that lost its native id to another chat has no file of its own here, so it gets no path.
-        if let Some(native_id) = &binding.native_id {
-            binding.path = paths
-                .get(&(binding.provider.clone(), native_id.clone()))
-                .cloned();
-        }
+        // Native ids are resume handles only. Provider transcript paths never enter AgentDeck history.
+        binding.path = None;
         write_binding(tx, chat_id, &binding)?;
         report.bindings += 1;
         bindings.push(binding);

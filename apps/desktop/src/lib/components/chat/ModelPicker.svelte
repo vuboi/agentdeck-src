@@ -41,7 +41,10 @@
         setFallback,
     } from '../../app/platform/automation.svelte';
     import { accountEpoch } from '../../chat/runs/account-epoch.svelte';
-    import { pendingSwitch } from '../../chat/session/turns.svelte';
+    import {
+        pendingSwitch,
+        rememberLastChat,
+    } from '../../chat/session/turns.svelte';
     import { credentialScope } from '../../agents/credential-scope';
     import SectionTitle from '../ui/SectionTitle.svelte';
 
@@ -296,6 +299,8 @@
     function pickModel(nextAgent: Agent, nextModel: string) {
         agent = nextAgent;
         model = nextModel;
+        // The last pick counts for a new chat, whichever chat (main or sub) it was made in.
+        rememberLastChat(nextAgent, nextModel, effort);
     }
 </script>
 

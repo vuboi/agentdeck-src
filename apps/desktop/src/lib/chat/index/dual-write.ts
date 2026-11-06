@@ -20,6 +20,8 @@ export type ChatMeta = {
     activeAgent: string | null;
     createdAt: string;
     updatedAt: string;
+    lastUserAt?: string;
+    expiresAt?: string;
 };
 
 /** A native session of one provider inside a chat, as `ledger::Binding` reads it. */
@@ -234,11 +236,23 @@ export function createDualWriter(options: DualWriteOptions): DualWriter {
             // A reply still being written is not a finished turn.
             if (messages.some((message) => message.live)) return;
             const state = stateOf(chat.id);
+            const user = [...messages]
+                .reverse()
+                .find((message) => message.role === 'user');
+            const chatForTurn = user
+                ? {
+                      ...chat,
+                      // Recent retention follows the last real user message. Assistant replies and background work do
+                      // not extend a chat's 14-day lifetime.
+                      updatedAt: user.at ?? user.time,
+                  }
+                : chat;
             const fresh = messages.filter(
                 (message) => !state.sent.has(message.id),
             );
             if (!fresh.length) return;
-            ensureSaved(chat, state);
+            ensureSaved(chatForTurn, state);
+            if (user) send('chat_save', { chat: { ...chatForTurn } }, chat.id);
             for (const message of prepare(fresh)) {
                 const agent = message.agent ?? null;
                 state.pending.push({

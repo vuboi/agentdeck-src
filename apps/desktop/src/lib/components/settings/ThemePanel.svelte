@@ -19,9 +19,13 @@
     } from '../../app/ui/theme.svelte';
     import SectionTitle from '../ui/SectionTitle.svelte';
     import {
+        DARK_STYLES,
+        LIGHT_STYLES,
         NEUTRALS,
         PRIMARIES,
         swatch,
+        type DarkStyle,
+        type LightStyle,
         type Mode,
     } from '../../app/ui/theme-tokens';
     import type { ChatLayout } from '../../app/ui/theme.svelte';
@@ -149,9 +153,56 @@
                             : ''}"
                         style:background={swatch(color)}
                         style:--halo={swatch(color)}
-                        onclick={() => (theme.neutral = color)}
+                        onclick={() => {
+                            theme.neutral = color;
+                            // A surface picked for this mode would hide the neutral: picking a neutral returns to that mode's default surface.
+                            if (theme.dark) theme.darkStyle = 'charcoal';
+                            else theme.lightStyle = 'white';
+                        }}
                     >
                         {#if theme.neutral === color}<ZIcon
+                                zType="lucideCheck"
+                                class="size-3 text-white mix-blend-difference"
+                            />{/if}
+                    </button>
+                {/each}
+            </div>
+        </div>
+
+        <div>
+            <SectionTitle label="SURFACE" />
+            <div
+                class="grid grid-cols-7 justify-items-center gap-y-3"
+                role="radiogroup"
+                aria-label="Surface"
+            >
+                {#each [...LIGHT_STYLES.map( (style) => ({ ...style, dark: false }) ), ...DARK_STYLES.map( (style) => ({ ...style, dark: true }) )] as style (`${style.dark ? 'dark' : 'light'}-${style.value}`)}
+                    {@const active = theme.dark === style.dark}
+                    {@const picked =
+                        active &&
+                        (theme.dark ? theme.darkStyle : theme.lightStyle) ===
+                            style.value}
+                    <button
+                        type="button"
+                        role="radio"
+                        disabled={!active}
+                        aria-checked={picked}
+                        aria-label={style.label}
+                        title={active
+                            ? style.label
+                            : `${style.label} (${style.dark ? 'dark' : 'light'} mode only)`}
+                        class="swatch relative grid size-5 cursor-pointer place-items-center rounded-[2px] border border-border outline-none ring-offset-2 ring-offset-popover focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 {picked
+                            ? 'swatch-selected'
+                            : ''}"
+                        style:background={style.swatch}
+                        style:--halo={style.swatch}
+                        onclick={() =>
+                            theme.dark
+                                ? (theme.darkStyle = style.value as DarkStyle)
+                                : (theme.lightStyle =
+                                      style.value as LightStyle)}
+                    >
+                        {#if picked}<ZIcon
                                 zType="lucideCheck"
                                 class="size-3 text-white mix-blend-difference"
                             />{/if}
@@ -167,6 +218,7 @@
                     zMin={UI_FONT_SIZE.min}
                     zMax={UI_FONT_SIZE.max}
                     zStep={UI_FONT_SIZE.step}
+                    zType="dot"
                     zSize="sm"
                     class="min-w-0 flex-1"
                     bind:value={theme.uiFontSize}

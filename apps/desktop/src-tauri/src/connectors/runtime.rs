@@ -187,9 +187,12 @@ async fn drain<R: AsyncRead + Unpin>(pipe: Option<R>, into: Arc<Mutex<Vec<u8>>>)
 }
 
 pub(crate) async fn version_of(program: &Path) -> Option<String> {
-    let out = capture(program, &["--version"], Duration::from_secs(8))
-        .await
-        .ok()?;
+    version_with(program, &["--version"]).await
+}
+
+/// The first line `program` prints for `args`, on stdout or, when that is empty, on stderr.
+pub(crate) async fn version_with(program: &Path, args: &[&str]) -> Option<String> {
+    let out = capture(program, args, Duration::from_secs(8)).await.ok()?;
     let text = if out.stdout.trim().is_empty() {
         out.stderr
     } else {

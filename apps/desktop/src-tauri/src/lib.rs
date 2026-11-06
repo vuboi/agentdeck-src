@@ -36,6 +36,7 @@ mod image_backend;
 mod image_gen;
 mod image_history;
 mod index;
+mod markdown_save;
 mod mcp;
 mod mcp_client;
 mod mcp_manage;
@@ -51,7 +52,6 @@ mod plans;
 mod privacy;
 mod process_guard;
 mod process_registry;
-mod project_activity;
 mod project_memory;
 mod providers;
 mod pty;
@@ -722,6 +722,21 @@ async fn history_list() -> Result<Vec<HistorySession>, String> {
 #[tauri::command]
 fn plans_list(root: String, status: Option<String>) -> Result<Vec<plans::PlanInfo>, String> {
     plans::list(Path::new(&root), status.as_deref())
+}
+
+#[tauri::command]
+async fn plans_page(
+    roots: Vec<String>,
+    scope: String,
+    status: Option<String>,
+    cursor: i64,
+    limit: usize,
+) -> Result<plans::PlanPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        plans::page(&roots, &scope, status.as_deref(), cursor, limit)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -2584,6 +2599,7 @@ pub fn run() {
             tray_update_recent,
             history_list,
             plans_list,
+            plans_page,
             usage_log::usage_record,
             usage_log::usage_since,
             usage_log::usage_import,
@@ -2706,6 +2722,7 @@ pub fn run() {
             path_links::path_resolve,
             path_links::path_open,
             path_links::path_reveal,
+            path_links::downloads_dir,
             path_links::image_fetch,
             officecli::officecli_status,
             officecli::officecli_install,
@@ -2719,9 +2736,7 @@ pub fn run() {
             project_memory::project_memory_write,
             project_memory::project_proposals_read,
             project_memory::project_proposals_write,
-            project_activity::project_activity_read,
-            project_activity::project_activity_append,
-            project_activity::project_activity_save,
+            markdown_save::markdown_save,
             file_open_options,
             file_open_with,
             file_save_as,
@@ -2751,7 +2766,6 @@ pub fn run() {
             chat_index::chat_bind,
             chat_index::chat_resolve_native,
             chat_index::chat_append,
-            chat_index::chat_sync_native,
             chat_index::chat_delete,
             chat_index::chat_put_other_turn,
             chat_index::chat_other_turns,

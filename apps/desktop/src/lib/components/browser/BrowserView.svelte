@@ -1087,6 +1087,16 @@
             onClick: () => void openScreenshotEditor(true),
         },
     ]);
+    async function openDownloads() {
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            await invoke('reveal_path', {
+                path: await invoke<string>('downloads_dir'),
+            });
+        } catch (error) {
+            toast.error(`Could not open Downloads: ${error}`);
+        }
+    }
     const menuItems = $derived<ZDropdownMenuItem[]>([
         ...(compact
             ? [
@@ -1410,9 +1420,7 @@
             role="toolbar"
             aria-label="Page tools"
         >
-            <div
-                class="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden"
-            >
+            <div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
                 <div
                     bind:clientWidth={captureToolsWidth}
                     class="flex shrink-0 items-center gap-0.5"
@@ -1423,6 +1431,18 @@
                         label="Capture screenshot"
                         width={220}
                     />
+                    <button
+                        type="button"
+                        class={icon}
+                        aria-label="Downloads"
+                        title="Downloads"
+                        onclick={() => void openDownloads()}
+                    >
+                        <ZIcon
+                            zType={'lucideDownload' as ZIconName}
+                            class="size-4"
+                        />
+                    </button>
                     <span
                         class="mx-0.5 h-4 w-px shrink-0 bg-border"
                         aria-hidden="true"

@@ -82,6 +82,7 @@
         size = 'md',
         rowHeight,
         heightReduction = 0,
+        maxHeight = Infinity,
         offset = 6,
         onpick,
         onclose,
@@ -90,6 +91,7 @@
         onhover,
         onrowleave,
         onenter,
+        onleave,
         tooltip = 'right',
     }: {
         anchor: HTMLElement | null | undefined;
@@ -128,6 +130,8 @@
         rowHeight?: number;
         /** Shrinks the available list height by a fixed amount for compact option popovers. */
         heightReduction?: number;
+        /** The list is never taller than this many px, however much room the window has. */
+        maxHeight?: number;
         offset?: number;
         onpick: (item: PickerItem<T>) => void;
         onclose?: () => void;
@@ -138,6 +142,7 @@
         onhover?: (item: PickerItem<T>, element: HTMLElement) => void;
         onrowleave?: (item: PickerItem<T>) => void;
         onenter?: () => void;
+        onleave?: () => void;
         /** The side a truncated row's full name shows on; a popover at the right edge of the window uses `left`. */
         tooltip?: 'left' | 'right';
     } = $props();
@@ -189,8 +194,11 @@
             : window.innerHeight - box.bottom - chrome;
         const cap = Math.max(
             60,
-            (tall || fitContent ? Math.round(room) : listHeight(room)) -
-                heightReduction,
+            Math.min(
+                maxHeight,
+                (tall || fitContent ? Math.round(room) : listHeight(room)) -
+                    heightReduction,
+            ),
         );
         if (fitContent && local) {
             // An empty list is as tall as its message (min-h-20 plus the list's padding), so it does not scroll.
@@ -441,6 +449,7 @@
         aria-label={label}
         tabindex="-1"
         onpointerenter={onenter}
+        onpointerleave={onleave}
     >
         {#if search}
             <div

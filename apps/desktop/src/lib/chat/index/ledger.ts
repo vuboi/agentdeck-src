@@ -29,7 +29,7 @@ export const ledgerOn = () => flagOn;
 export const LEDGER_READ_FLAG = 'chat_index.read_ledger';
 
 // Off by default: an open chat is drawn from IndexedDB until the ledger read is checked in the app (plan P5.3).
-let readOn = false;
+let readOn = true;
 if (inTauri()) {
     void getPref<boolean>(LEDGER_READ_FLAG).then(
         (on) => {
@@ -72,5 +72,7 @@ export function chatMetaOf(session: SessionItem, cwd: string | null): ChatMeta {
         activeAgent: session.agent,
         createdAt: now,
         updatedAt: now,
+        lastUserAt: '',
+        expiresAt: '',
     };
 }

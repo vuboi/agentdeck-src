@@ -2,6 +2,8 @@
     export type ProviderOption = {
         id: string;
         label: string;
+        /** A connector's own logo; a CLI agent is drawn by AgentLogo. */
+        logo?: string;
         disabled?: boolean;
         hint?: string;
     };
@@ -126,10 +128,12 @@
         aria-expanded={open}
         onclick={show}
     >
-        {#each selected.slice(0, 3) as agent (agent)}<AgentLogo
-                {agent}
-                class="size-3.5"
-            />{/each}
+        {#each selected.slice(0, 3) as agent (agent)}{@const logo =
+                options.find((o) => o.id === agent)?.logo}{#if logo}<img
+                    src={logo}
+                    alt=""
+                    class="size-3.5 rounded-sm object-contain"
+                />{:else}<AgentLogo {agent} class="size-3.5" />{/if}{/each}
         <span>Providers · {selected.length}</span><ZIcon
             zType="lucideChevronDown"
             class="size-3"
@@ -200,10 +204,14 @@
                                             ? 'cursor-default'
                                             : 'cursor-pointer'}"
                                     >
-                                        <AgentLogo
-                                            agent={option.id}
-                                            class="size-4 shrink-0"
-                                        />
+                                        {#if option.logo}<img
+                                                src={option.logo}
+                                                alt=""
+                                                class="size-4 shrink-0 rounded-sm object-contain"
+                                            />{:else}<AgentLogo
+                                                agent={option.id}
+                                                class="size-4 shrink-0"
+                                            />{/if}
                                         <span
                                             class="flex min-w-0 items-center gap-1.5"
                                             ><span class="truncate font-medium"

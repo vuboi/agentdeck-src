@@ -41,10 +41,25 @@ function setWidths(table: HTMLTableElement, widths: number[]) {
     table.dataset.fixed = '';
 }
 
-/** Lay out one table card by the formula above. A table the reader has resized by hand is left as they set it. */
+/** A table the reader resized by hand keeps its widths; the last column takes any room the card has left. */
+function fitManual(card: HTMLElement, table: HTMLTableElement): void {
+    const avail = card.clientWidth - 2;
+    const cols = [...table.querySelectorAll('col')];
+    if (avail <= 0 || cols.length === 0) return;
+    const widths = cols.map((c) => parseFloat(c.style.width) || 0);
+    const sum = widths.reduce((a, b) => a + b, 0);
+    if (sum < avail) {
+        const last = cols.length - 1;
+        cols[last].style.width = `${Math.round(widths[last] + avail - sum)}px`;
+    }
+    table.style.width = `${Math.round(Math.max(avail, sum))}px`;
+}
+
+/** Lay out one table card by the formula above. A table the reader has resized by hand is kept as they set it, filling the card. */
 export function layoutTable(card: HTMLElement): void {
     const table = card.querySelector('table');
-    if (!table || table.dataset.manual !== undefined) return;
+    if (!table) return;
+    if (table.dataset.manual !== undefined) return fitManual(card, table);
     const avail = card.clientWidth - 2;
     const head = table.rows[0];
     if (avail <= 0 || !head) return;
@@ -117,18 +132,27 @@ export function startResize(
     if (!table.querySelector('col'))
         layoutTable(th.closest('.md-table') as HTMLElement);
     const cols = [...table.querySelectorAll('col')];
-    const col = cols[th.cellIndex];
-    if (!col) return;
+    const idx = th.cellIndex;
+    if (!cols[idx]) return;
     event.preventDefault();
     table.dataset.manual = '';
+    const card = th.closest<HTMLElement>('.md-table');
+    // A narrower column hands its room to the next one (the previous one for the last column), so the table stays full width.
+    const giver = idx + 1 < cols.length ? idx + 1 : idx - 1;
     const widths = cols.map((c) => parseFloat(c.style.width) || 0);
     const start = event.clientX;
-    const base = widths[th.cellIndex];
+    const base = widths[idx];
     th.dataset.dragging = '';
     const move = (e: PointerEvent) => {
-        widths[th.cellIndex] = Math.max(MIN_COL, base + e.clientX - start);
-        col.style.width = `${Math.round(widths[th.cellIndex])}px`;
-        table.style.width = `${Math.round(widths.reduce((a, b) => a + b, 0))}px`;
+        const avail = (card?.clientWidth ?? 0) - 2;
+        const sized = widths.map((w, i) =>
+            i === idx ? Math.max(MIN_COL, base + e.clientX - start) : w,
+        );
+        const total = sized.reduce((a, b) => a + b, 0);
+        if (giver >= 0 && total < avail) sized[giver] += avail - total;
+        cols.forEach((c, i) => (c.style.width = `${Math.round(sized[i])}px`));
+        const width = Math.max(avail, total);
+        table.style.width = `${Math.round(width)}px`;
     };
     const stop = () => {
         delete th.dataset.dragging;

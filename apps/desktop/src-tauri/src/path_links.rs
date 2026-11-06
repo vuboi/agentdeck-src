@@ -191,6 +191,14 @@ pub fn path_reveal(path: String) -> Result<(), String> {
     start(reveal_launch(THIS_OS, &plain(&real)))
 }
 
+/// The user's Downloads folder, where the Preview's downloads are saved by default.
+#[tauri::command]
+pub fn downloads_dir() -> Result<String, String> {
+    home()
+        .map(|home| plain(&home.join("Downloads")))
+        .ok_or_else(|| "no home folder".to_string())
+}
+
 const IMAGE_MAX_BYTES: usize = 15 * 1024 * 1024;
 
 /// An address the app must not fetch for a page: the local network. Loopback stays allowed (a picture served by the

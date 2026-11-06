@@ -4,7 +4,7 @@ use rusqlite::Connection;
 
 use super::Result;
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 const DDL: &str = "
 CREATE TABLE IF NOT EXISTS meta (
@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS chats (
     active_agent  TEXT,
     created_at    TEXT NOT NULL DEFAULT '',
     updated_at    TEXT NOT NULL DEFAULT '',
+    last_user_at  TEXT NOT NULL DEFAULT '',
+    expires_at    TEXT NOT NULL DEFAULT '',
     deleted_at    TEXT
 );
 
@@ -155,10 +157,40 @@ pub fn prepare(conn: &Connection) -> Result<()> {
              CREATE INDEX IF NOT EXISTS messages_client ON messages(chat_id, client_id);",
         )?;
     }
+    if version < 7 {
+        if !has_column(conn, "chats", "last_user_at")? {
+            conn.execute_batch(
+                "ALTER TABLE chats ADD COLUMN last_user_at TEXT NOT NULL DEFAULT '';",
+            )?;
+        }
+        if !has_column(conn, "chats", "expires_at")? {
+            conn.execute_batch(
+                "ALTER TABLE chats ADD COLUMN expires_at TEXT NOT NULL DEFAULT '';",
+            )?;
+        }
+        conn.execute(
+            "UPDATE chats
+             SET last_user_at = CASE WHEN last_user_at = '' THEN updated_at ELSE last_user_at END,
+                 expires_at = CASE WHEN expires_at = '' THEN strftime('%Y-%m-%dT%H:%M:%fZ', CASE WHEN last_user_at = '' THEN updated_at ELSE last_user_at END, '+14 days') ELSE expires_at END
+             WHERE expires_at = ''",
+            [],
+        )?;
+    }
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [SCHEMA_VERSION.to_string()],
     )?;
     Ok(())
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

@@ -37,6 +37,7 @@
     // A markdown artifact opens in a preview modal; the other kinds open in the Canvas panel.
     let previewOpen = $state(false);
     let previewText = $state('');
+    let previewLoading = $state(false);
     function root() {
         const session = workspace.sessions.find(
             (candidate) => candidate.id === sessionId,
@@ -51,6 +52,10 @@
             layout.activeTool = 'Canvas';
             return;
         }
+        // Open at once, while the press is still the opening gesture; the text follows in the modal.
+        previewText = '';
+        previewLoading = true;
+        previewOpen = true;
         try {
             const { invoke } = await import('@tauri-apps/api/core');
             const result = await invoke<{ content: string }>('artifacts_read', {
@@ -59,9 +64,11 @@
                 version,
             });
             previewText = result.content;
-            previewOpen = true;
         } catch (error) {
+            previewOpen = false;
             toast.error(`Could not open ${title}: ${String(error)}`);
+        } finally {
+            previewLoading = false;
         }
     }
 </script>
@@ -83,6 +90,7 @@
         bind:open={previewOpen}
         title={`${title} · v${version}`}
         text={previewText}
+        loading={previewLoading}
         name={title}
         note="an artifact"
     />{/if}

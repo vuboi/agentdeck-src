@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plans-page"
+description = "Enables the plans_page command without any pre-configured scope."
+commands.allow = ["plans_page"]
+
+[[permission]]
+identifier = "deny-plans-page"
+description = "Denies the plans_page command without any pre-configured scope."
+commands.deny = ["plans_page"]

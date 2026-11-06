@@ -276,6 +276,22 @@ pub fn list(agent: &str, home: &Path, project: Option<&Path>) -> Vec<ProviderCom
             );
             skills_in(&home.join(".agents").join("skills"), "user", "", &mut found);
         }
+        "command-code" => {
+            if let Some(project) = project {
+                skills_in(
+                    &project.join(".commandcode").join("skills"),
+                    "project",
+                    "",
+                    &mut found,
+                );
+            }
+            skills_in(
+                &home.join(".commandcode").join("skills"),
+                "user",
+                "",
+                &mut found,
+            );
+        }
         "copilot" => {
             if let Some(project) = project {
                 skills_in(

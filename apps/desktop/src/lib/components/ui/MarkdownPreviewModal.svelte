@@ -17,12 +17,15 @@
         open = $bindable(false),
         title,
         text,
+        loading = false,
         name,
         note,
     }: {
         open?: boolean;
         title: string;
         text: string;
+        /** The text is still being read: the modal shows a skeleton until it is set. */
+        loading?: boolean;
         /** File name without extension, for attach and download. */
         name: string;
         /** What the attached file is called in the chat's draft. */
@@ -95,10 +98,10 @@
         try {
             if (inTauri()) {
                 const { invoke } = await import('@tauri-apps/api/core');
-                const path = await invoke<string | null>(
-                    'project_activity_save',
-                    { name: fileName, text },
-                );
+                const path = await invoke<string | null>('markdown_save', {
+                    name: fileName,
+                    text,
+                });
                 if (path) toast.success(`Saved to ${path}`);
                 open = false;
                 return;
@@ -125,6 +128,7 @@
     zTitle={title}
     zWidth="min(900px, calc(100vw - 24px))"
     zBodyClass="min-h-0! py-3"
+    zContentLoading={loading}
     onCancel={() => (open = false)}
     ><Markdown text={shown} />{#snippet footer()}<div
             class="flex items-center justify-end gap-2"

@@ -133,6 +133,11 @@ pub struct Turn {
     pub workbuddy: bool,
     /// Native subscription auth selected by a custom provider (`muse-code`, for example).
     pub auth_mode: Option<String>,
+    /// The library skills the connector was given. `None` keeps the default: the skills of Claude, Codex and Antigravity.
+    /// A restricted provider never gets any.
+    pub skills: Option<Vec<String>>,
+    /// The MCP servers the connector was given. `None` keeps the default: every server of the user's configs.
+    pub mcp: Option<Vec<String>>,
 }
 
 /// The only tools a restricted provider may call: they read the public web, never this machine.
@@ -632,16 +637,25 @@ fn system_prompt(cwd: Option<&Path>, skills: &[ProviderCommand]) -> String {
     prompt
 }
 
-/// The skills and commands the user has for Claude, Codex and Antigravity (each name once), for the Skill tool.
-fn skills_for(cwd: Option<&Path>) -> Vec<ProviderCommand> {
+/// The skills and commands the user has for Claude, Codex and Antigravity (each name once), for the Skill tool. A connector
+/// that was given its own list gets only those names, and the library skills it was given are added.
+fn skills_for(cwd: Option<&Path>, given: Option<&[String]>) -> Vec<ProviderCommand> {
     let Ok(home) = crate::home_folder() else {
         return Vec::new();
     };
     let project = cwd.filter(|dir| dir.is_dir());
-    let mut seen = std::collections::HashSet::new();
-    ["claude", "codex", "antigravity"]
+    let mut found: Vec<ProviderCommand> = ["claude", "codex", "antigravity"]
         .iter()
         .flat_map(|agent| slash_commands::list(agent, &home, project))
+        .collect();
+    if given.is_some() {
+        let library = crate::store::library::library_root(&home);
+        slash_commands::skills_in(&library, "library", "", &mut found);
+    }
+    let mut seen = std::collections::HashSet::new();
+    found
+        .into_iter()
+        .filter(|item| given.is_none_or(|names| names.contains(&item.name)))
         .filter(|item| seen.insert(item.name.clone()))
         .collect()
 }
@@ -666,10 +680,14 @@ fn tool_name(server: &str, tool: &str) -> String {
 }
 
 /// Starts the user's MCP servers at the same time; one that fails or is slow is left out.
-async fn start_servers(cwd: Option<&Path>) -> Vec<Server> {
+async fn start_servers(cwd: Option<&Path>, given: Option<&[String]>) -> Vec<Server> {
     let project = cwd.map(Path::to_path_buf);
+    let given = given.map(<[String]>::to_vec);
     let raws = tauri::async_runtime::spawn_blocking(move || {
         crate::mcp_manage::servers_for(project.as_deref())
+            .into_iter()
+            .filter(|raw| given.as_ref().is_none_or(|names| names.contains(&raw.name)))
+            .collect::<Vec<_>>()
     })
     .await
     .unwrap_or_default();
@@ -746,14 +764,14 @@ pub async fn run_turn(
     let skills = if turn.restricted {
         Vec::new()
     } else {
-        skills_for(turn.cwd.as_deref())
+        skills_for(turn.cwd.as_deref(), turn.skills.as_deref())
     };
     // The user's own MCP servers: each tool is offered as `mcp__<server>__<tool>`, as Claude names them. A restricted
     // provider gets none: they run on this machine, with the user's accounts.
     let mut servers = if turn.restricted {
         Vec::new()
     } else {
-        start_servers(turn.cwd.as_deref()).await
+        start_servers(turn.cwd.as_deref(), turn.mcp.as_deref()).await
     };
     let mut external: Vec<(String, usize, String)> = Vec::new();
     for (index, server) in servers.iter().enumerate() {
@@ -1209,6 +1227,8 @@ mod tests {
             restricted: false,
             workbuddy: false,
             auth_mode: None,
+            skills: None,
+            mcp: None,
         }
     }
 
@@ -1336,6 +1356,8 @@ mod tests {
             restricted: false,
             workbuddy: false,
             auth_mode: None,
+            skills: None,
+            mcp: None,
         };
         assert!(responses_provider(&make("deepseek/deepseek-v4-flash")));
         let mut muse = make("muse-spark-1.3");

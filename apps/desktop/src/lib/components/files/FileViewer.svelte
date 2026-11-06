@@ -20,6 +20,7 @@
     import ChangesView from '../chat/ChangesView.svelte';
     import FileExplorer from './FileExplorer.svelte';
     import FileView from './FileView.svelte';
+    import PlansView from '../plans/PlansView.svelte';
     import Splitter from '../ui/Splitter.svelte';
     import TabListButton from '../ui/TabListButton.svelte';
     import MenuButton from '../ui/MenuButton.svelte';
@@ -230,7 +231,11 @@
         else viewer.side.width = Math.max(140, Math.min(480, treeWidth + grow));
     }
     // Changes only: the file view is put away and the pane takes the whole panel.
-    const fileHidden = $derived(!narrow && viewer.side.fileHidden);
+    // The plans list covers the file view and hides the tree: neither comes back until the plans list is closed.
+    let plansOpen = $state(false);
+    const fileHidden = $derived(
+        !narrow && viewer.side.fileHidden && !plansOpen,
+    );
     const placeIcon = {
         left: 'lucidePanelLeft',
         right: 'lucidePanelRight',
@@ -273,13 +278,18 @@
     );
     // A narrow panel has no room for both: the tree is hidden, and shown on demand in place of the file.
     let treeOnly = $state(false);
-    // With no file open the tree is all there is to show.
+    // With no file open the tree is all there is to show, until the button hides it (then the landing area shows).
+    let emptyTreeHidden = $state(false);
     const sideShown = $derived(
-        narrow ? treeOnly : fileHidden || !active || viewer.side.open,
+        !plansOpen &&
+            (narrow
+                ? treeOnly
+                : fileHidden || (active ? viewer.side.open : !emptyTreeHidden)),
     );
     function setSide(open: boolean) {
         if (narrow) treeOnly = open;
-        else viewer.side.open = open;
+        else if (active) viewer.side.open = open;
+        else emptyTreeHidden = !open;
     }
     const sideLabel = $derived(
         viewer.side.mode === 'files' ? 'Project files' : 'Changes',
@@ -289,32 +299,41 @@
     // The search opens under the button that was pressed: this one, or the search bar of the pane.
     let headFind = $state<HTMLElement>();
     let findFrom = $state<HTMLElement | null>(null);
+    let plansFindOpen = $state(false);
     $effect(() => {
-        if (!findOpen && !changesFindOpen) findFrom = null;
+        if (!findOpen && !changesFindOpen && !plansFindOpen) findFrom = null;
     });
     let changesCount = $state(0);
     // Nothing to search in an empty list of changes: the button waits for the files.
     const canFind = $derived(
-        viewer.side.mode !== 'changes' || changesCount > 0,
+        plansOpen || viewer.side.mode !== 'changes' || changesCount > 0,
     );
-    // The search button looks in what the side pane shows: every file, or only the changed ones.
+    // The search button looks in what the file view shows: the plans, when they are open; else what the side pane shows:
+    // every file, or only the changed ones.
     function findFile() {
         // Pressed again while its popover is open: it closes.
-        if (findOpen || changesFindOpen) {
+        if (findOpen || changesFindOpen || plansFindOpen) {
             findOpen = false;
             changesFindOpen = false;
+            plansFindOpen = false;
+            return;
+        }
+        findFrom = headFind ?? null;
+        if (plansOpen) {
+            plansFindOpen = true;
             return;
         }
         setSide(true);
-        findFrom = headFind ?? null;
         if (viewer.side.mode === 'changes') changesFindOpen = true;
         else findOpen = true;
     }
     // Narrow panel: opening a file (from the tree, a tab, the chat) puts the tree away to show it.
     let seen = { opened: viewer.opened, active: viewer.active };
+    // Opening a file from anywhere puts the file back in front of the plans list.
     $effect(() => {
         const now = { opened: viewer.opened, active: viewer.active };
         if (now.opened === seen.opened && now.active === seen.active) return;
+        if (now.opened !== seen.opened) plansOpen = false;
         seen = now;
         // A file opened from the tree keeps the tree beside it (see openInViewer).
         if (!viewer.fromTree) treeOnly = false;
@@ -536,17 +555,20 @@
             <button
                 bind:this={headFind}
                 type="button"
-                class="{arrow} {findOpen || changesFindOpen
+                class="{arrow} {findOpen || changesFindOpen || plansFindOpen
                     ? '!bg-primary/15 !text-primary hover:!bg-primary/20 hover:!text-primary'
                     : ''}"
-                aria-label={viewer.side.mode === 'changes'
-                    ? 'Find a changed file'
-                    : 'Find a file'}
+                aria-label={plansOpen
+                    ? 'Find a plan'
+                    : viewer.side.mode === 'changes'
+                      ? 'Find a changed file'
+                      : 'Find a file'}
                 {@attach zTooltip({
-                    content:
-                        viewer.side.mode === 'changes'
-                            ? 'Find a changed file'
-                            : 'Find a file',
+                    content: plansOpen
+                        ? 'Find a plan'
+                        : viewer.side.mode === 'changes'
+                          ? 'Find a changed file'
+                          : 'Find a file',
                     position: 'top',
                 })}
                 onclick={findFile}
@@ -554,16 +576,35 @@
                 <ZIcon zType={icon('lucideSearch')} class="size-4" />
             </button>
         {/if}
+        <button
+            type="button"
+            class="{arrow} {plansOpen
+                ? '!bg-primary/15 !text-primary hover:!bg-primary/20 hover:!text-primary'
+                : ''}"
+            aria-pressed={plansOpen}
+            aria-label="Plans"
+            {@attach zTooltip({
+                content: 'Plans',
+                position: 'top',
+            })}
+            onclick={() => (plansOpen = !plansOpen)}
+        >
+            <ZIcon zType={icon('lucideClipboardList')} class="size-4" />
+        </button>
         {#if !narrow}
+            <!-- Hover opens the layout choice; a click shows or hides the file tree. -->
             <MenuButton
                 items={layoutItems}
-                icon={placeIcon[viewer.side.place]}
-                label="Layout"
+                icon={sideShown ? 'lucideFolderOpen' : 'lucideFolderClosed'}
+                label={sideShown ? 'Hide the file tree' : 'Show the file tree'}
+                hover
+                ontoggle={!fileHidden && !plansOpen
+                    ? () => setSide(!sideShown)
+                    : undefined}
                 position="bottom-right"
                 width={200}
             />
-        {/if}
-        {#if (active || narrow) && !fileHidden}
+        {:else if !plansOpen}
             <button
                 type="button"
                 class={arrow}
@@ -595,13 +636,17 @@
         {/if}
         <!-- Keep the file view visible when the last tab closes; show an empty landing area in its place. -->
         <div
-            class="min-h-0 min-w-0 flex-1 flex-col {(narrow && treeOnly) ||
+            class="min-h-0 min-w-0 flex-1 flex-col {(narrow &&
+                treeOnly &&
+                !plansOpen) ||
             fileHidden
                 ? 'hidden'
                 : 'flex'}"
         >
             <div class="min-h-0 flex-1">
-                {#if active}
+                {#if plansOpen}
+                    <PlansView bind:findOpen={plansFindOpen} from={findFrom} />
+                {:else if active}
                     {#key active.id}
                         <FileView file={active} />
                     {/key}
@@ -622,7 +667,8 @@
         {#if narrow}
             <!-- A narrow panel shows one view at a time: the tree replaces the empty/file view on demand. -->
             <div
-                class="min-h-0 flex-1 flex-col bg-sidebar {treeOnly
+                class="min-h-0 flex-1 flex-col bg-sidebar {treeOnly &&
+                !plansOpen
                     ? 'flex'
                     : 'hidden'}"
                 aria-label={sideLabel}

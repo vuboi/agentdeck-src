@@ -11,7 +11,14 @@ use super::lock;
 use crate::slash_commands;
 
 /// The agents that read skills from a folder AgentDeck can write to.
-pub const SKILL_AGENTS: [&str; 5] = ["claude", "codex", "opencode", "antigravity", "copilot"];
+pub const SKILL_AGENTS: [&str; 6] = [
+    "claude",
+    "codex",
+    "opencode",
+    "antigravity",
+    "copilot",
+    "command-code",
+];
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct SkillItem {
@@ -51,6 +58,7 @@ fn skill_folders(home: &Path, agent: &str) -> Vec<PathBuf> {
         // Antigravity (agy) reads the skills of its config folder.
         "antigravity" => vec![home.join(".gemini").join("config").join("skills")],
         "copilot" => vec![home.join(".copilot").join("skills")],
+        "command-code" => vec![home.join(".commandcode").join("skills")],
         _ => Vec::new(),
     }
 }
@@ -63,6 +71,7 @@ pub fn project_skill_folders(agent: &str) -> &'static [&'static str] {
         "copilot" => &[".github/skills"],
         "opencode" => &[".opencode/skills"],
         "antigravity" => &[".agents/skills"],
+        "command-code" => &[".commandcode/skills"],
         _ => &[],
     }
 }
@@ -367,7 +376,8 @@ mod tests {
         assert!(folders.contains(".claude/skills"));
         assert!(folders.contains(".github/skills"));
         assert!(folders.contains(".opencode/skills"));
-        assert_eq!(folders.len(), 5);
+        assert!(folders.contains(".commandcode/skills"));
+        assert_eq!(folders.len(), 6);
         assert!(project_skill_folders("unknown").is_empty());
     }
 

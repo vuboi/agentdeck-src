@@ -397,7 +397,11 @@ fn text_of(value: &Value) -> String {
 
 /// The output of `command-code --list-models`, or empty when it cannot run or does not answer within 20 seconds.
 pub async fn models_listing(binary: std::ffi::OsString) -> String {
-    let mut command = super::runner::command_for(binary, &["--list-models".to_string()]);
+    // `--no-auto-update`: the CLI's background updater would otherwise start on this model-list call too.
+    let mut command = super::runner::command_for(
+        binary,
+        &["--list-models".to_string(), "--no-auto-update".to_string()],
+    );
     if let Some((key, path)) = super::resolve::augmented_path_env() {
         command.env(key, path);
     }
