@@ -20,7 +20,7 @@
 - `cargo test -p ag-orchestrator`: 10 tests passed.
 - `cargo test -p ag-adapters dsh_protocol -- --nocapture`: 5 tests passed.
 - `pnpm --dir apps/desktop run check`: passed.
-- Full desktop native build cần Visual Studio/CMake và `stdbool.h` trên máy build Windows.
+- Windows NSIS build pass với `CMAKE_GENERATOR=Visual Studio 17 2022`: `AgentDeck_0.1.82_x64-setup.exe` (77.47 MiB).
 
 ## Triệu chứng
 
