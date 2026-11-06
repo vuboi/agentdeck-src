@@ -10,7 +10,7 @@
 //! tail first (`stop`), which waits for an answer in progress and then parks the process for that message. A stop of the
 //! chat interrupts the tail's answer (`interrupt`).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::Duration;
@@ -355,6 +355,8 @@ async fn run(
     let mut pending_end: Option<AgentEvent> = None;
     // The tasks the CLI has started and not ended, by id, with the call that started each: on park or drop they end.
     let mut open: BTreeMap<String, Option<String>> = BTreeMap::new();
+    // The ids of the Monitor calls: a Monitor never ends once its answer is over, so its task is closed then (see below).
+    let mut monitors: BTreeSet<String> = BTreeSet::new();
     // The last turn of this tail, for the events sent after the answer has ended.
     let mut last_turn = String::new();
     let mut stopping = false;
@@ -457,6 +459,51 @@ async fn run(
                 event
             };
             let terminal = matches!(event, AgentEvent::Done { .. } | AgentEvent::Error { .. });
+            if let AgentEvent::ToolCall { id, name, .. } = &event {
+                if name == "Monitor" {
+                    monitors.insert(id.clone());
+                }
+            }
+            // The answer is over, and the only open work is Monitor: its task is closed as stopped, so the chat is not
+            // held for it. Other background work stays open.
+            if terminal
+                && warm.open_tasks
+                && !stopping
+                && !asked
+                && open.values().any(|tool| {
+                    tool.as_ref()
+                        .is_some_and(|tool_use_id| monitors.contains(tool_use_id))
+                })
+            {
+                let target = if turn.is_empty() {
+                    last_turn.clone()
+                } else {
+                    turn.clone()
+                };
+                let (closed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut open)
+                    .into_iter()
+                    .partition(|(_, tool_use_id)| {
+                        tool_use_id
+                            .as_ref()
+                            .is_some_and(|tool_use_id| monitors.contains(tool_use_id))
+                    });
+                open = kept.into_iter().collect();
+                for (id, tool_use_id) in closed {
+                    sink(
+                        &chat,
+                        &target,
+                        AgentEvent::Task {
+                            id,
+                            tool_use_id,
+                            status: TaskStatus::Stopped,
+                            label: None,
+                            summary: None,
+                            tools: None,
+                        },
+                    );
+                }
+                warm.open_tasks = !open.is_empty();
+            }
             if let AgentEvent::Task {
                 id,
                 tool_use_id,

@@ -12,12 +12,14 @@
     import ProviderAccess from './ProviderAccess.svelte';
 
     let { entry }: { entry: McpEntry } = $props();
+    // Only the providers listed below count as selected: an agent this list does not show must not inflate the count.
     const enabled = $derived(
-        entry.builtin
+        (entry.builtin
             ? entry.agents
                   .filter((a) => a !== 'antigravity')
                   .concat(mcp.overview?.agy_auto ? ['antigravity'] : [])
-            : (entry.enabled_agents ?? entry.agents),
+            : (entry.enabled_agents ?? entry.agents)
+        ).filter((id) => options.some((option) => option.id === id)),
     );
     const options = $derived(
         providerSources(MCP_PROVIDER_IDS.filter(isInstalled)).map((source) => {

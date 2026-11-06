@@ -17,7 +17,13 @@ pub(crate) async fn login_status() -> Login {
     let Some(path) = which("command-code") else {
         return Login::default();
     };
-    match capture(&path, &["status", "--json"], Duration::from_secs(10)).await {
+    match capture(
+        &path,
+        &["status", "--json", "--no-auto-update"],
+        Duration::from_secs(10),
+    )
+    .await
+    {
         Ok(out) => login_from_status(&out.stdout),
         Err(_) => Login::default(),
     }

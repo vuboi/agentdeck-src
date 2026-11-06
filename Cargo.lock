@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "ag-adapters"
-version = "0.1.80"
+version = "0.1.81"
 dependencies = [
  "base64 0.22.1",
  "lz4_flex",
@@ -45,11 +45,11 @@ dependencies = [
 
 [[package]]
 name = "ag-cdp"
-version = "0.1.80"
+version = "0.1.81"
 
 [[package]]
 name = "ag-cli"
-version = "0.1.80"
+version = "0.1.81"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "ag-core"
-version = "0.1.80"
+version = "0.1.81"
 dependencies = [
  "anyhow",
  "tracing",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "ag-orchestrator"
-version = "0.1.80"
+version = "0.1.81"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "ag-protocol"
-version = "0.1.80"
+version = "0.1.81"
 dependencies = [
  "serde",
  "serde_json",
@@ -86,11 +86,11 @@ dependencies = [
 
 [[package]]
 name = "ag-quota"
-version = "0.1.80"
+version = "0.1.81"
 
 [[package]]
 name = "ag-store"
-version = "0.1.80"
+version = "0.1.81"
 dependencies = [
  "ag-protocol",
  "hex",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "agentdeck-desktop"
-version = "0.1.80"
+version = "0.1.81"
 dependencies = [
  "ag-adapters",
  "async-trait",

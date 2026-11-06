@@ -12,7 +12,15 @@ export const viewer = $state({
     tabs: [] as ViewerTab[],
     /** The pane beside the open file: the project tree, or the files git sees changed. */
     // Closed by default: the file has the whole pane. The Files / Changes panel opens from its button.
-    side: { open: false, mode: 'files' as 'files' | 'changes', width: 240 },
+    // `place` is where the pane sits beside the file; `fileHidden` puts the file view away and leaves only the pane.
+    side: {
+        open: false,
+        mode: 'files' as 'files' | 'changes',
+        width: 240,
+        height: 240,
+        place: 'right' as 'left' | 'right' | 'top' | 'bottom',
+        fileHidden: false,
+    },
     /** Counts the opens, the same file again included: a narrow Files tool shows the file each time. */
     opened: 0,
     /** The last open came from the tree itself: a narrow panel keeps the tree beside the file then. */

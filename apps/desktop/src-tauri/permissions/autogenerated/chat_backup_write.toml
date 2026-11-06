@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-backup-write"
+description = "Enables the chat_backup_write command without any pre-configured scope."
+commands.allow = ["chat_backup_write"]
+
+[[permission]]
+identifier = "deny-chat-backup-write"
+description = "Denies the chat_backup_write command without any pre-configured scope."
+commands.deny = ["chat_backup_write"]

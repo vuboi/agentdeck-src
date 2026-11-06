@@ -288,6 +288,32 @@ pub async fn chat_backup_write(name: String, json: String) -> Result<String, Str
     .map_err(|error| error.to_string())?
 }
 
+/// The newest chat backup written by the IndexedDB migration, as its JSON text; `None` when there is none.
+#[tauri::command]
+pub async fn chat_backup_latest() -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let folder = crate::home_folder()?
+            .join(crate::channel::home_folder_name())
+            .join("backup");
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            return Ok(None);
+        };
+        let newest = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("indexeddb-chats-") && name.ends_with(".json"))
+            .max();
+        match newest {
+            None => Ok(None),
+            Some(name) => std::fs::read_to_string(folder.join(name))
+                .map(Some)
+                .map_err(|error| error.to_string()),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 fn source_of(provider: &str) -> Option<Source> {
     match provider {
         "claude" => Some(Source::Claude),

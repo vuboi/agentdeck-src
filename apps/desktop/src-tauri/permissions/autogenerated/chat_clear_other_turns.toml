@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-clear-other-turns"
+description = "Enables the chat_clear_other_turns command without any pre-configured scope."
+commands.allow = ["chat_clear_other_turns"]
+
+[[permission]]
+identifier = "deny-chat-clear-other-turns"
+description = "Denies the chat_clear_other_turns command without any pre-configured scope."
+commands.deny = ["chat_clear_other_turns"]

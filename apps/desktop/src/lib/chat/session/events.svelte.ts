@@ -85,7 +85,8 @@ import {
     advanceRun,
     nextId,
     persistLocal,
-    promptSuggestions,
+    replySuggestions,
+    saveReplySuggestions,
     runEpochs,
     workspace,
     type Agent,
@@ -1409,6 +1410,12 @@ function recordAgentEvent(sessionId: string, event: AgentEvent) {
     }
 }
 
+/** The answer the suggestions belong to: the last reply of the chat. */
+function lastReplyId(sessionId: string): string | undefined {
+    return messagesView(sessionId).findLast((item) => item.role === 'assistant')
+        ?.id;
+}
+
 /**
  * After a finished answer, when Settings > Replies allows it: a short extra run of the same CLI proposes next prompts
  * (`chat_suggest`). They are merged after the CLI's own (Claude's, which come first) and dropped if the chat has moved on.
@@ -1431,7 +1438,9 @@ function requestChatSuggestions(
     if (!prompt.trim() || !answer.trim()) return;
     const model =
         session.agent === 'claude' ? 'claude-haiku-5-5' : session.model;
-    const known = promptSuggestions[sessionId];
+    const replyId = lastReplyId(sessionId);
+    if (!replyId) return;
+    const known = replySuggestions[replyId];
     const existing = known?.turn === turn ? known.items : [];
     void (async () => {
         try {
@@ -1444,14 +1453,16 @@ function requestChatSuggestions(
                 existing,
             });
             if (turns[sessionId] !== turn) return;
-            const now = promptSuggestions[sessionId];
-            promptSuggestions[sessionId] = {
+            const now = replySuggestions[replyId];
+            replySuggestions[replyId] = {
                 turn,
                 items: mergePromptSuggestions(
                     now?.turn === turn ? now.items : [],
                     items,
                 ),
+                chosen: now?.chosen,
             };
+            saveReplySuggestions();
         } catch (error) {
             logError('turn', 'prompt suggestions failed', error);
         }
@@ -1528,7 +1539,6 @@ function beginAutoTurn(sessionId: string, turn: string, messageId?: string) {
     liveReplies[sessionId] = reply; // the stored (reactive) object
     replies[sessionId] = reply.id;
     turns[sessionId] = turn;
-    delete promptSuggestions[sessionId];
     session.status = 'working';
     const epoch = (runEpochs[sessionId] = (runEpochs[sessionId] ?? 0) + 1);
     advanceRun(sessionId, { type: 'spawn', epoch });
@@ -1778,15 +1788,18 @@ function handleEventNow(
     }
     // The CLI's prediction of the next prompt comes after the answer: it is kept under that answer, not in the reply.
     if (event.kind === 'suggestion') {
-        if (turn !== undefined) {
-            const current = promptSuggestions[sessionId];
-            promptSuggestions[sessionId] = {
+        const replyId = lastReplyId(sessionId);
+        if (turn !== undefined && replyId) {
+            const current = replySuggestions[replyId];
+            replySuggestions[replyId] = {
                 turn,
                 items: addPromptSuggestion(
                     current?.turn === turn ? current.items : [],
                     event.text,
                 ),
+                chosen: current?.chosen,
             };
+            saveReplySuggestions();
         }
         return;
     }

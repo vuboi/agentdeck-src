@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-other-turns-all"
+description = "Enables the chat_other_turns_all command without any pre-configured scope."
+commands.allow = ["chat_other_turns_all"]
+
+[[permission]]
+identifier = "deny-chat-other-turns-all"
+description = "Denies the chat_other_turns_all command without any pre-configured scope."
+commands.deny = ["chat_other_turns_all"]

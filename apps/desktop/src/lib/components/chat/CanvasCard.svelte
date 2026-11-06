@@ -6,6 +6,8 @@
     import { layout } from '../../app/ui/layout.svelte';
     import { workspace, sessionCwd } from '../../chat/sessions.svelte';
     import { selectArtifact } from '../../canvas/canvas.svelte';
+    import MarkdownPreviewModal from '../ui/MarkdownPreviewModal.svelte';
+    import { toast } from '../../app/platform/toast';
 
     let { item, sessionId }: { item: CommandBlock; sessionId: string } =
         $props();
@@ -31,24 +33,56 @@
                 ? 'lucideImage'
                 : 'lucideCode') as ZIconName,
     );
-    function open() {
+
+    // A markdown artifact opens in a preview modal; the other kinds open in the Canvas panel.
+    let previewOpen = $state(false);
+    let previewText = $state('');
+    function root() {
         const session = workspace.sessions.find(
             (candidate) => candidate.id === sessionId,
         );
-        const root = session && sessionCwd(session);
-        if (!root || !id) return;
-        selectArtifact(root, id, version);
-        layout.activeTool = 'Canvas';
+        return session && sessionCwd(session);
+    }
+    async function open() {
+        const folder = root();
+        if (!folder || !id) return;
+        if (kind !== 'markdown') {
+            selectArtifact(folder, id, version);
+            layout.activeTool = 'Canvas';
+            return;
+        }
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const result = await invoke<{ content: string }>('artifacts_read', {
+                root: folder,
+                id,
+                version,
+            });
+            previewText = result.content;
+            previewOpen = true;
+        } catch (error) {
+            toast.error(`Could not open ${title}: ${String(error)}`);
+        }
     }
 </script>
 
 <button
     type="button"
     class="flex w-full items-center gap-2 border border-border px-3 py-2 text-left text-sm hover:bg-muted/40"
-    onclick={open}
-    aria-label={`Open ${title} in Canvas`}
+    onclick={() => void open()}
+    aria-label={kind === 'markdown'
+        ? `Preview ${title}`
+        : `Open ${title} in Canvas`}
 >
     <ZIcon zType={icon} class="size-4 shrink-0 text-muted-foreground" />
     <span class="min-w-0 flex-1 truncate font-medium">{title}</span>
     <span class="shrink-0 text-xs text-muted-foreground">v{version}</span>
 </button>
+
+{#if previewOpen}<MarkdownPreviewModal
+        bind:open={previewOpen}
+        title={`${title} · v${version}`}
+        text={previewText}
+        name={title}
+        note="an artifact"
+    />{/if}

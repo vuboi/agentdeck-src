@@ -190,7 +190,7 @@
     aria-label="Canvas"
 >
     <div
-        class="flex shrink-0 flex-wrap items-center gap-2 border-b border-border p-2"
+        class="flex h-10 shrink-0 items-center gap-2 border-b border-border px-1.5"
     >
         <ProjectSelect
             bind:value={project}
@@ -355,15 +355,28 @@
                     <Markdown text={artifactState.content} />
                 </div>{/if}
         </div>
+    {:else if artifactState.loading}
+        <div
+            class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
+        >
+            <p class="m-0 max-w-56 text-sm leading-normal">
+                Loading artifacts…
+            </p>
+        </div>
     {:else}
         <div
             class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
         >
-            <ZIcon zType="lucidePanelsTopLeft" class="size-8 opacity-60" />
-            <p class="m-0 max-w-56 text-sm leading-normal">
-                {artifactState.loading
-                    ? 'Loading artifacts…'
-                    : 'No artifacts yet. Ask an agent to create one.'}
+            <ZIcon
+                zType={'lucidePanelsTopLeft' as ZIconName}
+                zSize="28"
+                class="size-7 opacity-60"
+            />
+            <h2 class="text-sm font-medium text-foreground">
+                No artifacts yet
+            </h2>
+            <p class="m-0 max-w-60 text-sm leading-normal">
+                Ask an agent to create one.
             </p>
         </div>
     {/if}

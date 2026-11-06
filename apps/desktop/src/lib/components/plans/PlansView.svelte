@@ -6,7 +6,9 @@
     import PickerPopover from '../ui/PickerPopover.svelte';
     import MenuButton from '../ui/MenuButton.svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
+    import MarkdownPreviewModal from '../ui/MarkdownPreviewModal.svelte';
     import { workspace } from '../../chat/sessions.svelte';
+    import { readProjectFile } from '../../files/files';
     import { ago } from '../../chat/content/blocks';
     import { ticker } from '../../app/platform/clock.svelte';
     import { inTauri } from '../../app/platform/history';
@@ -22,6 +24,26 @@
     } from '../../plans/plans.svelte';
 
     type Row = { plan: PlanInfo; root: string };
+
+    // A plan opens in a modal, as an activity log entry does: its text, and what to do with it.
+    let viewing = $state<Row | null>(null);
+    let viewOpen = $state(false);
+    let viewText = $state('');
+    let viewSeq = 0;
+    async function openPlan(row: Row) {
+        const seq = ++viewSeq;
+        viewing = row;
+        viewText = '';
+        viewOpen = true;
+        try {
+            const text = await readProjectFile(row.root, row.plan.path);
+            if (seq === viewSeq) viewText = text;
+        } catch (error) {
+            if (seq !== viewSeq) return;
+            viewOpen = false;
+            toast.error(`Could not open plan: ${String(error)}`);
+        }
+    }
     const STATUSES: { value: string; label: string; icon: ZIconName }[] = [
         { value: '', label: 'All', icon: 'lucideListChecks' },
         { value: 'draft', label: 'Draft', icon: 'lucideFileText' },
@@ -171,7 +193,7 @@
         <button
             type="button"
             class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-2 text-left outline-none hover:bg-muted/40 focus-visible:bg-muted/40"
-            onclick={() => openProjectFile(row.plan.path, row.root)}
+            onclick={() => void openPlan(row)}
         >
             {#if row.plan.agent}
                 <AgentLogo agent={row.plan.agent} class="size-4 shrink-0" />
@@ -296,3 +318,11 @@
         </details>
     </div>
 </div>
+
+{#if viewing}<MarkdownPreviewModal
+        bind:open={viewOpen}
+        title={`${viewing.plan.title} · ${viewing.plan.status}`}
+        text={viewText}
+        name={viewing.plan.title}
+        note="a project plan"
+    />{/if}

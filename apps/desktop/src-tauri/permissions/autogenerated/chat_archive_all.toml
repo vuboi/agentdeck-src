@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-archive-all"
+description = "Enables the chat_archive_all command without any pre-configured scope."
+commands.allow = ["chat_archive_all"]
+
+[[permission]]
+identifier = "deny-chat-archive-all"
+description = "Denies the chat_archive_all command without any pre-configured scope."
+commands.deny = ["chat_archive_all"]

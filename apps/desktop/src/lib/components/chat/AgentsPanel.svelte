@@ -344,7 +344,21 @@
                 {/each}
             </div>
         {:else}
-            {@render empty('lucideLayoutGrid', 'No sub agents in this chat.')}
+            <div
+                class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
+            >
+                <ZIcon
+                    zType={'lucideLayoutGrid' as ZIconName}
+                    zSize="28"
+                    class="size-7 opacity-60"
+                />
+                <h2 class="text-sm font-medium text-foreground">
+                    No sub agents
+                </h2>
+                <p class="m-0 max-w-60 text-sm leading-normal">
+                    Sub agents of this chat appear here; the grid shows up to {GRID_MAX}.
+                </p>
+            </div>
         {/if}
     {:else if agents.length}
         <div class="min-h-0 flex-1 overflow-y-auto">
@@ -383,21 +397,23 @@
             {/if}
         </div>
     {:else}
-        {@render empty(
-            'lucideBot',
-            'No sub agents or background tasks in this chat.',
-        )}
+        <div
+            class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
+        >
+            <ZIcon
+                zType={'lucideBot' as ZIconName}
+                zSize="28"
+                class="size-7 opacity-60"
+            />
+            <h2 class="text-sm font-medium text-foreground">
+                No sub agents or tasks
+            </h2>
+            <p class="m-0 max-w-60 text-sm leading-normal">
+                Sub agents and background tasks of this chat appear here.
+            </p>
+        </div>
     {/if}
 </section>
-
-{#snippet empty(icon: string, text: string)}
-    <div
-        class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground"
-    >
-        <ZIcon zType={icon as ZIconName} class="size-8 opacity-60" />
-        <p class="m-0 max-w-56 text-sm leading-normal">{text}</p>
-    </div>
-{/snippet}
 
 <!-- The group heading of the Tasks view; both groups fold. -->
 {#snippet heading(label: string, count: number, group: 'running' | 'finished')}

@@ -22,6 +22,7 @@
     import FileView from './FileView.svelte';
     import Splitter from '../ui/Splitter.svelte';
     import TabListButton from '../ui/TabListButton.svelte';
+    import MenuButton from '../ui/MenuButton.svelte';
     import type { PickerItem } from '../ui/PickerPopover.svelte';
     import { dirOf, relativeTo } from '../../files/paths';
 
@@ -195,16 +196,75 @@
     );
 
     let width = $state(0);
+    let height = $state(0);
     // Below this only one view fits: the file, or (on demand) the tree in its place.
     const narrow = $derived(width > 0 && width < 300);
     // Keep a user-sized tree width, clamped so the file preview retains useful space.
     const treeWidth = $derived(
         Math.max(140, Math.min(viewer.side.width, Math.min(480, width - 180))),
     );
+    // Above or below the file the pane is sized by height, with the same clamping.
+    const vertical = $derived(
+        !narrow &&
+            (viewer.side.place === 'top' || viewer.side.place === 'bottom'),
+    );
+    // The pane comes first in the row or column (left, top); otherwise the file does.
+    const sideFirst = $derived(
+        viewer.side.place === 'left' || viewer.side.place === 'top',
+    );
+    const sideHeight = $derived(
+        Math.max(
+            120,
+            Math.min(viewer.side.height, Math.min(480, height - 120)),
+        ),
+    );
+    // The pane grows when the line moves towards it: away from the file it sits beside.
     function resizeTree(delta: number) {
-        // From the width on screen (clamped), so a drag past a limit does not leave the line behind the pointer.
-        viewer.side.width = Math.max(140, Math.min(480, treeWidth - delta));
+        const grow = sideFirst ? delta : -delta;
+        // From the size on screen (clamped), so a drag past a limit does not leave the line behind the pointer.
+        if (vertical)
+            viewer.side.height = Math.max(
+                120,
+                Math.min(480, sideHeight + grow),
+            );
+        else viewer.side.width = Math.max(140, Math.min(480, treeWidth + grow));
     }
+    // Changes only: the file view is put away and the pane takes the whole panel.
+    const fileHidden = $derived(!narrow && viewer.side.fileHidden);
+    const placeIcon = {
+        left: 'lucidePanelLeft',
+        right: 'lucidePanelRight',
+        top: 'lucideRows3',
+        bottom: 'lucideRows3',
+    } as const;
+    const placeLabel = {
+        left: 'Left',
+        right: 'Right',
+        top: 'Top',
+        bottom: 'Bottom',
+    } as const;
+    const layoutItems = $derived<ZDropdownMenuItem[]>([
+        ...(['left', 'right', 'top', 'bottom'] as const).map((place) => ({
+            label: placeLabel[place],
+            icon: placeIcon[place],
+            iconSize: 12,
+            class: 'text-sm! py-1',
+            checked: !viewer.side.fileHidden && viewer.side.place === place,
+            onClick: () => {
+                viewer.side.place = place;
+                viewer.side.fileHidden = false;
+            },
+        })),
+        {
+            label: 'Changes only',
+            icon: 'lucideGitCompare',
+            iconSize: 12,
+            class: 'text-sm! py-1',
+            divide: 'before',
+            checked: viewer.side.fileHidden,
+            onClick: () => (viewer.side.fileHidden = !viewer.side.fileHidden),
+        },
+    ]);
     // While the line is dragged the tree follows the pointer at once; the slide is only for opening and closing.
     let resizing = $state(false);
     // A tree that narrow shows its Files / Changes switch as icons only.
@@ -214,7 +274,9 @@
     // A narrow panel has no room for both: the tree is hidden, and shown on demand in place of the file.
     let treeOnly = $state(false);
     // With no file open the tree is all there is to show.
-    const sideShown = $derived(narrow ? treeOnly : !active || viewer.side.open);
+    const sideShown = $derived(
+        narrow ? treeOnly : fileHidden || !active || viewer.side.open,
+    );
     function setSide(open: boolean) {
         if (narrow) treeOnly = open;
         else viewer.side.open = open;
@@ -261,6 +323,58 @@
     const arrow =
         'grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground outline-none hover:bg-primary/10 hover:text-primary';
 </script>
+
+{#snippet sideWrap(splitterFirst: boolean)}
+    <!-- The pane stays mounted: opening and closing slide its size, like a drawer, instead of removing it. The inner size is
+         fixed, so the content does not squeeze while the wrapper moves. -->
+    <!-- `inert` while shut: the tree stays mounted, so without it Tab would still walk into the invisible list. -->
+    <div
+        class="flex min-h-0 min-w-0 shrink-0 overflow-hidden {vertical
+            ? 'flex-col'
+            : ''} {fileHidden ? 'flex-1' : ''} {resizing
+            ? ''
+            : 'transition-[width,height] duration-200 ease-out motion-reduce:transition-none'}"
+        style:width={!vertical && !fileHidden
+            ? `${sideShown ? treeWidth + 1 : 0}px`
+            : undefined}
+        style:height={vertical && !fileHidden
+            ? `${sideShown ? sideHeight + 1 : 0}px`
+            : undefined}
+        aria-hidden={!sideShown}
+        inert={!sideShown}
+    >
+        {#if splitterFirst && !fileHidden}
+            <Splitter
+                axis={vertical ? 'y' : 'x'}
+                label="Resize file explorer"
+                onDelta={resizeTree}
+                bind:dragging={resizing}
+            />
+        {/if}
+        <div
+            class="flex min-h-0 min-w-0 shrink-0 flex-col bg-sidebar {fileHidden
+                ? 'flex-1'
+                : ''}"
+            style:width={!vertical && !fileHidden
+                ? `${treeWidth}px`
+                : undefined}
+            style:height={vertical && !fileHidden
+                ? `${sideHeight}px`
+                : undefined}
+            aria-label={sideLabel}
+        >
+            {@render sidePane()}
+        </div>
+        {#if !splitterFirst && !fileHidden}
+            <Splitter
+                axis={vertical ? 'y' : 'x'}
+                label="Resize file explorer"
+                onDelta={resizeTree}
+                bind:dragging={resizing}
+            />
+        {/if}
+    </div>
+{/snippet}
 
 {#snippet sidePane()}
     <div class="flex h-10 shrink-0 items-center border-b border-border px-1.5">
@@ -319,6 +433,7 @@
 
 <div
     bind:clientWidth={width}
+    bind:clientHeight={height}
     class="flex h-full min-h-0 w-full flex-1 flex-col bg-background"
     aria-label="Files"
 >
@@ -439,7 +554,16 @@
                 <ZIcon zType={icon('lucideSearch')} class="size-4" />
             </button>
         {/if}
-        {#if active || narrow}
+        {#if !narrow}
+            <MenuButton
+                items={layoutItems}
+                icon={placeIcon[viewer.side.place]}
+                label="Layout"
+                position="bottom-right"
+                width={200}
+            />
+        {/if}
+        {#if (active || narrow) && !fileHidden}
             <button
                 type="button"
                 class={arrow}
@@ -465,10 +589,14 @@
         {/if}
     </div>
 
-    <div class="relative flex min-h-0 flex-1">
+    <div class="relative flex min-h-0 flex-1 {vertical ? 'flex-col' : ''}">
+        {#if !narrow && sideFirst}
+            {@render sideWrap(false)}
+        {/if}
         <!-- Keep the file view visible when the last tab closes; show an empty landing area in its place. -->
         <div
-            class="min-w-0 flex-1 flex-col {narrow && treeOnly
+            class="min-h-0 min-w-0 flex-1 flex-col {(narrow && treeOnly) ||
+            fileHidden
                 ? 'hidden'
                 : 'flex'}"
         >
@@ -501,32 +629,8 @@
             >
                 {@render sidePane()}
             </div>
-        {:else}
-            <!-- The tree sits beside the file view and stays mounted: opening and closing slide its width, like a drawer, instead
-           of removing it. The inner width is fixed, so the content does not squeeze while the wrapper moves. -->
-            <!-- `inert` while shut: the tree stays mounted, so without it Tab would still walk into the invisible list. -->
-            <div
-                class="flex min-h-0 shrink-0 overflow-hidden {resizing
-                    ? ''
-                    : 'transition-[width] duration-200 ease-out motion-reduce:transition-none'}"
-                style:width="{sideShown ? treeWidth + 1 : 0}px"
-                aria-hidden={!sideShown}
-                inert={!sideShown}
-            >
-                <Splitter
-                    axis="x"
-                    label="Resize file explorer"
-                    onDelta={resizeTree}
-                    bind:dragging={resizing}
-                />
-                <div
-                    class="flex min-h-0 shrink-0 flex-col bg-sidebar"
-                    style:width="{treeWidth}px"
-                    aria-label={sideLabel}
-                >
-                    {@render sidePane()}
-                </div>
-            </div>
+        {:else if !sideFirst}
+            {@render sideWrap(true)}
         {/if}
     </div>
 </div>

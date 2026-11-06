@@ -348,10 +348,26 @@ export function advanceRun(sessionId: string, event: RunEvent) {
 /** What was typed but not sent, per session: switch away and back and it is still there. */
 export const drafts = $state<Record<string, string>>({});
 export const draftMentions = $state<Record<string, Mention[]>>({});
-/** Prompts the CLI predicted after the last answer of a chat, shown as buttons under it. Cleared when the next turn starts. */
-export const promptSuggestions = $state<
-    Record<string, { turn: string; items: string[] }>
->({});
+/** Next-prompt suggestions per answer (keyed by the reply's message id), shown as buttons under it. `chosen` is the index
+ *  the user sent; the buttons stay as a record and the chosen one is marked. Kept in prefs so a reload still shows them. */
+export type ReplySuggestions = {
+    turn: string;
+    items: string[];
+    chosen?: number;
+};
+export const replySuggestions = $state<Record<string, ReplySuggestions>>({});
+void getPref<Record<string, ReplySuggestions>>('chat.replySuggestions').then(
+    (saved) => Object.assign(replySuggestions, saved ?? {}),
+);
+export function saveReplySuggestions() {
+    const keys = Object.keys(replySuggestions).slice(-200);
+    setPref(
+        'chat.replySuggestions',
+        Object.fromEntries(
+            keys.map((key) => [key, $state.snapshot(replySuggestions[key])]),
+        ),
+    );
+}
 
 /** An image waiting to be sent: a data URL, already scaled down. */
 export type Attachment = {
@@ -659,16 +675,63 @@ async function wipeLocalChatsOnce(): Promise<void> {
             snapshot: record,
         });
     }
+    // The sidebar (folders, index, active chat, saved state) stays, or the chats vanish from the list. A chat's messages
+    // leave IndexedDB only when the ledger has that chat; any other chat keeps them here.
+    const moved = chats.filter(
+        ([key]) =>
+            key.startsWith(LOCAL_MESSAGES) &&
+            known.has(key.slice(LOCAL_MESSAGES.length)),
+    );
     await setPrefs(
-        [...chats, ...archive].map(([key]) => [key, null] as [string, null]),
+        [...moved, ...archive].map(([key]) => [key, null] as [string, null]),
     );
     await setPref('chat.otherTurns', null);
     await setPref(P55_WIPED, true);
 }
 
+const P55_SIDEBAR_RESTORED = 'storage.p55_sidebar_restored';
+/**
+ * A start after the first wipe that removed the sidebar: its keys, and the messages of the chats the ledger does not
+ * have, come back from the newest backup. Runs once; with no backup there is nothing to restore.
+ */
+async function restoreSidebarOnce(): Promise<void> {
+    if (!inTauri() || isPreviewCopy()) return;
+    if ((await getPref<boolean>(P55_SIDEBAR_RESTORED)) === true) return;
+    if ((await getPref<boolean>(P55_WIPED)) !== true) return;
+    const [folders, index] = await Promise.all([
+        listPrefs<unknown>(LOCAL_FOLDER),
+        getPref<unknown>(LOCAL_INDEX),
+    ]);
+    if (folders.length || index) {
+        await setPref(P55_SIDEBAR_RESTORED, true);
+        return;
+    }
+    const text = await invoke<string | null>('chat_backup_latest');
+    if (!text) return;
+    const backup = JSON.parse(text) as { chats?: [string, unknown][] };
+    const inLedger = new Set(
+        (await invoke<{ id: string }[]>('chat_list')).map((item) => item.id),
+    );
+    const restored = (backup.chats ?? []).filter(
+        ([key]) =>
+            key === LOCAL_INDEX ||
+            key === LOCAL_ACTIVE ||
+            key === 'local.state' ||
+            key.startsWith(LOCAL_FOLDER) ||
+            (key.startsWith(LOCAL_MESSAGES) &&
+                !inLedger.has(key.slice(LOCAL_MESSAGES.length))),
+    );
+    await setPrefs(restored);
+    await setPref(P55_SIDEBAR_RESTORED, true);
+}
+
 const localReady = wipeLocalChatsOnce()
     .catch(() => {
         // Backup or removal failed: the chats stay where they are, and the next start tries again.
+    })
+    .then(() => restoreSidebarOnce())
+    .catch(() => {
+        // The restore failed: the next start tries again.
     })
     .then(() => loadLocalState())
     .then(

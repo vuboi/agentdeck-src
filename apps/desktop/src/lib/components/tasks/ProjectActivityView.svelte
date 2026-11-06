@@ -497,7 +497,7 @@
         bind:open={modalOpen}
         zTitle={`${selected.title} · ${selected.model || selected.agent} · ${new Date(selected.at).toLocaleString()}`}
         zWidth="min(900px, calc(100vw - 24px))"
-        zBodyClass="max-h-[70vh] overflow-y-auto py-3"
+        zBodyClass="min-h-0! py-3"
         onCancel={() => (modalOpen = false)}
         ><Markdown
             text={activityBody(selected.markdown)}

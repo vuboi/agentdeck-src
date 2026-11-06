@@ -30,7 +30,6 @@
         draftFiles,
         draftMentions,
         drafts,
-        promptSuggestions,
         replies,
         isRunning,
         messagesView,
@@ -1034,7 +1033,6 @@
         draftElements[sessionId] = [];
         detail = null;
         setDraft('', { sent: true });
-        delete promptSuggestions[sessionId];
         setMentions([]);
         setImages([]);
         setFiles([]);

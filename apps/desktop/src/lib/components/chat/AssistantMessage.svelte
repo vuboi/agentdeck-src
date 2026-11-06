@@ -33,6 +33,8 @@
     import AgentActivityCards from './AgentActivityCards.svelte';
     import LiveStatus from './LiveStatus.svelte';
     import MessageFooter from './MessageFooter.svelte';
+    import PromptSuggestions from './PromptSuggestions.svelte';
+    import type { ReplySuggestions } from '../../chat/session/state.svelte';
     import ReplyHeader from './ReplyHeader.svelte';
     import { afterSteps, spokenRun } from './chat-helpers';
     import { isWriting, liveLine } from '../../chat/runs/live-line.svelte';
@@ -49,6 +51,8 @@
         sessionId,
         messages,
         copyOnly = false,
+        suggestions,
+        onpicksuggestion,
     }: {
         message: Message;
         index: number;
@@ -58,6 +62,9 @@
         messages?: Message[];
         /** The footer keeps Copy alone (a sub agent's chat in the side view). */
         copyOnly?: boolean;
+        /** Next prompts the CLI suggested after this answer, and the one the user sent. */
+        suggestions?: ReplySuggestions;
+        onpicksuggestion?: (text: string, index: number) => void;
     } = $props();
     const sid = $derived(sessionId ?? workspace.activeId);
     const list = $derived(messages ?? chat.messages);
@@ -259,6 +266,16 @@
         </p>
     {/if}
 </div>
+{#if suggestions?.items.length && onpicksuggestion && !showLive}
+    <!-- Right under the answer, above the footer's copy and fork. Stays after a pick, with the sent one marked. -->
+    <div class="w-full min-w-0 pb-2">
+        <PromptSuggestions
+            items={suggestions.items}
+            chosen={suggestions.chosen}
+            onpick={onpicksuggestion}
+        />
+    </div>
+{/if}
 <!-- The status line and the footer share one fixed-height slot, so the row does not jump when the reply ends. -->
 {#if showLive || ((message.blocks.length > 0 || message.stoppedAfter !== undefined) && !quiet)}
     <div class="relative h-[30px] w-full shrink-0">

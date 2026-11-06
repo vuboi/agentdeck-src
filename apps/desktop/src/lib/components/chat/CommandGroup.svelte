@@ -514,11 +514,11 @@
                 containerClass="min-w-0"
             />
             {#if status}<span
-                    class="loading-dots stream-label -ml-1.5 inline-flex"
+                    class="loading-dots stream-label -ml-1.5 inline-flex shrink-0"
                     aria-hidden="true"
                     ><span>.</span><span>.</span><span>.</span></span
                 ><span
-                    class="stream-label inline-block min-w-[3ch] tabular-nums"
+                    class="stream-label inline-block min-w-[3ch] shrink-0 tabular-nums"
                     >{seconds}</span
                 >{/if}
             {#if total}{@render chips(total)}{/if}

@@ -2,9 +2,17 @@
     import { ZButton, ZIcon } from '@shival99/z-ui-svelte';
     import type { ZIconName } from '@shival99/z-ui-svelte';
 
-    // The prompts the CLI predicted after the answer: a click fills the composer, the user still sends it.
-    let { items, onpick }: { items: string[]; onpick: (text: string) => void } =
-        $props();
+    // The prompts the CLI predicted after the answer. A click sends the prompt; once one is sent, the list is a record:
+    // the sent one stays marked and the others cannot be sent again.
+    let {
+        items,
+        chosen,
+        onpick,
+    }: {
+        items: string[];
+        chosen?: number;
+        onpick: (text: string, index: number) => void;
+    } = $props();
 </script>
 
 <div
@@ -19,8 +27,12 @@
             zSize="sm"
             type="button"
             title={item}
-            class="max-w-full justify-start"
-            onclick={() => onpick(item)}
+            disabled={chosen !== undefined}
+            aria-pressed={chosen === index}
+            class="max-w-full justify-start {chosen === index
+                ? '!opacity-100 bg-primary/15 text-primary'
+                : ''}"
+            onclick={() => onpick(item, index)}
         >
             <ZIcon
                 zType={'lucideCornerDownLeft' as ZIconName}

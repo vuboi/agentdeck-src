@@ -4,7 +4,9 @@
     import type { ZDropdownMenuItem } from '@shival99/z-ui-svelte';
     import { type DiffRow } from '../../files/diff';
     import { highlightTokens, type Token } from '../../files/highlight';
-    import { activeSession, drafts } from '../../chat/sessions.svelte';
+    import { activeSession, draftFiles } from '../../chat/sessions.svelte';
+    import { saveFileAttachment } from '../../chat/agent';
+    import { readBase64 } from '../chat/composer-helpers';
     import { theme } from '../../app/ui/theme.svelte';
     import { toast } from '../../app/platform/toast';
     import Menu from '../ui/Menu.svelte';
@@ -27,14 +29,22 @@
         void navigator.clipboard
             .writeText(text)
             .then(() => toast.success('Copied'));
-    function addToChat(text: string, title: string) {
+    // Goes to the chat as an attached file, like a long paste, so the message box stays free for the question.
+    async function addToChat(text: string, title: string, name: string) {
         const session = activeSession();
         if (!session) return toast.error('Open a chat first');
-        const block = `${title}\n\`\`\`diff\n${text}\n\`\`\``;
-        drafts[session.id] = [drafts[session.id]?.trimEnd(), block]
-            .filter(Boolean)
-            .join('\n\n');
-        toast.success('Added to chat');
+        const content = `${title}\n\`\`\`diff\n${text}\n\`\`\``;
+        const file = new File([content], name, { type: 'text/plain' });
+        try {
+            const path = await saveFileAttachment(name, await readBase64(file));
+            draftFiles[session.id] = [
+                ...(draftFiles[session.id] ?? []),
+                { id: crypto.randomUUID(), name, path, size: file.size },
+            ];
+            toast.success('Added to chat');
+        } catch {
+            toast.error(`Could not attach ${name}`);
+        }
     }
     const items = $derived<ZDropdownMenuItem[]>([
         {
@@ -58,14 +68,18 @@
             class: 'text-sm! py-1',
             divide: 'before',
             onClick: () =>
-                addToChat(picked || asText(rows), 'Selected changes:'),
+                addToChat(
+                    picked || asText(rows),
+                    'Selected changes:',
+                    'Selected changes.txt',
+                ),
         },
         {
             label: 'Add all changes to chat',
             icon: 'lucideMessageSquarePlus',
             iconSize: 12,
             class: 'text-sm! py-1',
-            onClick: () => addToChat(asText(rows), 'Changes:'),
+            onClick: () => addToChat(asText(rows), 'Changes:', 'Changes.txt'),
         },
     ]);
 

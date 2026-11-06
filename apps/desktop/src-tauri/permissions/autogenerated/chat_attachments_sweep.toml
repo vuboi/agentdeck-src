@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-attachments-sweep"
+description = "Enables the chat_attachments_sweep command without any pre-configured scope."
+commands.allow = ["chat_attachments_sweep"]
+
+[[permission]]
+identifier = "deny-chat-attachments-sweep"
+description = "Denies the chat_attachments_sweep command without any pre-configured scope."
+commands.deny = ["chat_attachments_sweep"]
