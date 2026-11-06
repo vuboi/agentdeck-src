@@ -55,7 +55,8 @@
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "resources": {
       "../../../.codex/skills/codex-imagen/scripts/codex-imagen.mjs": "codex-imagen/codex-imagen.mjs",
-      "../build/claude-agent": "claude-agent"
+      "../build/claude-agent": "claude-agent",
+      "../build/codegraph": "codegraph"
     },
     "windows": {
       "nsis": {

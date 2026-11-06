@@ -9,6 +9,7 @@ import {
     pathsWrittenBy,
     pathsWrittenInChat,
     readPathOf,
+    requestAt,
     type LedgerWrite,
     type RunRef,
 } from './change-ledger.ts';
@@ -233,4 +234,53 @@ test("W5 trigger 4: a chat's writes over all its turns, once per path", () => {
         after: '',
     });
     assert.deepEqual(pathsWrittenInChat(writes, 'worker'), ['a.ts']);
+});
+
+test('a retry keeps the time of the request it answers, so the newer request still wins', () => {
+    const t1 = Date.parse('2026-11-05T10:00:00.000Z'); // A
+    const t2 = Date.parse('2026-11-05T10:01:00.000Z'); // C, sent while the task runs
+    const t3 = Date.parse('2026-11-05T10:05:00.000Z'); // the retry starts later
+    const list = [
+        { role: 'user', at: new Date(t1).toISOString() },
+        { role: 'assistant' },
+        { role: 'user', at: new Date(t2).toISOString() },
+    ];
+    const writes: LedgerWrite[] = [];
+    // C was written first, by the user's later request.
+    appendWrite(writes, {
+        root: ROOT,
+        path: 'x.ts',
+        run: run('c-turn', requestAt(list)!),
+        callId: 'c1',
+        before: 'A',
+        after: 'C',
+    });
+    // The retry of the A task: its intent is A's time (t1), not its start (t3).
+    assert.equal(requestAt(list), t2);
+    const retryIntent = requestAt(list.slice(0, 2));
+    assert.equal(retryIntent, t1);
+    assert.ok(retryIntent! < t3);
+    const conflict = checkWrite(writes, {
+        root: ROOT,
+        path: 'x.ts',
+        run: run('a-retry', retryIntent!),
+        callId: 'b1',
+        before: 'C',
+        after: 'B',
+    });
+    assert.ok(conflict, 'the retry writing over C must be a conflict');
+    assert.equal(conflict.kind, 'overwrite');
+});
+
+test('requestAt: the latest user request with a time, or undefined', () => {
+    assert.equal(requestAt([]), undefined);
+    assert.equal(requestAt([{ role: 'assistant' }]), undefined);
+    assert.equal(
+        requestAt([
+            { role: 'user', at: '2026-11-05T10:00:00.000Z' },
+            { role: 'assistant' },
+            { role: 'user' }, // no time: skipped
+        ]),
+        Date.parse('2026-11-05T10:00:00.000Z'),
+    );
 });

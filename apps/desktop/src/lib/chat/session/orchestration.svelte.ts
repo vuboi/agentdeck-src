@@ -18,7 +18,7 @@ export const clipText = (text: string, max: number) => {
 /** Resolves a delegate_task call when its child chat finishes. */
 export const taskWaiters = new SvelteMap<
     string,
-    (text: string, error: string | null, reply: Message) => void
+    (text: string, error: string | null, reply?: Message) => void
 >();
 
 /** A hidden coordination prompt waits for the target chat's current turn to finish. */
@@ -31,6 +31,10 @@ export type SilentCoordinationPrompt = {
         'triggeredByMessageId' | 'taskTitle' | 'taskIds' | 'workflowRunId'
     >;
     questionId?: string;
+    /** Checked when the prompt is about to start: a prompt whose target is gone is dropped, not sent. */
+    deliverable?: () => boolean;
+    /** A teammate's note to a running worker: its turn is not the worker's report (see teamNoteDone). */
+    teamNote?: boolean;
 };
 const silentCoordination = new SvelteMap<string, SilentCoordinationPrompt[]>();
 const activeCoordination = new SvelteMap<string, SilentCoordinationPrompt>();

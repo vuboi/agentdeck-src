@@ -57,6 +57,7 @@ function state(patch: Partial<PlanState> = {}): PlanState {
         ],
         rows: () => rows,
         routesFor: () => [],
+        roleOn: () => true,
         routedFor: () => undefined,
         isRunning: () => false,
         customModelId: (rowId, model) => `${rowId}/${model}`,
@@ -136,6 +137,18 @@ test('N2.1 refusal: a known role with no configured route', () => {
         { routesFor: () => [] },
     );
     assert.match(error, /No route is configured for task role "review"/);
+});
+
+test('N2.1 refusal: a role switched off in Settings > Tasks', () => {
+    const error = refusal(
+        { call: call({ role: 'review' }) },
+        { routesFor: () => [], roleOn: () => false },
+    );
+    assert.match(
+        error,
+        /Task role "review" is switched off in Settings > Tasks/,
+    );
+    assert.doesNotMatch(error, /No route is configured/);
 });
 
 test('N2.1 refusal: depends_on names an unknown task', () => {

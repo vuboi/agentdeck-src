@@ -54,6 +54,9 @@ pub enum AgentEvent {
     /// The model a sub-agent call was given in its input. Sent right after its [`AgentEvent::ToolCall`]: the task
     /// start event does not carry the model.
     ToolModel { id: String, model: String },
+    /// The name a teammate of an agent team was given (the `name` of its `Agent` call). Sent right after its
+    /// [`AgentEvent::ToolCall`], like the model: the task start event does not carry it.
+    Teammate { id: String, name: String },
     /// What a tool printed. `is_error` marks a failed call.
     ToolResult {
         id: String,

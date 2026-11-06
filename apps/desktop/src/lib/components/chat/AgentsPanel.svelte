@@ -26,7 +26,13 @@
     import type { CardState } from '../../tasks/delegate-task';
 
     // Sub agents of the open chat beside it: a list, one agent's chat, or a grid of up to four chats.
-    const agents = $derived(childAgents(workspace.activeId));
+    const agents = $derived(
+        childAgents(workspace.activeId).filter(
+            (agent) =>
+                isWorkActive(agent.work) ||
+                !agentView.dismissed.includes(agent.id),
+        ),
+    );
     const selected = $derived(
         agents.find((agent) => agent.id === agentView.selected) ?? null,
     );
@@ -128,6 +134,14 @@
     function open(id: string) {
         agentView.selected = id;
         agentView.mode = 'single';
+    }
+
+    // Clears the panel of the finished agents; the running ones stay.
+    function clearFinished() {
+        agentView.dismissed = [
+            ...agentView.dismissed,
+            ...finished.map((agent) => agent.id),
+        ];
     }
 </script>
 
@@ -241,6 +255,17 @@
                 footer="Up to {GRID_MAX} at once"
                 onpick={(item) => toggleGridAgent(item.data, gridIds)}
             />
+        {/if}
+        {#if mode !== 'single' && finished.length}
+            <button
+                type="button"
+                class={ICON_BUTTON}
+                aria-label="Clear finished agents"
+                title="Clear finished agents"
+                onclick={clearFinished}
+            >
+                <ZIcon zType={'lucideListX' as ZIconName} class="size-3.5" />
+            </button>
         {/if}
         <button
             type="button"

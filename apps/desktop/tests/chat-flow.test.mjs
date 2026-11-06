@@ -27,7 +27,10 @@ async function delegateWith({
     owed = false,
     delivered = true,
     prefs = {},
+    notes = {},
 } = {}) {
+    const pumps = [];
+    const waiters = new Map();
     const session = {
         id: 'chat',
         title: 'Chat',
@@ -53,7 +56,9 @@ async function delegateWith({
         queued: {},
         queuePaused: {},
         send: (...args) => sent.push(args),
-        sendNextQueued() {},
+        sendNextQueued: (id) => pumps.push(id),
+        hasCoordinationPrompt: (id) => (notes[id]?.length ?? 0) > 0,
+        queueCoordinationPrompt: (id, item) => (notes[id] ??= []).push(item),
         handbackPrompt: () => 'handback',
         NO_HANDOUT: {},
         replyDelegateCall: async (...args) => {
@@ -65,9 +70,9 @@ async function delegateWith({
         failSessionWork() {},
         updateWorkflowWorker() {},
         settleWorkflowRun() {},
-        taskWaiters: new Map(),
+        taskWaiters: waiters,
     });
-    return { api, sent, replies };
+    return { api, sent, replies, pumps, notes, waiters };
 }
 
 /** A running wait=true task of the chat, as startTask leaves it. */
@@ -92,6 +97,48 @@ function runningWaitTask(api) {
         deadline: 0,
     });
 }
+
+// ---------- team notes: a worker's first report survives the note turns that follow it ----------
+
+test('team notes: the first report waits for the note turns and settles once none is left', async () => {
+    const notes = { child: [{ prompt: 'note from a teammate' }] };
+    const { api, pumps, waiters } = await delegateWith({ notes });
+    runningWaitTask(api);
+    // What settle keeps when its turn ends while a note is queued.
+    api.taskRuns.get('t1').report = { answer: 'first report' };
+    const ended = [];
+    waiters.set('child', (...args) => ended.push(args));
+    // The note turn ends and no note is left: the first report is settled, once.
+    notes.child = [];
+    api.teamNoteDone('child');
+    assert.deepEqual(pumps, []);
+    assert.equal(ended.length, 1);
+    assert.deepEqual(ended[0], ['first report', null, undefined]);
+    assert.equal(waiters.has('child'), false);
+});
+
+test('team notes: a note turn that leaves another note queued starts it and keeps the report waiting', async () => {
+    const notes = { child: [{ prompt: 'second note' }] };
+    const { api, pumps, waiters } = await delegateWith({ notes });
+    runningWaitTask(api);
+    api.taskRuns.get('t1').report = { answer: 'first report' };
+    const ended = [];
+    waiters.set('child', (...args) => ended.push(args));
+    api.teamNoteDone('child');
+    assert.deepEqual(pumps, ['child']);
+    assert.equal(ended.length, 0);
+    assert.equal(waiters.has('child'), true);
+});
+
+test('team notes: a note that ran while the worker was paused leaves its real end to come', async () => {
+    const { api, waiters } = await delegateWith();
+    runningWaitTask(api);
+    const ended = [];
+    waiters.set('child', (...args) => ended.push(args));
+    api.teamNoteDone('child');
+    assert.equal(ended.length, 0);
+    assert.equal(waiters.has('child'), true);
+});
 
 // ---------- R3.1: a held hand-back must not take over the failed turn owed a retry ----------
 
@@ -176,6 +223,8 @@ async function eventsWith(pending) {
     };
     const calls = { persist: 0, cancelAutoSwitch: 0, remember: 0 };
     const api = await load('events', {
+        // events.svelte.ts registers its save listener when it loads: the ledger is not under test here.
+        onUserFileSave() {},
         workspace: { activeId: 'chat', sessions: [session], projects: [] },
         pendingSwitch: pending,
         persistLocal: () => calls.persist++,

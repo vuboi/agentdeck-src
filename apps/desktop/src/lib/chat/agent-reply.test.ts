@@ -78,6 +78,28 @@ test('a tool_model event sets the model on the call it follows', () => {
     assert.equal(blocks[0].model, 'sonnet');
 });
 
+test('a teammate names the task card of its call', () => {
+    const blocks = run([
+        spawn,
+        { kind: 'teammate', id: 'agent1', name: 'teammate-one' },
+        {
+            kind: 'task',
+            id: 't1',
+            tool_use_id: 'agent1',
+            status: 'started',
+            label: 'general-purpose: Write ALPHA to a.txt',
+            summary: null,
+        },
+    ]);
+    assert.equal(blocks[0].kind, 'command');
+    if (blocks[0].kind !== 'command') return;
+    assert.equal(blocks[0].teammate, 'teammate-one');
+    assert.equal(
+        blocks[0].tasks?.t1?.label,
+        'teammate-one · general-purpose: Write ALPHA to a.txt',
+    );
+});
+
 test('a task event labels the call that started it and keeps what it knew', () => {
     const blocks = run([
         spawn,

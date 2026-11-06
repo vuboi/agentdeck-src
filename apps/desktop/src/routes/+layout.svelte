@@ -52,7 +52,10 @@
                 return;
             event.preventDefault();
             reloading = true;
-            void stopAgents().finally(() => window.location.reload());
+            void stopAgents()
+                .then(() => import('../lib/app/platform/tauri-event'))
+                .then(({ unlistenAll }) => unlistenAll())
+                .finally(() => window.location.reload());
         };
         window.addEventListener('beforeunload', beforeUnload);
         window.addEventListener('keydown', reloadKey, true);

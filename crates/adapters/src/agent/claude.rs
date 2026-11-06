@@ -16,7 +16,7 @@ use super::{
 pub struct Claude;
 
 /// Working rules added to every agent's system prompt: keep the change to what was asked.
-pub const WORK_CONTEXT: &str = r#" Work rules: do only what the user asked, and every changed line must trace to the request. Do not refactor, rename or "improve" nearby code; mention unrelated problems in your reply instead of changing them. For a clear request, pick the most likely reading, state it in one line and proceed; ask only when the answer changes the result (wrong target, destructive action, missing access). Choose the simplest change that works: no speculative options, flags or single-use abstractions. Before editing, name the check that proves the change (test, command or screenshot), run it and report the real result. Remove only the imports, variables or functions your own change made unused. A casual message (a greeting, thanks, a short chat) needs no tool calls, skill checks or commands: answer it directly. When the user sets a rule for this conversation, keep following it, including for small messages; do not drop it on your own, and ask the user first if you think it should not apply."#;
+pub const WORK_CONTEXT: &str = r#" Work rules: do only what the user asked, and every changed line must trace to the request. Do not refactor, rename or "improve" nearby code; mention unrelated problems in your reply instead of changing them. For a clear request, pick the most likely reading, state it in one line and proceed; ask only when the answer changes the result (wrong target, destructive action, missing access). Choose the simplest change that works: no speculative options, flags or single-use abstractions. Before editing, name the check that proves the change (test, command or screenshot), run it and report the real result. Remove only the imports, variables or functions your own change made unused. A casual message (a greeting, thanks, a short chat) needs no tool calls, skill checks or commands: answer it directly. When the user sets a rule for this conversation, keep following it, including for small messages; do not drop it on your own, and ask the user first if you think it should not apply. Reply style: caveman terse. Drop filler, pleasantries, hedging, recaps and closing offers; drop articles when the sentence still reads clearly. Answer first, then the reason, then the next step. Keep every fact, number, code block, command, path, identifier and error message exact. Use full sentences for security warnings, irreversible actions and multi-step order. Reply in the user's language. This style is for chat replies only: code, comments, commits, docs and files stay in normal prose."#;
 
 /// Added to the CLI's system prompt on every turn.
 /// How an agent asks the user multiple-choice questions in AgentDeck (rendered as a question card).
@@ -184,10 +184,18 @@ impl Provider for Claude {
     fn environment(&self, req: &TurnRequest) -> Vec<(String, String)> {
         // No auto-update check, telemetry or feature-flag fetch on start-up: measured on a cold start, the first answer
         // comes 0.4 to 1.3 s sooner and the process ends faster. (It also turns Remote Control off: not used here.)
-        let mut env = vec![(
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(),
-            "1".to_string(),
-        )];
+        // Agent teams (experimental, off by default): the lead spawns named teammates through the `Agent` tool, which
+        // the chat already shows as sub-agent cards.
+        let mut env = vec![
+            (
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(),
+                "1".to_string(),
+            ),
+            (
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_string(),
+                "1".to_string(),
+            ),
+        ];
         // An API key wins over the signed-in plan in Claude Code's sign-in order: the turn spends Console credit.
         env.extend(
             req.api_key
@@ -346,8 +354,18 @@ impl Claude {
                         .filter(|model| !model.is_empty() && matches!(name, "Agent" | "Task"))
                     {
                         events.push(AgentEvent::ToolModel {
-                            id,
+                            id: id.clone(),
                             model: model.to_string(),
+                        });
+                    }
+                    // An agent team's teammate is an `Agent` call with a `name`: its name labels the card.
+                    if let Some(teammate) = block["input"]["name"]
+                        .as_str()
+                        .filter(|teammate| !teammate.is_empty() && name == "Agent")
+                    {
+                        events.push(AgentEvent::Teammate {
+                            id,
+                            name: teammate.to_string(),
                         });
                     }
                     events
@@ -520,13 +538,21 @@ mod tests {
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_string(),
             "1".to_string(),
         );
-        assert_eq!(Claude.environment(&req(false)), vec![quiet.clone()]);
+        let teams = (
+            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_string(),
+            "1".to_string(),
+        );
+        assert_eq!(
+            Claude.environment(&req(false)),
+            vec![quiet.clone(), teams.clone()]
+        );
         let mut with_key = req(false);
         with_key.api_key = Some("sk-ant-test".into());
         assert_eq!(
             Claude.environment(&with_key),
             vec![
                 quiet,
+                teams,
                 ("ANTHROPIC_API_KEY".to_string(), "sk-ant-test".to_string())
             ]
         );
@@ -844,6 +870,22 @@ mod tests {
         let plain = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls","model":"x"}}]}}"#;
         assert!(matches!(
             Claude.parse_line(plain).as_slice(),
+            [AgentEvent::ToolCall { .. }]
+        ));
+    }
+
+    #[test]
+    fn a_teammate_call_names_its_teammate() {
+        let teammate = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_mate","name":"Agent","input":{"description":"Write ALPHA to a.txt","name":"teammate-one","subagent_type":"general-purpose","run_in_background":false}}]}}"#;
+        assert!(matches!(
+            Claude.parse_line(teammate).as_slice(),
+            [AgentEvent::ToolCall { id, background: true, .. }, AgentEvent::Teammate { id: named, name }]
+                if id == "toolu_mate" && named == "toolu_mate" && name == "teammate-one"
+        ));
+        // A `name` on another tool is not a teammate.
+        let other = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"ls","name":"x"}}]}}"#;
+        assert!(matches!(
+            Claude.parse_line(other).as_slice(),
             [AgentEvent::ToolCall { .. }]
         ));
     }

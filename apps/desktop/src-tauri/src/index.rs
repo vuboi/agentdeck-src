@@ -86,6 +86,7 @@ pub fn set_root(chat: &str, root: &str) {
             roots.insert(chat.to_string(), root.clone());
         }
     }
+    crate::codegraph::prepare(&root);
     std::thread::spawn(move || {
         let _ = refresh(&root);
     });

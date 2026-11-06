@@ -830,8 +830,11 @@ export function flushCoordinationPrompt(sessionId: string): boolean {
         queuePaused[sessionId]
     )
         return false;
-    const item: SilentCoordinationPrompt | undefined =
+    let item: SilentCoordinationPrompt | undefined =
         takeCoordinationPrompt(sessionId);
+    // A note whose receiver has already ended is dropped: it would start a turn in a chat nobody waits for.
+    while (item?.deliverable && !item.deliverable())
+        item = takeCoordinationPrompt(sessionId);
     if (!item) return false;
     startCoordinationPrompt(sessionId, item);
     send(sessionId, '', [], [], [], {

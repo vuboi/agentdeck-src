@@ -58,6 +58,7 @@ import {
 } from '../../tasks/delegate-task';
 import { houseStyleHint } from '../content/house-style';
 import { replyStyle } from '../content/reply-style.svelte';
+import { requestAt } from '../runs/change-ledger';
 import { memoryHint, readProjectMemory } from '../content/project-memory';
 import {
     learnFromPrompt,
@@ -752,6 +753,7 @@ export function startTurn(
                         }
                       : {}),
                   startedAt: Date.now(),
+                  intentAt: requestAt(list) ?? Date.now(),
                   agent: session.agent,
                   model: selectedModel ?? session.model,
                   ...(asked?.role === 'user' ? { replyTo: asked.id } : {}),

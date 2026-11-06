@@ -60,6 +60,7 @@ export type Block =
           /** Work done under this call by a sub-agent: its steps and what it wrote. */ children?: Block[];
           /** Started in the background by its own flag (run_in_background, a sub agent): only such a call takes a task event as a task row. */ background?: boolean;
           /** The model a sub-agent call was given in its input. */ model?: string;
+          /** The name of the teammate an agent-team call started; labels its task card. */ teammate?: string;
           /** A propose_session call: the choice made on its card (tasks/propose.ts). Kept with the message. */ proposal?: ProposalState;
           /** A sub-agent or background job this call started, and how far it is. With several tasks (`tasks`), this is
            *  the whole of them: running while any runs. */ task?: TaskRecord;
@@ -131,6 +132,8 @@ export type Message = {
     /** While the pictures are read ahead by `reader` (a model's name): shown as "Waiting to extract info from image by <reader>". */
     dispatchingImages?: { count: number; reader: string };
     startedAt?: number;
+    /** When the user request this reply answers was sent (ms). Orders the change ledger; retries keep it. */
+    intentAt?: number;
     /** How long the reply took, once finished. */
     ms?: number;
     /** The user stopped the reply this many ms after it started: shown as "You stopped after …". */

@@ -14,13 +14,15 @@ export const GRID_MAX = 10;
 
 export type AgentViewMode = 'list' | 'single' | 'grid';
 
-/** What the Sub agents panel shows. Kept in memory: the panel starts on the list. */
+/** What the Sub agents panel shows. Kept in memory: the panel starts on the grid. */
 export const agentView = $state({
-    mode: 'list' as AgentViewMode,
+    mode: 'grid' as AgentViewMode,
     /** The agent the single view shows. */
     selected: null as string | null,
     /** The agents the grid shows, in the order they were added. */
     picked: [] as string[],
+    /** Finished agents the panel was cleared of. They come back only if they run again. */
+    dismissed: [] as string[],
 });
 
 /** The sub agents and background jobs a chat started, live: re-reads whenever the work tray changes. */
