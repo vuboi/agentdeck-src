@@ -88,6 +88,11 @@ pub async fn store_dsh_plugin_remove(name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn store_dsh_health() -> Result<dsh::Health, String> {
+    Ok(dsh::health().await)
+}
+
+#[tauri::command]
 pub async fn store_skill_import(name: String, from: String) -> Result<(), String> {
     blocking(move || library::import(&home()?, &name, &from)).await
 }

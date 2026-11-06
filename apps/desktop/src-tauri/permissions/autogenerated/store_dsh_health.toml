@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-store-dsh-health"
+description = "Enables the store_dsh_health command without any pre-configured scope."
+commands.allow = ["store_dsh_health"]
+
+[[permission]]
+identifier = "deny-store-dsh-health"
+description = "Denies the store_dsh_health command without any pre-configured scope."
+commands.deny = ["store_dsh_health"]

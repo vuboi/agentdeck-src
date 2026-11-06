@@ -67,13 +67,13 @@ pub struct HarnessSnapshot {
 /// Persistence stays outside this type: callers can append `events()` to the existing store.
 #[derive(Debug, Clone)]
 pub struct HarnessRuntime {
-    session_id: String,
-    state: HarnessState,
-    next_seq: u64,
-    active_turn_id: Option<String>,
-    active_tool_ids: BTreeSet<String>,
-    active_approval_ids: BTreeSet<String>,
-    events: Vec<HarnessEvent>,
+    pub(crate) session_id: String,
+    pub(crate) state: HarnessState,
+    pub(crate) next_seq: u64,
+    pub(crate) active_turn_id: Option<String>,
+    pub(crate) active_tool_ids: BTreeSet<String>,
+    pub(crate) active_approval_ids: BTreeSet<String>,
+    pub(crate) events: Vec<HarnessEvent>,
 }
 
 impl HarnessRuntime {
@@ -290,7 +290,7 @@ impl HarnessRuntime {
         self.record(HarnessEventKind::SessionStatus { state: self.state });
     }
 
-    fn refresh_wait_state(&mut self) {
+    pub(crate) fn refresh_wait_state(&mut self) {
         if !matches!(
             self.state,
             HarnessState::WaitingTool | HarnessState::WaitingApproval

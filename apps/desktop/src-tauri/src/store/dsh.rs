@@ -23,6 +23,16 @@ pub struct PluginItem {
     pub profile: String,
 }
 
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Health {
+    pub cli_installed: bool,
+    pub cli_version: Option<String>,
+    pub profile_exists: bool,
+    pub profile: String,
+    pub capabilities: Vec<String>,
+    pub error: Option<String>,
+}
+
 fn dsh_home() -> Result<PathBuf, String> {
     if let Some(home) = std::env::var_os("DSH_HOME") {
         return Ok(PathBuf::from(home));
@@ -113,6 +123,43 @@ pub async fn remove(name: String) -> Result<(), String> {
     run(&["plugin", "--profile", PROFILE, "remove", &name])
         .await
         .map(|_| ())
+}
+
+pub async fn health() -> Health {
+    let profile = profile_dir();
+    let (profile_exists, error) = match profile {
+        Ok(path) => (path.join("package.json").is_file(), None),
+        Err(error) => (false, Some(error)),
+    };
+    let Some(program) = which("dsh") else {
+        return Health {
+            cli_installed: false,
+            cli_version: None,
+            profile_exists,
+            profile: PROFILE.to_owned(),
+            capabilities: Vec::new(),
+            error,
+        };
+    };
+    let version = capture(&program, &["--version"], Duration::from_secs(10)).await;
+    let (cli_version, error) = match version {
+        Ok(output) if output.ok => (Some(output.stdout.trim().to_owned()), error),
+        Ok(output) => (None, Some(failure(&output))),
+        Err(error) => (None, Some(error)),
+    };
+    Health {
+        cli_installed: true,
+        cli_version,
+        profile_exists,
+        profile: PROFILE.to_owned(),
+        capabilities: vec![
+            "plugins".into(),
+            "mcp".into(),
+            "subagent".into(),
+            "session_resume".into(),
+        ],
+        error,
+    }
 }
 
 #[cfg(test)]

@@ -49,6 +49,61 @@ pub fn encode_json_line(value: &Value) -> Result<Vec<u8>, serde_json::Error> {
     Ok(bytes)
 }
 
+/// Stable SDK/ACP method names shared by the dsh sidecar adapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DshMethod {
+    Initialize,
+    SessionNew,
+    SessionPrompt,
+    SessionWait,
+    SessionResume,
+    SessionStatus,
+    ApprovalRequest,
+    UserQuestionAsk,
+    Shutdown,
+}
+
+impl DshMethod {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Initialize => "initialize",
+            Self::SessionNew => "session/new",
+            Self::SessionPrompt => "session/prompt",
+            Self::SessionWait => "session/wait",
+            Self::SessionResume => "session/resume",
+            Self::SessionStatus => "session/status",
+            Self::ApprovalRequest => "approval/request",
+            Self::UserQuestionAsk => "user-question/ask",
+            Self::Shutdown => "shutdown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DshNotification {
+    SessionEvent(Value),
+    SessionStatus(Value),
+    ApprovalRequest(Value),
+    UserQuestion(Value),
+    SubagentStarted(Value),
+    SubagentFinished(Value),
+    Unknown { method: String, params: Value },
+}
+
+impl DshNotification {
+    pub fn parse(method: String, params: Value) -> Self {
+        match method.as_str() {
+            "session/event" => Self::SessionEvent(params),
+            "session/status" => Self::SessionStatus(params),
+            "approval/request" => Self::ApprovalRequest(params),
+            "user-question/ask" => Self::UserQuestion(params),
+            "subagent/started" => Self::SubagentStarted(params),
+            "subagent/finished" => Self::SubagentFinished(params),
+            _ => Self::Unknown { method, params },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportState {
     Open,
@@ -172,7 +227,7 @@ impl JsonRpcTransport {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_json_line, JsonLineDecoder};
+    use super::{encode_json_line, DshMethod, DshNotification, JsonLineDecoder};
     use serde_json::json;
 
     #[test]
@@ -242,5 +297,18 @@ mod tests {
         transport.mark_process_exited();
         assert_eq!(transport.state(), super::TransportState::Closed);
         assert!(transport.notification("session/event", json!({})).is_err());
+    }
+
+    #[test]
+    fn typed_protocol_names_cover_sdk_lifecycle_and_interactive_requests() {
+        assert_eq!(DshMethod::SessionResume.as_str(), "session/resume");
+        assert!(matches!(
+            DshNotification::parse("approval/request".into(), json!({"id":"a"})),
+            DshNotification::ApprovalRequest(_)
+        ));
+        assert!(matches!(
+            DshNotification::parse("future/event".into(), json!({})),
+            DshNotification::Unknown { .. }
+        ));
     }
 }

@@ -70,6 +70,7 @@ name = "ag-orchestrator"
 version = "0.1.82"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

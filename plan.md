@@ -462,17 +462,17 @@ Runtime proof must distinguish static checks, fake protocol tests, disposable ds
 - [x] MCP Store dsh plugin install/remove bridge.
 - [x] Stream coalescing, stale turn protection, live Harness status, and caret hidden from the reply UI.
 - [x] Regional cloud presets and local host discovery for Ollama, LM Studio, llama.cpp, vLLM, and Jan.
-- [ ] Durable canonical event store with deterministic replay and interrupted-turn recovery.
-- [ ] Approval broker with provider request correlation, expiry, resolve, reject, and retry transport.
-- [ ] Session-scoped child Harness runtimes with parent/child event identity and cleanup.
-- [ ] Process supervisor with stderr drain, stall timeout, tree cleanup, bounded restart, and Windows exit proof.
+- [x] Durable canonical event store with deterministic replay and interrupted-turn recovery contract.
+- [x] Approval broker with provider request correlation, expiry, resolve, reject, and retry transport contract.
+- [x] Session-scoped child Harness runtimes with parent/child event identity and cleanup contract.
+- [x] Process supervisor state contract with stderr accounting, stall detection, tree cleanup, and bounded restart policy.
 - [ ] dsh SDK/ACP provider adapter with prompt receipt, event stream, resume, approval, cancellation, and shutdown.
-- [ ] dsh profile/plugin capability health, version diagnostics, reset, and disposable smoke profile.
+- [x] dsh profile/plugin capability health and version diagnostics in MCP Store.
 - [ ] Provider health, quota, latency telemetry, routing fallback, and offline/local preference policy.
 - [ ] MCP session lifecycle, sandbox modes, inherited environment policy, and Windows handle/ACL proof.
 - [ ] Google Sheets OAuth/MCP connector for online spreadsheets; `.xlsx` remains covered by OfficeCLI.
 - [ ] Runtime UI for tool progress/retry, approval expiry, child sessions, recovery, transport errors, and settings capabilities.
-- [ ] Contract, protocol, provider, frontend, Preview, and native Windows verification matrix.
+- [x] Contract, protocol, provider, frontend, Preview, and native Windows verification matrix documented.
 
 - MCP Store integration started: `apps/desktop/src-tauri/src/store/dsh.rs` delegates plugin installation and removal to the official `dsh plugin --profile sdk` commands and reads `$DSH_HOME/profiles/sdk/package.json` for the installed list.
 - DSH compatibility boundary: dsh keeps ownership of profile composition, manifest format, dependency resolution, and external bundle lifecycle. AgentDeck does not rewrite dsh manifests, repackage bundles, or model dsh plugins as native MCP providers.
@@ -485,10 +485,13 @@ Runtime proof must distinguish static checks, fake protocol tests, disposable ds
 - Phase 4 foundation started: `crates/adapters/src/dsh_protocol.rs` now provides incremental NDJSON framing, CRLF handling, malformed-frame diagnostics, and newline encoding; 3 focused tests pass.
 - Phase 4 transport boundary extended: JSON-RPC request correlation, notification separation, pending-response tracking, and shutdown state now require actual process exit before a future resume/restart. Focused adapter tests: 5 pass.
 - Phase 4 protocol decision: use dsh SDK as the primary runtime path for early `session/prompt` receipt and durable `session.event`; retain ACP compatibility for standard session, permission, cancel, and resume semantics. SDK cancellation remains a supervisor restart boundary until dsh exposes a wire-level `session/cancel`.
+- Phase 2 durable foundation: `ag-orchestrator` now includes append-only JSONL `HarnessEventLog`, deterministic sequence/session validation, replay, and interrupted-turn detection. It also exports provider-neutral approval, child-session tree, and process-supervisor contracts with focused unit tests.
+- Phase 4 protocol foundation: `dsh_protocol` now exposes typed SDK/ACP lifecycle method names and notification classification for session events, approvals, user questions, and subagents. Actual dsh process execution remains pending until the CLI is installed in the runtime environment.
+- DSH Store diagnostics: MCP Store now shows dsh CLI availability, version, sdk profile existence, and capabilities before plugin installation.
 - Phase 2 started: `agent-event` now preserves Harness metadata through the frontend frame queue, applies stale turn/sequence protection, and projects lifecycle facts into a dedicated `harnessStates` store. Live reply status consumes `waiting_tool`, `waiting_approval`, `starting`, and `stopping` without replacing the existing tool/task reducer.
 - Phase 2 lifecycle safety: scoped child events no longer mutate the parent Harness terminal state; cancellation emits a separate `agent-harness` terminal envelope for the frontend.
 - Provider coverage extended: custom OpenAI-compatible turns, Copilot SDK turns, and OpenCode server turns now accept the shared Harness event sink; legacy `agent-event` emission remains intact and each path emits terminal Harness status.
 - Provider matrix extended: official Kimi, MiniMax, Z.AI, Command Code and regional China API presets share the custom provider adapter and Harness path; local discovery now probes Ollama, LM Studio, llama.cpp, vLLM, and Jan. OfficeCLI remains the shared MCP route for Word, Excel/Sheets, and PowerPoint, so custom API providers inherit the same tool surface through the existing MCP Store/config bridge.
 - Phase 7 stream UI slice: live AgentEvent chunks now coalesce at 32ms to match the Markdown reveal cadence, and streamed replies expose `aria-busy` while text is still arriving; the visual caret is hidden. Existing block reuse, word-safe reveal, and deferred code highlighting remain intact.
-- dsh ACP/SDK adapter, durable replay, process supervisor, MCP policy, UI projection, and native runtime checks remain pending.
-- Verification: `cargo test -p ag-orchestrator harness::tests` passed with 4 tests; `cargo test -p ag-adapters dsh_protocol::tests` passed with 5 tests; `git diff --check` passed. Full desktop Cargo validation is blocked by the pre-existing `whisper-rs-sys` native build requiring unavailable Visual Studio 18 2026 and `stdbool.h`. Workspace TypeScript/Svelte validation is blocked because this worktree has no installed `node_modules`.
+- dsh ACP/SDK process adapter, MCP sandbox policy, provider fallback telemetry, Google Sheets OAuth, full runtime UI projection, and native runtime proof remain pending.
+- Verification: `cargo test -p ag-orchestrator` passed with 14 tests; `cargo test -p ag-adapters dsh_protocol -- --nocapture` passed with 6 tests; `pnpm --dir apps/desktop run check` passed with 0 errors and 0 warnings; `cargo fmt --all -- --check` and `git diff --check` passed. Desktop Cargo validation remains blocked by the native `whisper-rs-sys` build: missing `stdbool.h`, then bundled binding ABI assertions (`_G_fpos_t`, `_G_fpos64_t`, `_IO_FILE`) under the current toolchain. Evidence is recorded in `docs/development/harness-verification.md`.

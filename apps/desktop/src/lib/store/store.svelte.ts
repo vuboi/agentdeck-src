@@ -32,6 +32,14 @@ export type DshPluginItem = {
     enabled: boolean;
     profile: string;
 };
+export type DshHealth = {
+    cli_installed: boolean;
+    cli_version: string | null;
+    profile_exists: boolean;
+    profile: string;
+    capabilities: string[];
+    error: string | null;
+};
 export type StoreInstalled = {
     skills: SkillItem[];
     plugins: PluginItem[];
@@ -43,6 +51,7 @@ export const store = $state({
     skills: [] as SkillItem[],
     plugins: [] as PluginItem[],
     dshPlugins: [] as DshPluginItem[],
+    dshHealth: null as DshHealth | null,
     pluginErrors: [] as string[],
     loading: false,
     error: '',
@@ -120,6 +129,7 @@ export async function loadStore() {
         store.skills = installed.skills;
         store.plugins = installed.plugins;
         store.dshPlugins = installed.dsh_plugins ?? [];
+        store.dshHealth = await call<DshHealth>('store_dsh_health', {});
         store.pluginErrors = installed.plugin_errors;
     } catch (error) {
         store.error = message(error);

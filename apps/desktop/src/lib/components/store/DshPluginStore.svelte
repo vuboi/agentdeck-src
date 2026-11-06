@@ -143,6 +143,44 @@
         </div>
     </div>
 
+    {#if store.dshHealth}
+        <div
+            class="mb-3 rounded-md border border-border bg-muted/20 px-2.5 py-2"
+        >
+            <div class="flex items-center gap-2 text-[0.6875rem]">
+                <span
+                    class:font-medium={store.dshHealth.cli_installed}
+                    class="text-foreground"
+                >
+                    {store.dshHealth.cli_installed
+                        ? 'dsh ready'
+                        : 'dsh CLI unavailable'}
+                </span>
+                {#if store.dshHealth.cli_version}
+                    <span class="text-muted-foreground"
+                        >{store.dshHealth.cli_version}</span
+                    >
+                {/if}
+                <span class="ml-auto text-muted-foreground"
+                    >profile: {store.dshHealth.profile}</span
+                >
+            </div>
+            <div class="mt-1 text-[0.625rem] text-muted-foreground">
+                {#if store.dshHealth.profile_exists}
+                    Capabilities: {store.dshHealth.capabilities.join(', ')}
+                {:else}
+                    SDK profile chưa được tạo. Install plugin sẽ dùng official
+                    dsh profile command.
+                {/if}
+            </div>
+            {#if store.dshHealth.error}
+                <div class="mt-1 text-[0.625rem] text-destructive">
+                    {store.dshHealth.error}
+                </div>
+            {/if}
+        </div>
+    {/if}
+
     <div class="flex items-center gap-2">
         <ZInput
             bind:value={spec}
