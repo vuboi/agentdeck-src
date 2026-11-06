@@ -93,6 +93,11 @@ pub async fn store_dsh_health() -> Result<dsh::Health, String> {
 }
 
 #[tauri::command]
+pub async fn store_dsh_update() -> Result<String, String> {
+    dsh::update().await
+}
+
+#[tauri::command]
 pub async fn store_skill_import(name: String, from: String) -> Result<(), String> {
     blocking(move || library::import(&home()?, &name, &from)).await
 }

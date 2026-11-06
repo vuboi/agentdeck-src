@@ -59,9 +59,9 @@
         },
         {
             id: 'office',
-            label: 'CLI extensions',
+            label: 'CLI extended',
             icon: 'lucideTerminal',
-            hint: 'OfficeCLI and other tools for agents',
+            hint: 'OfficeCLI and DSH CLI for agents',
         },
         {
             id: 'system',

@@ -162,6 +162,21 @@ pub async fn health() -> Health {
     }
 }
 
+pub async fn update() -> Result<String, String> {
+    let npm = which("npm").ok_or_else(|| "npm is not installed or not on PATH".to_owned())?;
+    let output = capture(
+        &npm,
+        &["install", "--global", "@deepseek-ai/dsh@latest"],
+        Duration::from_secs(600),
+    )
+    .await?;
+    if output.ok {
+        Ok(output.stdout.trim().to_owned())
+    } else {
+        Err(failure(&output))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{check_spec, dependency_items};
