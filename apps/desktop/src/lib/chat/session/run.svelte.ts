@@ -39,6 +39,8 @@ import {
 import { routesOf, taskRoleHint } from '../../agents/task-roles';
 import { taskRoles } from '../../agents/task-roles.svelte';
 import { agentDisplayName } from '../../agents/provider-registry';
+import { formatModelRef, parseModelRef } from '../../agents/model-ref';
+import { prewarmOf } from '../../agents/provider-descriptors';
 import { customProviderOf } from '../../agents/provider-registry';
 import { automation } from '../../app/platform/automation.svelte';
 import { logError } from '../../app/platform/error-log.svelte';
@@ -211,13 +213,20 @@ function prehandleProvider(): PreHandler | undefined {
                 apiKey: key?.apiKey || null,
                 model,
             };
-            candidates.push({ route: `${provider.id}|${model}`, pick: base });
+            candidates.push({
+                route: formatModelRef({ provider: provider.id, model }),
+                pick: base,
+            });
             for (const effort of supportedEffortValues(
                 'custom',
                 `${provider.id}::${model}`,
             ))
                 candidates.push({
-                    route: `${provider.id}|${model}|${effort}`,
+                    route: formatModelRef({
+                        provider: provider.id,
+                        model,
+                        effort,
+                    }),
                     pick: { ...base, effort },
                 });
         }
@@ -232,13 +241,23 @@ function prehandleProvider(): PreHandler | undefined {
                 apiKey: connectors.claudeCredit.apiKey.trim(),
                 model,
             };
-            candidates.push({ route: `claude|credit:${model}`, pick: base });
+            candidates.push({
+                route: formatModelRef({
+                    provider: 'claude',
+                    model: `credit:${model}`,
+                }),
+                pick: base,
+            });
             for (const effort of supportedEffortValues(
                 'claude',
                 `credit:${model}`,
             ))
                 candidates.push({
-                    route: `claude|credit:${model}|${effort}`,
+                    route: formatModelRef({
+                        provider: 'claude',
+                        model: `credit:${model}`,
+                        effort,
+                    }),
                     pick: { ...base, effort },
                 });
         }
@@ -294,7 +313,10 @@ function prehandleProvider(): PreHandler | undefined {
 
 /** A route as the user reads it: "Codex GPT 5.6 Terra". */
 const routeLabel = (route: string) => {
-    const [agent, model, effort] = route.split('|');
+    const ref = parseModelRef(route);
+    const agent = ref?.provider ?? '';
+    const model = ref?.model;
+    const effort = ref?.effort;
     const custom = connectors.custom.find((item) => item.id === agent);
     return `${custom?.name ?? agentDisplayName(agent)} ${modelLabel(custom ? `${agent}::${model}` : model)}${effort ? ` · ${effortLabel(effort)}` : ''}`;
 };
@@ -334,9 +356,7 @@ export function prewarmChat(sessionId: string) {
     if (
         !session ||
         !inTauri() ||
-        !['claude', 'codex', 'antigravity', 'workbuddy', 'copilot'].includes(
-            session.agent,
-        ) ||
+        !prewarmOf(session.agent) ||
         isRunning(session.id)
     )
         return;

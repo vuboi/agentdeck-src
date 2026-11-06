@@ -1,5 +1,6 @@
 //! WorkBuddy account connector: device login, token refresh, and authenticated model discovery.
 
+use crate::endpoints::ENDPOINTS;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -14,7 +15,6 @@ const ACCESS_COUNT_SECRET: &str = "agentdeck:workbuddy:access:count";
 const REFRESH_COUNT_SECRET: &str = "agentdeck:workbuddy:refresh:count";
 const USER_ID_SECRET: &str = "agentdeck:workbuddy:user-id";
 const ENTERPRISE_ID_SECRET: &str = "agentdeck:workbuddy:enterprise-id";
-const BASE: &str = "https://www.workbuddy.ai";
 // Windows Credential Manager stores a UTF-16-encoded password in a blob of at
 // most CRED_MAX_CREDENTIAL_BLOB_SIZE (2560) bytes, i.e. 1280 UTF-16 units per
 // credential; chunk well below that so every piece fits one credential.
@@ -169,7 +169,10 @@ async fn refresh_token(refresh_token: &str) -> Result<String, String> {
         .user_agent("WorkBuddy/5.5.6")
         .build()
         .map_err(|error| error.to_string())?
-        .post(format!("{BASE}/v2/plugin/auth/token/refresh"))
+        .post(format!(
+            "{}/v2/plugin/auth/token/refresh",
+            ENDPOINTS.workbuddy.home
+        ))
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
         .header("X-Refresh-Token", refresh_token)
@@ -210,7 +213,10 @@ pub(super) async fn sign_in() -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     let state = client
-        .post(format!("{BASE}/v2/plugin/auth/state?platform=CLI"))
+        .post(format!(
+            "{}/v2/plugin/auth/state?platform=CLI",
+            ENDPOINTS.workbuddy.home
+        ))
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
         .header("X-Product", "SaaS")
@@ -241,7 +247,10 @@ pub(super) async fn sign_in() -> Result<(), String> {
     for _ in 0..120 {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let response = client
-            .get(format!("{BASE}/v2/plugin/auth/token?state={state_id}"))
+            .get(format!(
+                "{}/v2/plugin/auth/token?state={state_id}",
+                ENDPOINTS.workbuddy.home
+            ))
             .header("Accept", "application/json")
             .header("X-Product", "SaaS")
             .send()
@@ -270,7 +279,10 @@ pub(super) async fn sign_in() -> Result<(), String> {
             for _ in 0..60 {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let account = client
-                    .get(format!("{BASE}/v2/plugin/login/account?state={state_id}"))
+                    .get(format!(
+                        "{}/v2/plugin/login/account?state={state_id}",
+                        ENDPOINTS.workbuddy.home
+                    ))
                     .header("Accept", "application/json")
                     .header("Authorization", format!("Bearer {access}"))
                     .header("X-Product", "SaaS")
@@ -510,7 +522,7 @@ pub(crate) async fn model_infos() -> Result<Vec<ag_adapters::models::ModelInfo>,
         .user_agent("WorkBuddy/5.5.6")
         .build()
         .map_err(|error| error.to_string())?
-        .get(format!("{BASE}/v3/config"))
+        .get(format!("{}/v3/config", ENDPOINTS.workbuddy.home))
         .bearer_auth(token)
         .header("Accept", "application/json")
         .header("X-Product", "SaaS")
@@ -551,7 +563,7 @@ pub(crate) async fn image_models() -> Result<Vec<String>, String> {
         .user_agent("WorkBuddy/5.5.6")
         .build()
         .map_err(|error| error.to_string())?
-        .get(format!("{BASE}/v3/config"))
+        .get(format!("{}/v3/config", ENDPOINTS.workbuddy.home))
         .bearer_auth(token)
         .header("Accept", "application/json")
         .header("X-Product", "SaaS")
@@ -612,7 +624,7 @@ pub(crate) async fn image_generate(
         .user_agent("WorkBuddy/5.5.6")
         .build()
         .map_err(|error| error.to_string())?
-        .post(format!("{BASE}{path}"))
+        .post(format!("{}{path}", ENDPOINTS.workbuddy.home))
         .bearer_auth(token)
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")

@@ -58,6 +58,18 @@ pub struct ProviderQuota {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkBuddy {
+    pub home: String,
+    pub chat_api: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MuseCode {
+    pub auth: String,
+    pub api: String,
+}
+#[derive(Deserialize)]
 pub struct Web {
     pub search: String,
     #[serde(rename = "searchApi")]
@@ -93,6 +105,9 @@ pub struct Endpoints {
     #[serde(rename = "providerQuota")]
     pub provider_quota: ProviderQuota,
     pub web: Web,
+    pub workbuddy: WorkBuddy,
+    #[serde(rename = "museCode")]
+    pub muse_code: MuseCode,
     pub local: Vec<Local>,
 }
 

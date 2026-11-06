@@ -9,8 +9,8 @@ use base64::Engine as _;
 use serde_json::Value;
 
 use super::{
-    allow_entry, file_change, summarize_tool_input, AgentEvent, PermissionRequest, Provider,
-    TaskStatus, TurnRequest,
+    allow_entry, classify_child, file_change, summarize_tool_input, AgentEvent, ChildKind,
+    PermissionRequest, Provider, TaskStatus, TurnRequest,
 };
 
 pub struct Claude;
@@ -314,19 +314,21 @@ impl Claude {
                 .flat_map(|block| {
                     let name = block["name"].as_str().unwrap_or_default();
                     let id = block["id"].as_str().unwrap_or_default().to_string();
+                    let child = classify_child(name, &block["input"]);
                     let mut events = vec![AgentEvent::ToolCall {
                         id: id.clone(),
                         name: name.to_string(),
                         input: summarize_tool_input(name, &block["input"]),
                         change: file_change(name, &block["input"]),
                         background: block["input"]["run_in_background"].as_bool() == Some(true)
-                            || matches!(name, "Agent" | "Task")
+                            || child == Some(ChildKind::Agent)
                             || super::delegate_wait(name, &block["input"]),
+                        child_kind: child,
                     }];
                     // A sub-agent names its model in its input; the task events never do.
                     if let Some(model) = block["input"]["model"]
                         .as_str()
-                        .filter(|model| !model.is_empty() && matches!(name, "Agent" | "Task"))
+                        .filter(|model| !model.is_empty() && child == Some(ChildKind::Agent))
                     {
                         events.push(AgentEvent::ToolModel {
                             id,
@@ -604,7 +606,8 @@ mod tests {
                 name: "Bash".into(),
                 input: "ls -la".into(),
                 change: None,
-                background: false
+                background: false,
+                child_kind: None,
             }]
         );
     }

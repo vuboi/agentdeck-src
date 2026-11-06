@@ -555,6 +555,7 @@ fn translate(
                 input: data["input"].to_string(),
                 change: None,
                 background,
+                child_kind: None,
             });
             // A sub-agent's card starts with its call and ends with its result, as Claude's does.
             if subagent {

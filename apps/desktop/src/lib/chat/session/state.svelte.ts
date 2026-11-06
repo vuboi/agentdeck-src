@@ -1,4 +1,5 @@
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
+import type { ProviderId } from '../../agents/provider-descriptors';
 import {
     BUILT_IN_AGENTS,
     agentDisplayName,
@@ -27,15 +28,7 @@ import {
 } from '../content/command-images';
 
 // Mock workspace. Real data arrives from agentd (M2); the shapes follow crates/protocol.
-export type Agent =
-    | 'claude'
-    | 'codex'
-    | 'antigravity'
-    | 'opencode'
-    | 'workbuddy'
-    | 'copilot'
-    | 'command-code'
-    | 'custom';
+export type Agent = ProviderId;
 export type Status = 'working' | 'idle' | 'waiting';
 /** Reasoning effort and the approval modes shared by the agent CLIs. */
 export type Effort =

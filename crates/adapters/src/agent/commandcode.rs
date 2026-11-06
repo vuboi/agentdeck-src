@@ -151,6 +151,7 @@ impl CommandCode {
             name,
             change,
             background: false,
+            child_kind: None,
         }]
     }
 
@@ -359,6 +360,7 @@ mod tests {
                 input: "git status".into(),
                 change: None,
                 background: false,
+                child_kind: None,
             }]
         );
         assert_eq!(

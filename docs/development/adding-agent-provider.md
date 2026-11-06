@@ -24,8 +24,9 @@ Checklist for the next coding agent. Read `AGENTS.md` and `PLAN.md` before editi
 
 ### 1. ID, logo, and agent information
 
-- Add the profile to `apps/desktop/src/lib/agents/provider-registry.ts` (`BuiltInAgent`, `BUILT_IN_AGENTS`). This is the shared source for logos, names, icons, and colors in chat, workflows, and pickers.
-- Add the agent to any independent unions/types: `sessions.svelte.ts`, `mock.ts`, slash-command types, and connector types as needed.
+- Add one entry to `PROVIDERS` in `apps/desktop/src/lib/agents/provider-descriptors.ts`: `id`, `label`, `binary` (the CLI), `credentialScope`, and the flags `liveModel`, `prewarm`, `inFallbackChain`. `BuiltInAgent`, `ProviderId`, `CLI` names, the fallback chain, the prewarm list, the send list and `modelsReady`/`loadModels` all derive from it. Do not write a new union or list of agent ids.
+- Add its look (icon, logo, tone) to `LOOK` in `provider-registry.ts`. This is the shared source for logos, names, and colors in chat, workflows, and pickers. Add a test to `provider-descriptors.test.ts` when a flag is set.
+- Model references are written with `formatModelRef` and read with `parseModelRef` (`model-ref.ts`), never by splitting strings.
 - Review handwritten color maps in `Chat.svelte`, `Sidebar.svelte`, `SettingsModal.svelte`, and the MCP view. Prefer `AgentLogo`/the registry over adding generic icons.
 - AgentDeck stores the provider on each chat session; check labels and logos in recent chats, the header, tabs, and task cards. Do not confuse new AgentDeck sessions with CLI history imports.
 

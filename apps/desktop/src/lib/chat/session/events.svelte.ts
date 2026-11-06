@@ -43,6 +43,8 @@ import {
     persistCommandImage,
 } from '../content/command-images';
 import { recordUsage, estimateCost } from '../runs/usage';
+import { formatModelRef, parseModelRef } from '../../agents/model-ref';
+import { cliOf } from '../../agents/provider-descriptors';
 import { toolKindOf } from '../../tasks/delegate-task';
 import { archiveTurn } from '../content/archive';
 import {
@@ -177,15 +179,6 @@ export function resumeStoppedTurn(sessionId: string) {
 // one line for each step. A new message of the user starts the count again.
 type RecoveryState = { retries: number; tried: string[] };
 export const recoveries: Record<string, RecoveryState> = {};
-const CLI_OF: Record<string, string> = {
-    claude: 'claude',
-    codex: 'codex',
-    antigravity: 'agy',
-    opencode: 'opencode',
-    workbuddy: 'codebuddy',
-    copilot: 'gh',
-    'command-code': 'command-code',
-};
 /** What a provider's CLI says when the conversation an id names does not exist (a run stopped before it wrote anything,
  *  or a session cleaned up): Codex rollout, Claude session, OpenCode session, Antigravity conversation, Copilot thread. */
 const NO_CONVERSATION =
@@ -204,14 +197,15 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
     const result: RecoveryRoute[] = [];
     const seen = new SvelteSet<string>();
     for (const saved of connectors.recovery.chain) {
-        const [provider, pickedModel, effort] = saved.split('|');
-        if (!provider) continue;
+        const ref = parseModelRef(saved);
+        if (!ref) continue;
+        const { provider, model: pickedModel, effort } = ref;
         let agent: Agent;
         let model: string | undefined;
-        if (CLI_OF[provider]) {
+        if (cliOf(provider)) {
             const installed = Boolean(
                 connectors.detected?.tools.find(
-                    (item) => item.id === CLI_OF[provider],
+                    (item) => item.id === cliOf(provider),
                 )?.path,
             );
             if (!installed || !agentHasRoom(provider)) continue;
@@ -243,7 +237,7 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
             agent = 'custom';
         }
         if (!model) continue;
-        const key = `${provider}|${model}${effort ? `|${effort}` : ''}`;
+        const key = formatModelRef({ provider, model, effort });
         if (seen.has(key)) continue;
         seen.add(key);
         result.push({
@@ -307,19 +301,18 @@ function currentRecoveryRoute(session: SessionItem, chain: string[]): string {
     const effort = turnOptionsOf(session.id).effort;
     const matching =
         chain.find((key) => {
-            const [routeProvider, routeModel] = key.split('|');
-            const routeEffort = key.split('|')[2];
+            const route = parseModelRef(key);
             return (
-                routeProvider === provider &&
-                routeModel === model &&
-                routeEffort === effort
+                route?.provider === provider &&
+                route.model === model &&
+                route.effort === effort
             );
         }) ??
         chain.find((key) => {
-            const [routeProvider, routeModel] = key.split('|');
-            return routeProvider === provider && routeModel === model;
+            const route = parseModelRef(key);
+            return route?.provider === provider && route.model === model;
         });
-    return matching ?? `${provider}|${model ?? ''}`;
+    return matching ?? formatModelRef({ provider, model: model ?? '' });
 }
 
 /** What to do about a turn of `session` that ended with `message`; null when nothing is (off, or stopped by the user). */

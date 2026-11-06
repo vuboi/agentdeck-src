@@ -4,22 +4,20 @@ import { inTauri } from '../app/platform/history';
 import { claudeCreditOn, connectors } from './connectors.svelte';
 import { CREDIT_PREFIX, creditModel } from './credit-model';
 import { agentProfile } from './provider-registry';
+import { WORKBUDDY_API_ID } from './custom-ids';
+import {
+    BUILT_IN_IDS,
+    type BuiltInAgent,
+    type ProviderId,
+} from './provider-descriptors';
 import { providerLogo } from './brand-icons';
 
 // Model catalogue for the picker, per provider. It starts from a small built-in list and is replaced at start-up
 // by what each CLI keeps on disk (Rust `models_list`): Codex's cached catalogue with each model's reasoning
 // levels, and Claude Code's current tiers plus the extra models the account is offered.
 
-export type ProviderId =
-    | 'claude'
-    | 'codex'
-    | 'antigravity'
-    | 'opencode'
-    | 'workbuddy'
-    | 'copilot'
-    | 'command-code'
-    | 'custom';
-export type BuiltInProviderId = Exclude<ProviderId, 'custom'>;
+export type { ProviderId };
+export type BuiltInProviderId = BuiltInAgent;
 export type ModelOption = {
     value: string;
     label: string;
@@ -256,7 +254,7 @@ export function modelSources(): ModelSource[] {
     return [
         ...builtIn,
         ...chattable()
-            .filter((provider) => provider.id !== 'workbuddy')
+            .filter((provider) => provider.id !== WORKBUDDY_API_ID)
             .map((provider) => ({
                 // Keep custom provider rows in their own namespace: a saved provider may use a
                 // built-in id such as `workbuddy`, which must not collide with the CLI row key.
@@ -359,26 +357,15 @@ type Listed = {
  * picker shows a loading state instead of it, so the list is never drawn and then replaced and reordered.
  */
 export const modelsReady = $state<Record<ProviderId, boolean>>({
-    claude: false,
-    codex: false,
-    antigravity: false,
-    opencode: false,
-    workbuddy: false,
-    copilot: false,
-    'command-code': false,
+    ...(Object.fromEntries(BUILT_IN_IDS.map((id) => [id, false])) as Record<
+        BuiltInAgent,
+        boolean
+    >),
     custom: true,
 });
 
 export async function loadModels(
-    providers: readonly ProviderId[] = [
-        'claude',
-        'codex',
-        'antigravity',
-        'opencode',
-        'workbuddy',
-        'copilot',
-        'command-code',
-    ],
+    providers: readonly ProviderId[] = BUILT_IN_IDS,
 ) {
     if (!inTauri()) {
         for (const provider of Object.keys(modelsReady) as ProviderId[])

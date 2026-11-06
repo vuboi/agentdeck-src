@@ -406,6 +406,7 @@ impl Provider for Codex {
                     input: bare_command(item["command"].as_str().unwrap_or_default()),
                     change: None,
                     background: false,
+                    child_kind: None,
                 });
             }
             ("item.updated", "command_execution") => {
@@ -420,6 +421,7 @@ impl Provider for Codex {
                         input: bare_command(item["command"].as_str().unwrap_or_default()),
                         change: None,
                         background: false,
+                        child_kind: None,
                     });
                 }
                 let failed = item["exit_code"].as_i64().is_some_and(|code| code != 0)
@@ -486,6 +488,7 @@ impl Provider for Codex {
                             after: diff.after,
                         }),
                         background: false,
+                        child_kind: None,
                     });
                     events.push(AgentEvent::ToolResult {
                         id: call,
@@ -510,6 +513,7 @@ impl Provider for Codex {
                         name,
                         input: item["arguments"].to_string().chars().take(200).collect(),
                         change: None,
+                        child_kind: None,
                     });
                 }
                 if value["type"] == "item.completed" {
@@ -554,6 +558,7 @@ impl Provider for Codex {
                             .to_string(),
                         change: None,
                         background: false,
+                        child_kind: None,
                     });
                 }
                 if value["type"] == "item.completed" {

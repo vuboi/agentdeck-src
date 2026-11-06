@@ -106,10 +106,7 @@ export function projectChatWork(
                         : 'running',
             agent: event.agent,
             model: event.model,
-            kind:
-                event.nativeTaskId || /agent|task|spawn/i.test(event.name)
-                    ? 'agent'
-                    : 'command',
+            kind: event.nativeTaskId || event.childKind ? 'agent' : 'command',
             sourceMessageId: event.sourceMessageId,
             sourceTitle: event.sourceTitle,
             // AgentDeck owns project servers started by browser_serve, so they can stop independently of the chat turn.

@@ -21,7 +21,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use super::warm::{
     holds, lock_of, park, send, settings_key, start, take_server, InjectSlot, Warm, EXIT_GRACE,
 };
-use super::{AgentEvent, Provider, TaskStatus, TurnRequest};
+use super::{classify_child, AgentEvent, ChildKind, Provider, TaskStatus, TurnRequest};
 
 /// A reply to a handshake request that takes longer than this means the server is not coming up.
 const HANDSHAKE: Duration = Duration::from_secs(60);
@@ -200,6 +200,7 @@ impl Translate {
     fn collab(&mut self, method: &str, item: &Value) -> Vec<AgentEvent> {
         let id = item["id"].as_str().unwrap_or_default().to_owned();
         let tool = item["tool"].as_str().unwrap_or("agent");
+        let spawn = classify_child(tool, item) == Some(ChildKind::SpawnAgent);
         let receivers: Vec<&str> = item["receiverThreadIds"]
             .as_array()
             .into_iter()
@@ -207,10 +208,10 @@ impl Translate {
             .filter_map(Value::as_str)
             .collect();
         if method == "item/started" {
-            if tool == "spawnAgent" {
+            if spawn {
                 self.unresolved.push(id.clone());
             }
-            let input = if tool == "spawnAgent" {
+            let input = if spawn {
                 short(item["prompt"].as_str().unwrap_or_default())
             } else {
                 format!("{} agent(s)", receivers.len())
@@ -220,12 +221,13 @@ impl Translate {
                 name: tool.to_owned(),
                 input,
                 change: None,
-                background: tool == "spawnAgent",
+                background: spawn,
+                child_kind: classify_child(tool, item),
             }];
         }
         let mut events = Vec::new();
         let mut output = String::new();
-        if tool == "spawnAgent" {
+        if spawn {
             self.unresolved.retain(|waiting| *waiting != id);
             let prompt = short(item["prompt"].as_str().unwrap_or_default());
             let label = match item["model"].as_str().filter(|model| !model.is_empty()) {

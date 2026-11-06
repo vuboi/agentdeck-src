@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::{AgentEvent, TaskStatus};
+use super::{classify_child, AgentEvent, ChildKind, TaskStatus};
 
 /// How long a turn may print nothing while one of its tools runs: the CLI writes nothing until a build or a test suite
 /// returns, so the ordinary limit would end real work. Still bounded, so a tool that hangs is caught.
@@ -33,8 +33,13 @@ pub const DEFAULT_STALL_LIMIT: Duration = Duration::from_secs(10 * 60);
 pub const AGENT_STALL_LIMIT: Duration = Duration::from_secs(20 * 60);
 
 /// Tool calls that start a sub-agent: their result does not say the work is over, and their own output is the child's.
+/// Antigravity's sub-agents (`AgySubagent`) and OpenCode's server name `task` are not in this set: the watchdog has
+/// never counted them, and that is kept as it was.
 fn starts_sub_agent(name: &str) -> bool {
-    matches!(name, "Agent" | "Task" | "spawnAgent" | "subagent")
+    matches!(
+        classify_child(name, &serde_json::Value::Null),
+        Some(ChildKind::Agent | ChildKind::SpawnAgent | ChildKind::Subagent)
+    )
 }
 
 /// Time since the last sign of life. Uses tokio's clock, so tests can pause and advance it.
@@ -134,6 +139,7 @@ mod tests {
             input: "cargo test".into(),
             change: None,
             background: false,
+            child_kind: None,
         });
         tokio::time::advance(Duration::from_secs(30 * 60)).await;
         assert!(!dog.expired(), "a long build is not a stall");
@@ -159,6 +165,7 @@ mod tests {
             input: "scan".into(),
             change: None,
             background: true,
+            child_kind: None,
         });
         tokio::time::advance(Duration::from_secs(19 * 60)).await;
         assert!(!dog.expired(), "a sub-agent may think for a while");
@@ -178,6 +185,7 @@ mod tests {
             input: String::new(),
             change: None,
             background: true,
+            child_kind: None,
         });
         dog.note(&AgentEvent::ToolCall {
             id: "b".into(),
@@ -185,6 +193,7 @@ mod tests {
             input: "cargo build".into(),
             change: None,
             background: false,
+            child_kind: None,
         });
         tokio::time::advance(Duration::from_secs(60 * 60)).await;
         assert!(!dog.expired());

@@ -7,6 +7,7 @@ use std::{
 use serde_json::Value;
 
 use super::HistoryMessage;
+use crate::agent::{classify_child, ChildKind};
 
 /// Lines longer than this are request blobs, never messages; skip them without parsing.
 const MAX_LINE: usize = 2_000_000;
@@ -168,7 +169,9 @@ pub fn describe_tool(name: &str, input: &Value) -> String {
         "Bash" | "shell" | "exec_command" => pick(&["command", "cmd"]),
         "Read" | "Edit" | "Write" | "NotebookEdit" => pick(&["file_path", "path"]),
         "Grep" | "Glob" => pick(&["pattern"]),
-        "Agent" | "Task" => pick(&["description", "prompt"]),
+        _ if classify_child(name, input) == Some(ChildKind::Agent) => {
+            pick(&["description", "prompt"])
+        }
         _ => None,
     }
     .or_else(|| {

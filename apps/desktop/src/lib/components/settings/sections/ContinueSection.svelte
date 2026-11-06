@@ -13,21 +13,13 @@
         type ProviderId,
     } from '../../../agents/models.svelte';
     import { agentDisplayName } from '../../../agents/provider-registry';
+    import { fallbackAgents } from '../../../agents/provider-descriptors';
     import { theme } from '../../../app/ui/theme.svelte';
 
     const icon = (name: string) => name as ZIconName;
 
-    /** The agents a chat can move to: the ones with a CLI (events.svelte.ts CLI_OF). */
-    const CHAIN_AGENTS = [
-        'claude',
-        'codex',
-        'antigravity',
-        'opencode',
-        'workbuddy',
-        'copilot',
-        'command-code',
-        'custom',
-    ];
+    /** The agents a chat can move to: the built-in providers in the fallback chain, then a custom provider. */
+    const CHAIN_AGENTS: string[] = [...fallbackAgents(), 'custom'];
 
     type Node = {
         value: string;

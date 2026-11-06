@@ -1,3 +1,4 @@
+import type { ProviderId } from '../agents/provider-descriptors';
 import { inTauri } from '../app/platform/history';
 
 // The `/` palette. Two sources: AgentDeck's own commands (below), and the commands and skills the chat's agent
@@ -5,15 +6,7 @@ import { inTauri } from '../app/platform/history';
 // message is sent, `expandSlash` swaps the command for its text, so the chat shows what was typed and the agent gets
 // the full instructions. That works the same for every agent: nothing depends on the CLI knowing the command.
 
-export type SlashAgent =
-    | 'claude'
-    | 'codex'
-    | 'antigravity'
-    | 'opencode'
-    | 'workbuddy'
-    | 'copilot'
-    | 'command-code'
-    | 'custom';
+export type SlashAgent = ProviderId;
 export type SlashItem = {
     name: string;
     description: string;

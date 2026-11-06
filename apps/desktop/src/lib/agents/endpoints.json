@@ -42,6 +42,14 @@
     "cloudflareAnalytics": "https://api.cloudflare.com/client/v4/graphql",
     "opencodeGoUsage": "https://opencode.ai/zen/go/v1/usage"
   },
+  "workbuddy": {
+    "home": "https://www.workbuddy.ai",
+    "chatApi": "https://www.workbuddy.ai/v2"
+  },
+  "museCode": {
+    "auth": "https://auth.meta.com",
+    "api": "https://api.meta.ai"
+  },
   "web": {
     "search": "https://search.brave.com/search",
     "searchApi": "https://api.search.brave.com/res/v1/web/search",

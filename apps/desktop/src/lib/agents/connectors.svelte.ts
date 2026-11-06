@@ -8,6 +8,8 @@ import {
     rotateCredential,
     type CredentialAttempt,
 } from './credential-switch';
+import { WORKBUDDY_API_ID, migrateCustomProviderId } from './custom-ids';
+import { ENDPOINTS } from './endpoints';
 import { inTauri } from '../app/platform/history';
 import { getPref, setPref } from '../app/platform/prefs';
 import { loadSecret, saveSecret } from '../app/platform/secrets';
@@ -1158,7 +1160,9 @@ export async function saveApiConnectorKey(
 
 async function syncWorkbuddyProvider(fetchModels = false): Promise<void> {
     // WorkBuddy stores its OAuth token in chunked native credentials and the Rust command owns refresh/auth.
-    const existing = connectors.custom.find((item) => item.id === 'workbuddy');
+    const existing = connectors.custom.find(
+        (item) => item.id === WORKBUDDY_API_ID,
+    );
     let models = existing?.models ?? [];
     // The built-in WorkBuddy catalogue already reads this endpoint through `models_list`.
     // Rebuild the hidden native provider from cached models unless an explicit login/refresh asks for a new list.
@@ -1176,10 +1180,10 @@ async function syncWorkbuddyProvider(fetchModels = false): Promise<void> {
     }
     const next = normalizeCustomProvider({
         ...(existing ?? {}),
-        id: 'workbuddy',
+        id: WORKBUDDY_API_ID,
         name: 'WorkBuddy',
         kind: 'openai',
-        baseUrl: 'https://www.workbuddy.ai/v2',
+        baseUrl: ENDPOINTS.workbuddy.chatApi,
         keyEnv: '',
         // Chat requests use the native WorkBuddy credential when `workbuddy` is true; the picker provider does not need
         // the access token in its custom-provider record.
@@ -2253,7 +2257,7 @@ Promise.all([
         connectors.custom = await Promise.all(
             custom.map(async (provider) =>
                 normalizeCustomProvider({
-                    ...provider,
+                    ...migrateCustomProviderId(provider),
                     keys: await Promise.all(
                         (provider.keys ?? []).map(async (key, index) => {
                             const id =

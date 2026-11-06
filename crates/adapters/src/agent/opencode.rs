@@ -8,7 +8,10 @@ use serde_json::{json, Value};
 
 use super::codex::APP_CONTEXT;
 use super::permission::{self, Action, Mode, Verdict};
-use super::{allow_entry, AgentEvent, PermissionRequest, Provider, TaskStatus, TurnRequest};
+use super::{
+    allow_entry, classify_child, AgentEvent, ChildKind, PermissionRequest, Provider, TaskStatus,
+    TurnRequest,
+};
 
 /// The label of a sub-agent call: `agent: description`, from whichever of the two the call has.
 fn task_label(input: &Value) -> Option<String> {
@@ -19,9 +22,13 @@ fn task_label(input: &Value) -> Option<String> {
     }
 }
 
-/// Whether a tool is a sub-agent call: `subagent` (the name the CLI writes) or `task` (the name the server gives it).
+/// Whether a tool is an OpenCode sub-agent call, by either name (`subagent` or `task`). Kept for the desktop server
+/// path (`apps/desktop/src-tauri/src/opencode_serve.rs`); the adapter itself matches [`ChildKind`] directly.
 pub fn is_subagent(tool: &str) -> bool {
-    matches!(tool, "subagent" | "task")
+    matches!(
+        classify_child(tool, &Value::Null),
+        Some(ChildKind::Subagent | ChildKind::OpenCodeTask)
+    )
 }
 
 /// The task card of a sub-agent call, keyed by the call that started it. Used where the call's own metadata (the child
@@ -439,14 +446,17 @@ impl Provider for OpenCode {
                     } else {
                         super::file_change(tool, input)
                     };
+                    let child = classify_child(tool, input);
                     events.push(AgentEvent::ToolCall {
                         id: id.clone(),
                         name: tool.to_owned(),
                         input: input_summary(input),
                         change,
-                        background: tool == "subagent" || super::delegate_wait(tool, input),
+                        background: child == Some(ChildKind::Subagent)
+                            || super::delegate_wait(tool, input),
+                        child_kind: child,
                     });
-                    if tool == "subagent" {
+                    if child == Some(ChildKind::Subagent) {
                         events.push(subagent_task(part, &id, TaskStatus::Started));
                     }
                 }
@@ -476,7 +486,11 @@ impl Provider for OpenCode {
                         image: None,
                         change,
                     });
-                    if part["tool"] == "subagent" {
+                    if classify_child(
+                        part["tool"].as_str().unwrap_or_default(),
+                        &part["state"]["input"],
+                    ) == Some(ChildKind::Subagent)
+                    {
                         let status = if is_error {
                             TaskStatus::Failed
                         } else {
@@ -595,7 +609,8 @@ mod tests {
                     name: "shell".into(),
                     input: "echo hi".into(),
                     change: None,
-                    background: false
+                    background: false,
+                    child_kind: None,
                 },
                 AgentEvent::ToolResult {
                     id: "call_1".into(),
@@ -670,7 +685,8 @@ mod tests {
                 name: "edit".into(),
                 input: "a.ts".into(),
                 change: None,
-                background: false
+                background: false,
+                child_kind: None,
             }]
         );
         let finished = r#"{"type":"tool_use","part":{"id":"call_2","tool":"edit","state":{"status":"completed","input":{"filePath":"a.ts"},"output":"ok"}}}"#;
@@ -861,6 +877,15 @@ mod tests {
                 tools: None,
             }
         );
+        assert_eq!(
+            classify_child("subagent", &Value::Null),
+            Some(ChildKind::Subagent)
+        );
+        assert_eq!(
+            classify_child("task", &Value::Null),
+            Some(ChildKind::OpenCodeTask)
+        );
+        assert_eq!(classify_child("bash", &Value::Null), None);
         assert!(is_subagent("subagent") && is_subagent("task") && !is_subagent("bash"));
     }
 

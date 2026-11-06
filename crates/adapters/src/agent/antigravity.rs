@@ -17,7 +17,9 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use super::{AgentEvent, PermissionRequest, Provider, TaskStatus, TurnRequest};
+use super::{
+    classify_child, AgentEvent, ChildKind, PermissionRequest, Provider, TaskStatus, TurnRequest,
+};
 
 /// What an approval card hands back for a refused command: `agy:command(<command>)`.
 const ALLOW_PREFIX: &str = "agy:command(";
@@ -598,7 +600,8 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                 } else {
                     super::file_change(&name, parameters)
                 };
-                let background = is_subagent_tool(raw_name)
+                let child = classify_child(raw_name, parameters);
+                let background = child == Some(ChildKind::AgySubagent)
                     || super::delegate_wait(
                         &name,
                         if raw_name == "call_mcp_tool" {
@@ -613,10 +616,11 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
                     input,
                     change,
                     background,
+                    child_kind: child,
                 });
                 // agy runs a sub-agent in a conversation of its own and says nothing of what it does until it ends:
                 // the card shows who it is from the start.
-                if is_subagent_tool(raw_name) {
+                if child == Some(ChildKind::AgySubagent) {
                     events.push(AgentEvent::Task {
                         id: index.to_string(),
                         tool_use_id: Some(index.to_string()),
@@ -694,14 +698,6 @@ fn step(update: &Value, turn: &mut Turn) -> Vec<AgentEvent> {
         }],
         _ => Vec::new(),
     }
-}
-
-/// The tools that start a sub-agent.
-fn is_subagent_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "invoke_subagent" | "define_subagent" | "browser_subagent"
-    )
 }
 
 /// What a sub-agent's own transcript says of its work: the tool calls it made, and the tokens of each of its model calls
