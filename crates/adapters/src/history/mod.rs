@@ -9,6 +9,7 @@ mod copilot;
 mod export;
 mod index_cache;
 mod manage;
+mod page_cache;
 mod util;
 
 pub use export::{
@@ -56,7 +57,7 @@ pub struct HistorySession {
 }
 
 /// One block of a message, in the shape the chat UI renders.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryBlock {
     Thinking {
@@ -78,7 +79,7 @@ pub enum HistoryBlock {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryMessage {
     pub id: String,
     /// `user` or `assistant`.
@@ -94,7 +95,7 @@ pub struct HistoryMessage {
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryUsage {
     pub input: u64,
     pub output: u64,
@@ -320,12 +321,20 @@ fn parsed(
     if let Some(messages) = kept(&path, len, modified) {
         return Ok(messages);
     }
+    // Parsed before, across a restart: the pages kept on disk (plan storage-sqlite P6.3).
+    let cache = roots.index.join("pages.db");
+    if let Some(stored) = page_cache::get(&cache, &path, len, modified) {
+        let messages = Arc::new(stored);
+        keep(path, len, modified, Arc::clone(&messages));
+        return Ok(messages);
+    }
     let messages = Arc::new(match source {
         Source::Claude => claude::load(&path)?,
         Source::Codex => codex::load(&path)?,
         Source::Copilot => copilot::load(&path)?,
         Source::Antigravity => antigravity::load(&path)?,
     });
+    page_cache::put(&cache, &path, len, modified, &messages);
     keep(path, len, modified, Arc::clone(&messages));
     Ok(messages)
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createDualWriter, type ChatMeta } from './dual-write.ts';
+import { createDualWriter, storedCopy, type ChatMeta } from './dual-write.ts';
 
 /** What a command was called with: only the fields these tests read. */
 type Args = {
@@ -10,7 +10,7 @@ type Args = {
         role: string;
         bindingId: string | null;
         native: unknown;
-        blocks: { text: string }[];
+        blocks: { blocks: { text: string }[] };
     }[];
     binding?: { id: string; provider: string; nativeId: string; state: string };
     id?: string;
@@ -81,7 +81,7 @@ const turn = (
 
 const names = (calls: Call[]) => calls.map((call) => call.command);
 const texts = (call: Call) =>
-    (call.args.messages ?? []).map((m) => m.blocks[0].text);
+    (call.args.messages ?? []).map((m) => m.blocks.blocks[0].text);
 
 function setup(enabled: boolean, answer?: (call: Call) => unknown) {
     const timers = clock();
@@ -316,4 +316,30 @@ test('N5.2 a failed read is a command error, not a mismatch', async () => {
     assert.deepEqual(mismatches, []);
     assert.equal(errors.length, 1);
     assert.equal(errors[0].command, 'chat_open');
+});
+
+test('storedCopy keeps the whole message but drops the fields that only drive the live screen', () => {
+    const message = {
+        id: 'a1',
+        role: 'assistant' as const,
+        time: '10:00',
+        at: '2026-11-03T01:00:00Z',
+        agent: 'claude' as const,
+        model: 'm',
+        ms: 1200,
+        cost: 0.01,
+        tokens: { input: 1, output: 2 },
+        blocks: [{ kind: 'response' as const, text: 'hi' }],
+        live: true,
+        dispatching: true,
+        startedAt: 5,
+        credentialId: 'cred-1',
+    } as unknown as Parameters<typeof storedCopy>[0];
+    const copy = storedCopy(message) as Record<string, unknown>;
+    assert.equal(copy.id, 'a1');
+    assert.equal(copy.ms, 1200);
+    assert.equal(copy.cost, 0.01);
+    assert.deepEqual(copy.tokens, { input: 1, output: 2 });
+    for (const field of ['live', 'dispatching', 'startedAt', 'credentialId'])
+        assert.equal(field in copy, false, field);
 });

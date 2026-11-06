@@ -33,6 +33,19 @@
         // The Preview's copy of this app starts nothing: no history import, no page listeners, no shortcuts. Two copies
         // doing that at once fought over the same chats and froze both.
         if (isTrayMenu || isPreviewCopy()) return;
+        // Local chats idle for 14 days are deleted a minute after start-up, then once a day (plan storage-sqlite P7).
+        const sweepIdle = () => {
+            void import('../lib/chat/session/history.svelte')
+                .then(({ deleteIdleChats }) => deleteIdleChats())
+                .catch(() => {});
+            // Attachment files whose chats have been idle for 30 days (plan storage-sqlite P7).
+            const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+            void invoke('chat_attachments_sweep', {
+                cutoff: cutoff.toISOString(),
+            }).catch(() => {});
+        };
+        setTimeout(sweepIdle, 60_000);
+        setInterval(sweepIdle, 24 * 60 * 60 * 1000);
         let reloading = false;
         const stopAgents = () =>
             inTauri() && !isPreviewCopy()

@@ -37,7 +37,28 @@ export type Binding = {
     cursor: unknown;
 };
 
-/** A turn to append, as `ledger::NewMessage` reads it. The ledger keeps `blocks` as given. */
+/** Fields of a message that only describe the screen while it is written; the ledger keeps the rest. */
+const TRANSIENT_FIELDS = [
+    'credentialId',
+    'live',
+    'dispatching',
+    'dispatchingImages',
+    'notice',
+    'callOutput',
+    'startedAt',
+] as const;
+
+/**
+ * The message as the ledger keeps it: a copy of the whole message (blocks, cost, timings, tokens, …) minus the fields
+ * that only drive the live screen. A chat can then be drawn from the ledger alone (plan storage-sqlite P5.3).
+ */
+export function storedCopy(message: Message): Record<string, unknown> {
+    const copy: Record<string, unknown> = JSON.parse(JSON.stringify(message));
+    for (const field of TRANSIENT_FIELDS) delete copy[field];
+    return copy;
+}
+
+/** A turn to append, as `ledger::NewMessage` reads it. The ledger keeps `blocks` as given: the stored message. */
 export type NewMessage = {
     role: 'user' | 'assistant';
     agent: string | null;
@@ -88,6 +109,8 @@ export type DualWriter = {
     shadowRead(chatId: string, localCount: number): void;
     /** Sends every waiting turn now. */
     flush(): void;
+    /** Sends one more command to the ledger, in the same queue as the turns (plan storage-sqlite P5.4). Nothing when off. */
+    run(command: string, args: Record<string, unknown>, chatId?: string): void;
     /** Resolves when every command queued so far has run. */
     idle(): Promise<void>;
 };
@@ -228,7 +251,7 @@ export function createDualWriter(options: DualWriteOptions): DualWriter {
                     time: message.at ?? message.time,
                     native: null,
                     // Copied now: the message keeps changing on screen after the turn ends.
-                    blocks: JSON.parse(JSON.stringify(message.blocks)),
+                    blocks: storedCopy(message),
                     clientId: message.id,
                 });
             }
@@ -292,6 +315,11 @@ export function createDualWriter(options: DualWriteOptions): DualWriter {
         },
 
         flush,
+
+        run(command, args, chatId) {
+            if (!enabled()) return;
+            send(command, args, chatId);
+        },
 
         // Waits for the commands already sent; turns still in their debounce window stay where they are.
         async idle() {

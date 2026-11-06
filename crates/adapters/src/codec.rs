@@ -7,6 +7,8 @@
 //!   names, so changing a struct makes old cache entries unreadable. A cache is then deleted and rebuilt.
 //! - `JSON` (0): plain JSON, read only (the text columns written before the codec existed use it).
 
+use std::collections::HashMap;
+
 use serde::{de::DeserializeOwned, Serialize};
 
 pub const JSON: u8 = 0;
@@ -45,23 +47,112 @@ pub fn encode_cache<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
     ))
 }
 
-/// Reads any blob this module wrote, and plain JSON.
+/// Cache value that keeps field names (MessagePack) and is lz4-compressed (plan storage-sqlite P6.3). Used for parsed
+/// transcript pages: postcard cannot read tagged enums, and those are part of a transcript.
+pub const MSGPACK_LZ4: u8 = 11;
+
+/// A rebuildable cache value: MessagePack with field names, lz4-compressed.
+pub fn encode_cache_named<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    let packed = rmp_serde::to_vec_named(value).map_err(|error| error.to_string())?;
+    Ok(prefixed(
+        MSGPACK_LZ4,
+        lz4_flex::compress_prepend_size(&packed),
+    ))
+}
+
+/// Reads any blob this module wrote, and plain JSON. A blob written with a dictionary needs `Dicts::decode`.
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
-    let (&code, body) = bytes.split_first().ok_or("empty value")?;
-    match code {
-        JSON => serde_json::from_slice(body).map_err(|error| error.to_string()),
-        MSGPACK => rmp_serde::from_slice(body).map_err(|error| error.to_string()),
-        MSGPACK_ZSTD => {
-            let packed = zstd::decode_all(body).map_err(|error| error.to_string())?;
-            rmp_serde::from_slice(&packed).map_err(|error| error.to_string())
+    Dicts::default().decode(bytes)
+}
+
+/// The zstd dictionaries of one store (plan storage-sqlite P1.6). `latest` is the one new `keep` values are written with.
+#[derive(Clone, Default)]
+pub struct Dicts {
+    pub latest: Option<u16>,
+    pub bytes: HashMap<u16, Vec<u8>>,
+}
+
+/// Value of a dictionary-compressed blob: its code, the dictionary id (2 bytes, big endian), then zstd data.
+pub const DICT_ZSTD: u8 = 4;
+/// Size of the dictionaries trained for a store.
+pub const DICT_SIZE: usize = 64 * 1024;
+
+impl Dicts {
+    /// Like `encode_keep`, with the latest dictionary when there is one and the value is compressed anyway.
+    pub fn encode_keep<T: Serialize>(&self, value: &T) -> Result<Vec<u8>, String> {
+        let packed = rmp_serde::to_vec_named(value).map_err(|error| error.to_string())?;
+        if packed.len() < ZSTD_FROM {
+            return Ok(prefixed(MSGPACK, packed));
         }
-        POSTCARD_LZ4 => {
-            let packed =
-                lz4_flex::decompress_size_prepended(body).map_err(|error| error.to_string())?;
-            postcard::from_bytes(&packed).map_err(|error| error.to_string())
-        }
-        other => Err(format!("unknown value encoding {other}")),
+        let dict = self
+            .latest
+            .and_then(|id| self.bytes.get(&id).map(|bytes| (id, bytes)));
+        let Some((id, bytes)) = dict else {
+            let compressed =
+                zstd::bulk::compress(&packed, ZSTD_LEVEL).map_err(|error| error.to_string())?;
+            return Ok(prefixed(MSGPACK_ZSTD, compressed));
+        };
+        let mut compressor = zstd::bulk::Compressor::with_dictionary(ZSTD_LEVEL, bytes)
+            .map_err(|error| error.to_string())?;
+        let body = compressor
+            .compress(&packed)
+            .map_err(|error| error.to_string())?;
+        let mut out = Vec::with_capacity(body.len() + 3);
+        out.push(DICT_ZSTD);
+        out.extend_from_slice(&id.to_be_bytes());
+        out.extend_from_slice(&body);
+        Ok(out)
     }
+
+    /// Reads any blob this module wrote, dictionary-compressed ones included.
+    pub fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, String> {
+        let (&code, body) = bytes.split_first().ok_or("empty value")?;
+        match code {
+            JSON => serde_json::from_slice(body).map_err(|error| error.to_string()),
+            MSGPACK => rmp_serde::from_slice(body).map_err(|error| error.to_string()),
+            MSGPACK_ZSTD => {
+                let packed = zstd::decode_all(body).map_err(|error| error.to_string())?;
+                rmp_serde::from_slice(&packed).map_err(|error| error.to_string())
+            }
+            DICT_ZSTD => {
+                if body.len() < 2 {
+                    return Err("dictionary blob is cut short".to_string());
+                }
+                let id = u16::from_be_bytes([body[0], body[1]]);
+                let dict = self
+                    .bytes
+                    .get(&id)
+                    .ok_or_else(|| format!("dictionary {id} is missing"))?;
+                let mut decoder = zstd::stream::read::Decoder::with_dictionary(&body[2..], dict)
+                    .map_err(|error| error.to_string())?;
+                let mut packed = Vec::new();
+                std::io::Read::read_to_end(&mut decoder, &mut packed)
+                    .map_err(|error| error.to_string())?;
+                rmp_serde::from_slice(&packed).map_err(|error| error.to_string())
+            }
+            POSTCARD_LZ4 => {
+                let packed =
+                    lz4_flex::decompress_size_prepended(body).map_err(|error| error.to_string())?;
+                postcard::from_bytes(&packed).map_err(|error| error.to_string())
+            }
+            MSGPACK_LZ4 => {
+                let packed =
+                    lz4_flex::decompress_size_prepended(body).map_err(|error| error.to_string())?;
+                rmp_serde::from_slice(&packed).map_err(|error| error.to_string())
+            }
+            other => Err(format!("unknown value encoding {other}")),
+        }
+    }
+}
+
+/// The MessagePack bytes a value is compressed from: what a dictionary is trained on.
+pub fn sample_of<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    rmp_serde::to_vec_named(value).map_err(|error| error.to_string())
+}
+
+/// Trains a dictionary of `DICT_SIZE` bytes from samples (MessagePack bytes of small values).
+pub fn train(samples: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+    zstd::dict::from_samples(samples, DICT_SIZE).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

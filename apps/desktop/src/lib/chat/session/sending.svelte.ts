@@ -99,6 +99,7 @@ import {
     messagesById,
     otherTurns,
     releaseCli,
+    replaceOtherTurns,
     setMessages,
     transcripts,
 } from './history.svelte';
@@ -470,10 +471,12 @@ export function editMessage(
         ];
         setPref('chat.hidden', hidden);
         const others = otherTurns[session.id];
-        if (others)
+        if (others) {
             otherTurns[session.id] = others.filter(
                 (message) => !removed.includes(message),
             );
+            replaceOtherTurns(session.id);
+        }
         transcripts.delete(session.id);
     } else {
         localMessages[session.id] = list;

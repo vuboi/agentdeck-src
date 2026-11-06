@@ -184,6 +184,16 @@ pub struct ChatPage {
     pub has_more: bool,
 }
 
+/// One archived message of a chat: its id, time, tokens and the snapshot the archive kept.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveEntry {
+    pub msg_id: String,
+    pub at: String,
+    pub tokens: Option<i64>,
+    pub snapshot: Value,
+}
+
 /// What `append` did: `skipped` counts turns whose native message id was already in the ledger.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -192,9 +202,19 @@ pub struct AppendReport {
     pub skipped: usize,
 }
 
+/// The ledger needs this many messages before its message dictionary is trained (plan storage-sqlite P1.6).
+const DICT_MIN_ROWS: i64 = 2_000;
+/// How many stored rows are read to find the samples, and how many samples are used.
+const DICT_SAMPLE_ROWS: usize = 4_000;
+const DICT_SAMPLES: usize = 1_000;
+/// A sample is a message this size or smaller (bytes as stored).
+const DICT_SAMPLE_MAX: usize = 4 * 1024;
+
 /// The chat index. One connection, owned by the caller; the Tauri side keeps it behind a lock.
 pub struct ChatIndex {
     conn: Connection,
+    /// The zstd dictionaries of the messages (plan storage-sqlite P1.6). Loaded at open; trained once enough rows exist.
+    dicts: crate::codec::Dicts,
 }
 
 impl ChatIndex {
@@ -213,7 +233,48 @@ impl ChatIndex {
 
     fn with_connection(conn: Connection) -> Result<Self> {
         schema::prepare(&conn)?;
+        let mut index = Self {
+            conn,
+            dicts: crate::codec::Dicts::default(),
+        };
+        index.train_dict_if_due()?;
+        index.dicts = schema::load_dicts(&index.conn)?;
         tracing::debug!("chat index ready");
-        Ok(Self { conn })
+        Ok(index)
+    }
+
+    /// Trains the messages' dictionary once the ledger has `DICT_MIN_ROWS` messages and none exists yet (plan P1.6).
+    /// Samples are the small messages (under `DICT_SAMPLE_MAX` bytes, up to `DICT_SAMPLES`), read as they are stored.
+    fn train_dict_if_due(&mut self) -> Result<()> {
+        if !schema::dicts_due(&self.conn)? {
+            return Ok(());
+        }
+        let blobs: Vec<Vec<u8>> = {
+            let mut statement = self.conn.prepare(
+                "SELECT blocks FROM messages WHERE blocks IS NOT NULL ORDER BY chat_id, seq LIMIT ?1",
+            )?;
+            let rows = statement
+                .query_map(
+                    [i64::try_from(DICT_SAMPLE_ROWS).unwrap_or(i64::MAX)],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+        let mut samples = Vec::new();
+        for blob in &blobs {
+            if samples.len() >= DICT_SAMPLES || blob.len() >= DICT_SAMPLE_MAX {
+                continue;
+            }
+            let value: Value = crate::codec::decode(blob).map_err(ChatIndexError::Codec)?;
+            samples.push(crate::codec::sample_of(&value).map_err(ChatIndexError::Codec)?);
+        }
+        if samples.len() < DICT_SAMPLES / 2 {
+            return Ok(());
+        }
+        let bytes = crate::codec::train(&samples).map_err(ChatIndexError::Codec)?;
+        schema::save_dict(&self.conn, &bytes)?;
+        self.dicts = schema::load_dicts(&self.conn)?;
+        Ok(())
     }
 }
