@@ -61,7 +61,6 @@ pub struct ProviderQuota {
 #[serde(rename_all = "camelCase")]
 pub struct WorkBuddy {
     pub home: String,
-    pub chat_api: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
