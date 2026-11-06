@@ -458,6 +458,11 @@ pub(crate) async fn agent_send(
             "copilot",
             req.model.as_deref().unwrap_or("-"),
         );
+        let sink_app = app.clone();
+        let sink_session = session.clone();
+        let sink_turn = turn.clone();
+        let sink_message_id = message_id.clone();
+        let mut sink_harness = harness.clone();
         let run = crate::copilot::run_turn_with_sink(
             app.clone(),
             session.clone(),
@@ -466,15 +471,15 @@ pub(crate) async fn agent_send(
             req,
             token,
             move |event| {
-                observe_harness(&mut harness, &event);
+                observe_harness(&mut sink_harness, &event);
                 emit_with_harness(
-                    &app,
-                    &session,
-                    &turn,
-                    message_id.as_deref(),
+                    &sink_app,
+                    &sink_session,
+                    &sink_turn,
+                    sink_message_id.as_deref(),
                     event,
-                    Some(harness.state()),
-                    Some(harness.next_seq().saturating_sub(1)),
+                    Some(sink_harness.state()),
+                    Some(sink_harness.next_seq().saturating_sub(1)),
                 );
             },
         );
@@ -519,6 +524,11 @@ pub(crate) async fn agent_send(
             "opencode",
             req.model.as_deref().unwrap_or("-"),
         );
+        let sink_app = app.clone();
+        let sink_session = session.clone();
+        let sink_turn = turn.clone();
+        let sink_message_id = message_id.clone();
+        let mut sink_harness = harness.clone();
         let run = crate::opencode_serve::run_turn_with_sink(
             app.clone(),
             session.clone(),
@@ -527,15 +537,15 @@ pub(crate) async fn agent_send(
             req,
             token,
             move |event| {
-                observe_harness(&mut harness, &event);
+                observe_harness(&mut sink_harness, &event);
                 emit_with_harness(
-                    &app,
-                    &session,
-                    &turn,
-                    message_id.as_deref(),
+                    &sink_app,
+                    &sink_session,
+                    &sink_turn,
+                    sink_message_id.as_deref(),
                     event,
-                    Some(harness.state()),
-                    Some(harness.next_seq().saturating_sub(1)),
+                    Some(sink_harness.state()),
+                    Some(sink_harness.next_seq().saturating_sub(1)),
                 );
             },
         );

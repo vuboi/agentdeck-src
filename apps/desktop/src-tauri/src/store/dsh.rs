@@ -3,7 +3,7 @@
 //! DSH owns profile composition and package compatibility. AgentDeck only reads the profile manifest and delegates
 //! add/remove to the official `dsh plugin` command, so external DSH bundles keep their native format and lifecycle.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::Serialize;
