@@ -301,6 +301,37 @@ export function closeRunningActivity(sessionId: string) {
     }
 }
 
+/**
+ * A turn ended (done or error): its background tools and its request end with it, whether or not their own results
+ * arrived. Only the entries of this turn are closed; a newer turn of the chat keeps its own.
+ */
+export function closeTurnActivity(sessionId: string, turn: string) {
+    const key = runKey(sessionId, turn);
+    const request = requests.get(key);
+    if (request) {
+        requests.delete(key);
+        if (
+            request.item.status === 'running' ||
+            request.item.status === 'background'
+        ) {
+            request.item.status = 'closed';
+            request.item.endedAt = Date.now();
+            record(request.item);
+        }
+    }
+    for (const item of activity) {
+        if (
+            item.sessionId !== sessionId ||
+            item.turn !== turn ||
+            (item.status !== 'running' && item.status !== 'background')
+        )
+            continue;
+        item.status = 'closed';
+        item.endedAt = Date.now();
+        record(item);
+    }
+}
+
 /** Separates foreground/background reply lifetimes within the same visible chat. */
 const runKey = (sessionId: string, turn?: string) =>
     turn ? `${sessionId}:${turn}` : sessionId;

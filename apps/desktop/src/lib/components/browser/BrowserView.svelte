@@ -1420,10 +1420,10 @@
             role="toolbar"
             aria-label="Page tools"
         >
-            <div class="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+            <div class="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
                 <div
                     bind:clientWidth={captureToolsWidth}
-                    class="flex shrink-0 items-center gap-0.5"
+                    class="flex shrink-0 items-center gap-1"
                 >
                     <MenuButton
                         items={screenshotItems}
@@ -1484,7 +1484,7 @@
             <div
                 bind:clientWidth={menuToolsWidth}
                 data-page-menu
-                class="flex shrink-0 items-center gap-1"
+                class="flex shrink-0 items-center gap-2"
             >
                 {#if canExtend}
                     <BrowserExtensionsMenu

@@ -147,11 +147,6 @@ export function parseDelegateArgs(
         isolation !== 'worktree'
     )
         return { ok: false, error: 'isolation must be shared or worktree' };
-    if (isolation === 'worktree' && dependsOn.length > 0)
-        return {
-            ok: false,
-            error: "isolation worktree cannot be combined with depends_on: a worktree starts from its base branch and cannot see an earlier task's changes. Drop depends_on, or use isolation shared.",
-        };
     if (input.timeout_s !== undefined && input.timeout_s !== null) {
         const seconds =
             typeof input.timeout_s === 'number'
@@ -754,6 +749,8 @@ export type TaskRecord = {
     };
     /** Tasks that must finish successfully before this one can start. */
     dependsOn?: string[];
+    /** Teammates' messages sent while this worker had finished; they are read when it is continued. */
+    heldNotes?: string[];
     wait: boolean;
     label: string;
     /** The kind of agent (`claude`, `codex`, `antigravity`, `custom`) and the id the caller named it by (`list_agents`). */

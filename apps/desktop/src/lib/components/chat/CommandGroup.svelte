@@ -535,7 +535,7 @@
         <div class="min-h-0 overflow-hidden">
             {#if hasDetails && (view.open || built.open)}
                 <div
-                    class="mt-1.5 divide-y divide-border overflow-hidden rounded-xl border border-border"
+                    class="mt-1.5 divide-y divide-border overflow-hidden rounded-xl border border-border bg-card shadow-[var(--shadow-card)]"
                 >
                     {#if thoughts.length > 0}
                         <div class="px-3 py-2">

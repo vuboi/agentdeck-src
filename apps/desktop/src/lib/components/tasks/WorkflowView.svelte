@@ -192,7 +192,7 @@
             <div class="flex flex-col gap-3">
                 {#if import.meta.env.DEV && hasDemoRuns()}
                     <div
-                        class="flex items-center gap-2 rounded-lg border border-dashed border-border px-2.5 py-1.5 text-[0.6875rem] text-muted-foreground"
+                        class="flex items-center gap-2 rounded-lg border border-dashed border-border px-2.5 py-1.5 text-xs text-muted-foreground"
                     >
                         Demo runs are loaded: made up, not saved.<button
                             type="button"
@@ -206,7 +206,7 @@
                     {@const state = runState(run)}
                     {@const main = sessionOf(run.main)}
                     <section
-                        class="rounded-xl border border-border bg-background"
+                        class="rounded-xl border border-border bg-card shadow-[var(--shadow-card)]"
                         aria-label={firstLine(run.task)}
                     >
                         <button
@@ -239,7 +239,7 @@
                             >
                         </button>
                         <div
-                            class="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-border/60 px-2.5 py-1.5 text-[0.6875rem] text-muted-foreground tabular-nums"
+                            class="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-t border-border/60 px-2.5 py-1.5 text-xs text-muted-foreground tabular-nums"
                             aria-label="Run totals"
                         >
                             <span class="inline-flex items-center gap-1"
@@ -270,7 +270,7 @@
                         {#if isOpen(run, index)}
                             <div class="flex flex-col gap-2 p-2.5">
                                 <div
-                                    class="flex items-center gap-2 rounded-lg border border-border bg-card p-2.5"
+                                    class="flex items-center gap-2 rounded-lg border border-border bg-card p-2.5 shadow-[var(--shadow-card)]"
                                 >
                                     <AgentLogo
                                         agent={main?.agent ?? 'claude'}
@@ -320,7 +320,7 @@
                                                         : 'Failed'}
                                             <button
                                                 type="button"
-                                                class="flex min-w-0 flex-col gap-1.5 rounded-lg border border-border bg-card p-2.5 text-left hover:bg-accent/40"
+                                                class="flex min-w-0 flex-col gap-1.5 rounded-lg border border-border bg-card p-2.5 shadow-[var(--shadow-card)] text-left hover:bg-accent/40"
                                                 aria-label="Open {node.label} chat"
                                                 onclick={() =>
                                                     showSession(node.childId)}
@@ -348,7 +348,7 @@
                                                     ></span
                                                 >
                                                 <span
-                                                    class="truncate text-[0.6875rem] text-muted-foreground"
+                                                    class="truncate text-xs text-muted-foreground"
                                                     >{modelLabel(
                                                         node.model,
                                                     )}</span
@@ -391,7 +391,7 @@
                                     </div>
                                 {:else}
                                     <p
-                                        class="m-0 rounded-lg border border-dashed border-border px-3 py-2 text-[0.6875rem] text-muted-foreground"
+                                        class="m-0 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
                                     >
                                         The lead model has not delegated any
                                         work yet.
@@ -411,7 +411,7 @@
                                     reports received
                                 </div>
                                 {#if run.handbackStats?.last}<p
-                                        class="m-0 rounded-lg bg-muted/40 px-2.5 py-2 text-[0.6875rem] text-muted-foreground"
+                                        class="m-0 rounded-lg bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground"
                                     >
                                         Lead model: {run.handbackStats.last}
                                     </p>{/if}

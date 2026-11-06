@@ -171,7 +171,7 @@ pub fn prepare(conn: &Connection) -> Result<()> {
         conn.execute(
             "UPDATE chats
              SET last_user_at = CASE WHEN last_user_at = '' THEN updated_at ELSE last_user_at END,
-                 expires_at = CASE WHEN expires_at = '' THEN strftime('%Y-%m-%dT%H:%M:%fZ', CASE WHEN last_user_at = '' THEN updated_at ELSE last_user_at END, '+14 days') ELSE expires_at END
+                 expires_at = CASE WHEN expires_at = '' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', CASE WHEN last_user_at = '' THEN updated_at ELSE last_user_at END, '+14 days'), '') ELSE expires_at END
              WHERE expires_at = ''",
             [],
         )?;

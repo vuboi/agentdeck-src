@@ -3,6 +3,7 @@
     import { ZIcon } from '@shival99/z-ui-svelte';
     import AgentLogo from '../ui/AgentLogo.svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
+    import TaskStateIcon from './TaskStateIcon.svelte';
     import { ticker } from '../../app/platform/clock.svelte';
     import { showSession } from '../../app/ui/content-tabs.svelte';
     import { modelLabel } from '../../agents/models.svelte';
@@ -19,7 +20,10 @@
     } from '../../chat/sessions.svelte';
     import { shortCount, totalTokens, usd } from '../../chat/runs/usage';
     import type { Block } from '../../chat/mock';
-    import { finishWorktree } from '../../chat/session/worktree-actions';
+    import {
+        finishWorktree,
+        mergeWorkers,
+    } from '../../chat/session/worktree-actions';
 
     // Delegated agents attached to a message, with their live state and links to their chats.
     let { blocks }: { blocks: Extract<Block, { kind: 'delegate' }>[] } =
@@ -101,17 +105,18 @@
             note: block.note ?? node?.note ?? '',
         };
     }
-    const tone = {
-        queued: 'text-muted-foreground',
-        running: 'text-primary',
-        done: 'text-emerald-500',
-        failed: 'text-destructive',
-        skipped: 'text-muted-foreground',
+    // The state mark of a row, drawn as in the Sub agents panel.
+    const CARD_STATE = {
+        queued: 'queued',
+        running: 'running',
+        done: 'done',
+        failed: 'failed',
+        skipped: 'stopped',
     } as const;
 </script>
 
 <div
-    class="block-in w-full max-w-full overflow-hidden rounded-lg border border-border bg-background"
+    class="block-in w-full max-w-full overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow-card)]"
 >
     <div
         class="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-sm"
@@ -130,6 +135,16 @@
             {#if working}<PhyllotaxisLoader className="text-current" />{/if}
             {done}/{blocks.length} done
         </span>
+        {#if !working && blocks.filter( (block) => worktreeOf(block.childId) ).length > 1}
+            <button
+                type="button"
+                class="shrink-0 cursor-pointer px-2 text-xs text-muted-foreground outline-none transition-colors hover:text-primary"
+                title="Merge every worker's branch into the project, in the order they started, then remove their worktrees"
+                onclick={() =>
+                    mergeWorkers(blocks.map((block) => block.childId))}
+                >Merge all</button
+            >
+        {/if}
     </div>
     <div>
         {#each blocks as block, i (block.childId)}
@@ -153,6 +168,9 @@
                     aria-label="Details of {block.agent}"
                     onclick={() => (openRows[block.childId] = !expanded)}
                 >
+                    <span class="flex shrink-0">
+                        <TaskStateIcon state={CARD_STATE[settled]} />
+                    </span>
                     <AgentLogo
                         agent={block.agent}
                         model={block.model}
@@ -165,34 +183,23 @@
                             class="shrink-0 rounded-full bg-muted px-1.5 py-px font-mono text-[10px] text-muted-foreground"
                             title={wt.path}>{wt.branch}</span
                         >{/if}
-                    <span class="min-w-0 flex-1 truncate text-muted-foreground"
+                    <span
+                        class="min-w-0 flex-1 truncate text-xs text-muted-foreground"
                         >{lineOf(block.childId, settled) ||
                             modelLabel(block.model)}{#if info.time}
                             — {info.time}{/if}</span
                     >
-                    <span
-                        class="inline-flex shrink-0 items-center gap-1 {tone[
-                            settled
-                        ]}"
-                    >
-                        {#if settled === 'running'}
-                            <PhyllotaxisLoader className="text-current" />
-                        {:else if settled === 'done'}
-                            <ZIcon zType="lucideCircleCheck" class="size-3.5" />
-                        {:else if settled === 'queued'}
-                            <ZIcon zType="lucideClock" class="size-3.5" />
-                        {:else if settled === 'skipped'}
-                            <ZIcon zType="lucideMinusCircle" class="size-3.5" />
-                            <span class="max-w-32 truncate"
-                                >{block.note ?? 'Not run'}</span
-                            >
-                        {:else}
-                            <ZIcon zType="lucideCircleX" class="size-3.5" />
-                            <span class="max-w-32 truncate"
-                                >{block.note ?? 'Interrupted'}</span
-                            >
-                        {/if}
-                    </span>
+                    {#if settled === 'skipped'}
+                        <span
+                            class="max-w-32 shrink-0 truncate text-xs text-muted-foreground"
+                            >{block.note ?? 'Not run'}</span
+                        >
+                    {:else if settled === 'failed'}
+                        <span
+                            class="max-w-32 shrink-0 truncate text-xs text-destructive"
+                            >{block.note ?? 'Interrupted'}</span
+                        >
+                    {/if}
                     {#if needsApproval(block.childId)}<span
                             class="shrink-0 rounded-full bg-warning/15 px-1.5 py-px text-[10px] font-medium text-warning"
                             >Needs approval</span
@@ -248,7 +255,7 @@
             {#if expanded}
                 <div
                     transition:slide={{ duration: 300 }}
-                    class="flex flex-col gap-1.5 bg-muted/20 px-3 py-2 text-[0.6875rem]"
+                    class="flex flex-col gap-1.5 bg-muted/20 px-3 py-2 text-xs"
                 >
                     <div
                         class="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground tabular-nums"

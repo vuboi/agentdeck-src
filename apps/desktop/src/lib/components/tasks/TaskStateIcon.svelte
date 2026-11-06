@@ -1,14 +1,6 @@
 <script lang="ts">
-    import { MorphIcon, type IconInput } from 'morphicons/svelte';
-    import { svgToIcon } from 'morphicons/adapters';
-    import {
-        lucideBan,
-        lucideCheck,
-        lucideCircleDot,
-        lucideLoaderCircle,
-        lucideShieldAlert,
-        lucideX,
-    } from '@ng-icons/lucide';
+    import { ZIcon } from '@shival99/z-ui-svelte';
+    import type { ZIconName } from '@shival99/z-ui-svelte';
     import PhyllotaxisLoader from '../ui/PhyllotaxisLoader.svelte';
     import type { CardState } from '../../tasks/delegate-task';
 
@@ -49,16 +41,16 @@
         failed: 'text-red-400',
         stopped: 'text-gray-400',
     };
-    const STATUS_MORPH: Record<CardState, IconInput> = {
-        queued: svgToIcon(lucideCircleDot),
-        waiting: svgToIcon(lucideCircleDot),
-        running: svgToIcon(lucideLoaderCircle),
-        background: svgToIcon(lucideLoaderCircle),
-        paused: svgToIcon(lucideBan),
-        approval: svgToIcon(lucideShieldAlert),
-        done: svgToIcon(lucideCheck),
-        failed: svgToIcon(lucideX),
-        stopped: svgToIcon(lucideBan),
+    const STATUS_ICON_NAME: Record<CardState, ZIconName> = {
+        queued: 'phosphorDotOutlineBold',
+        waiting: 'phosphorDotOutlineBold',
+        running: 'phosphorCircleNotchBold',
+        background: 'phosphorCircleNotchBold',
+        paused: 'phosphorProhibitBold',
+        approval: 'phosphorShieldWarningBold',
+        done: 'phosphorCheckBold',
+        failed: 'phosphorXBold',
+        stopped: 'phosphorProhibitBold',
     };
 </script>
 
@@ -81,14 +73,7 @@
                 state
             ]} {STATUS_ICON[state]}"
         >
-            <MorphIcon
-                icon={STATUS_MORPH[state]}
-                size="10"
-                strokeWidth={2.3}
-                spring="snappy"
-                reducedMotion="user"
-                class="size-2.5"
-            />
+            <ZIcon zType={STATUS_ICON_NAME[state]} zSize="10" zStrokeWidth={2.4} />
         </span>
     </span>
 {/if}

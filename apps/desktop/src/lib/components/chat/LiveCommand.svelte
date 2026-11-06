@@ -79,7 +79,7 @@
 
 <!-- One box for the run: the command on top, a divider, then the output. The header stays put while the output scrolls. -->
 {#if command || item.output}
-  <div class="group/code relative rounded-md border border-border bg-background">
+  <div class="group/code relative rounded-md border border-border bg-card shadow-[var(--shadow-card)]">
     {#if command}
       <pre class="m-0 overflow-x-auto py-1.5 pr-7 pl-2 font-mono whitespace-pre-wrap break-all">{command}</pre>
     {/if}

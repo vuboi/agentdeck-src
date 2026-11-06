@@ -1,6 +1,5 @@
 <script lang="ts">
   import { ZButton, ZIcon, zTooltip } from '@shival99/z-ui-svelte';
-  import { lucideArrowUp, lucidePlay } from '@ng-icons/lucide';
 
   /** Composer and workers keep all three icons mounted at a fixed center during state changes. */
   let {
@@ -23,9 +22,9 @@
   {/if}
   <ZButton zWave={false} zIconOnly={true} zType="default" zSize="default" {type} class="relative size-7! shrink-0 rounded-full p-0" {disabled} aria-label={label} {onclick}>
     <span class="action-icons relative block size-3.5 shrink-0" aria-hidden="true">
-      <span class="action-icon grid place-items-center" class:visible={action === 'send'}><ZIcon zSvg={lucideArrowUp} zSize="14" /></span>
+      <span class="action-icon grid place-items-center" class:visible={action === 'send'}><ZIcon zType="phosphorArrowUpBold" zSize="14" /></span>
       <svg class="action-icon" class:visible={action === 'stop'} viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" fill="currentColor" /></svg>
-      <span class="action-icon grid place-items-center" class:visible={action === 'resume'}><ZIcon zSvg={lucidePlay} zSize="14" class="[&>svg]:fill-current" /></span>
+      <span class="action-icon grid place-items-center" class:visible={action === 'resume'}><ZIcon zType="phosphorPlayBold" zSize="14" class="[&>svg]:fill-current" /></span>
     </span>
   </ZButton>
 </span>

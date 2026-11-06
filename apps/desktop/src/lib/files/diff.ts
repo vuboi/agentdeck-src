@@ -24,7 +24,26 @@ export function parseDiff(diff: string): DiffRow[] {
   return rows;
 }
 
-export const countsOf = (rows: DiffRow[]) => ({ added: rows.filter((row) => row.kind === 'add').length, removed: rows.filter((row) => row.kind === 'del').length });
+export type DiffHunk = { header: string; rows: DiffRow[]; added: number; removed: number };
+
+/** The rows of a diff cut at each hunk heading. Rows before the first heading form a hunk with no heading. */
+export function groupHunks(rows: DiffRow[]): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let current: DiffHunk | undefined;
+  for (const row of rows) {
+    if (row.kind === 'hunk' || !current) {
+      current = { header: row.kind === 'hunk' ? row.text : '', rows: [], added: 0, removed: 0 };
+      hunks.push(current);
+      if (row.kind === 'hunk') continue;
+    }
+    current.rows.push(row);
+    if (row.kind === 'add') current.added++;
+    else if (row.kind === 'del') current.removed++;
+  }
+  return hunks;
+}
+
+export const countsOf =(rows: DiffRow[]) => ({ added: rows.filter((row) => row.kind === 'add').length, removed: rows.filter((row) => row.kind === 'del').length });
 
 /**
  * What git says about the lines of the file as it is now, as VS Code's gutter shows it: lines only added (green),

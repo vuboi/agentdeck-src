@@ -13,7 +13,6 @@
         zTooltip,
     } from '@shival99/z-ui-svelte';
     import type { ZIconName } from '@shival99/z-ui-svelte';
-    import { lucidePlay } from '@ng-icons/lucide';
     import { cubicOut } from 'svelte/easing';
     import { flip } from 'svelte/animate';
     import { Tween } from 'svelte/motion';
@@ -157,11 +156,11 @@
 </script>
 
 <section
-    class="min-w-0 overflow-hidden text-xs {embedded
+    class="min-w-0 overflow-hidden text-sm {embedded
         ? ''
         : layer
           ? '-mb-4 mx-2 rounded-t-2xl border border-b-0 border-border bg-card pb-4 shadow-md'
-          : 'mb-2 rounded-lg border border-border/70'}"
+          : 'mb-2 rounded-lg border border-border/70 bg-card shadow-[var(--shadow-card)]'}"
     aria-label="Chat tasks"
 >
     <div class="flex h-9 w-full min-w-0 items-center gap-1 pr-2">
@@ -412,7 +411,7 @@
                                 >
                                     {#if item.canResume}
                                         <ZIcon
-                                            zSvg={lucidePlay}
+                                            zType="phosphorPlayBold"
                                             zSize="12"
                                             class="[&>svg]:fill-current"
                                         />

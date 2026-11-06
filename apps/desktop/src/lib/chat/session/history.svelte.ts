@@ -78,7 +78,13 @@ import {
 } from './events.svelte';
 import { backlog } from './delegate-task.svelte';
 import { mergeTranscripts } from './transcript-merge';
-import { chatMetaOf, ledger, ledgerOn, readLedgerChat } from '../index/ledger';
+import {
+    chatMetaOf,
+    ledger,
+    ledgerOn,
+    ledgerReadOn,
+    readLedgerChat,
+} from '../index/ledger';
 import { responseText, tailStart } from './held';
 
 // ---------- real history (Claude Code and Codex, read-only) ----------
@@ -1378,10 +1384,11 @@ async function readTranscript(session: SessionItem | undefined) {
         // A read of the chat before may still be loading: its result is dropped, so it can no longer clear the flag.
         chat.loading = false;
         // A list the chat already holds (a turn ran in it while it was not open) is the one to show.
-        // The ledger is read (plan storage-sqlite P5.3) when IndexedDB has no copy of the chat, or when the read flag is on
-        // and the copy has turns. IndexedDB is still written either way.
+        // SQLite is the primary source after migration. IndexedDB remains the rollback/cache source when SQLite has no
+        // row or the explicit read rollback flag is off.
         const copy = localMessages[session.id];
-        const wantLedger = ledgerOn() && !mockIds.has(session.id);
+        const wantLedger =
+            ledgerReadOn() && !mockIds.has(session.id) && inTauri();
         const fromLedger = wantLedger
             ? await readLedgerChat(session.id).catch(() => null)
             : null;

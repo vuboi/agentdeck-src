@@ -28,12 +28,12 @@ export const ledgerOn = () => flagOn;
 
 export const LEDGER_READ_FLAG = 'chat_index.read_ledger';
 
-// Off by default: an open chat is drawn from IndexedDB until the ledger read is checked in the app (plan P5.3).
+// On by default: SQLite is the primary chat source after migration; an explicit false keeps the rollback path.
 let readOn = true;
 if (inTauri()) {
     void getPref<boolean>(LEDGER_READ_FLAG).then(
         (on) => {
-            readOn = on === true;
+            readOn = on !== false;
         },
         () => {},
     );

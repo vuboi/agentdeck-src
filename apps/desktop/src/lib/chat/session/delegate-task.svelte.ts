@@ -59,7 +59,13 @@ import {
     modelLabel,
 } from '../../agents/models.svelte';
 import { logFlow } from '../../tasks/flow-log';
-import { WORKTREE_RULE, worktreeSlug } from '../../tasks/worktree';
+import {
+    WORKTREE_RULE,
+    mergeGate,
+    mergeRootOf,
+    worktreeSlug,
+} from '../../tasks/worktree';
+import type { WorktreeStatus } from './worktree-actions';
 import { type PlanState, planTask } from '../../tasks/delegate-plan';
 import { type WorkerCall, workerArgsOf } from '../../tasks/propose';
 import { inTauri } from '../../app/platform/history';
@@ -158,6 +164,9 @@ type TaskRun = {
     deadline: number;
     started?: boolean;
     start?: () => void;
+    /** A worktree made once the dependencies finished (see prepareDependentWorktree). */
+    worktreeMade?: boolean;
+    worktreeMaking?: boolean;
     slotRequest?: Promise<boolean>;
     release?: Promise<void>;
     startedReplySent?: boolean;
@@ -490,6 +499,50 @@ async function makeWorkerWorktree(
     });
 }
 
+/**
+ * The worktree of a worker that depends on other workers: made once they finish, from a base that already holds their
+ * committed work. Each dependency's branch is merged into the base first; one with uncommitted files stops the worker.
+ */
+async function prepareDependentWorktree(
+    caller: SessionItem,
+    dependencyIds: string[],
+    task: string,
+): Promise<WorktreeInfo> {
+    const root = sessionCwd(caller);
+    if (!root) throw new Error('the chat has no project folder');
+    const base = caller.worktree?.branch ?? caller.gitBranch ?? 'HEAD';
+    const target = mergeRootOf(root, caller.worktree, base);
+    for (const dependencyId of dependencyIds) {
+        const dependency = delegateTasks[dependencyId];
+        const wt = dependency
+            ? workspace.sessions.find((item) => item.id === dependency.childId)
+                  ?.worktree
+            : undefined;
+        // A dependency that ran in the shared checkout has its changes there already.
+        if (!dependency || !wt) continue;
+        const status = await invoke<WorktreeStatus>('worktree_status', {
+            path: wt.path,
+            base: wt.base,
+        });
+        const gate = mergeGate(status);
+        if (!gate.ok && gate.canCommit)
+            throw new Error(
+                `${dependency.label} left uncommitted changes in its worktree; it must commit them before this task can start`,
+            );
+        if (gate.ok)
+            await invoke('worktree_merge', {
+                root: target,
+                branch: wt.branch,
+                base,
+            });
+    }
+    return invoke<WorktreeInfo>('worktree_create', {
+        root,
+        slug: worktreeSlug(task),
+        base,
+    });
+}
+
 /** Calls whose worktree is still being made, by their chat. A stop of that chat cancels the worker (see endWaitingTasks). */
 const preparingWorktrees = new SvelteSet<{
     caller: string;
@@ -569,7 +622,7 @@ function startTask(
     const { task, wait, timeoutS, worktree: isolated } = plan.args;
     // The worktree is made only once the call is known to be valid, so a refused call leaves no folder or branch behind.
     // The call then runs again with the worktree in hand (prepared), and discards it if it still fails.
-    if (caller && isolated && !prepared) {
+    if (caller && isolated && !prepared && plan.dependencies.length === 0) {
         // While the worktree is made the call is not a task yet: a stop of its chat in the meantime cancels it (endWaitingTasks).
         const pending = { caller: caller.id, cancelled: false };
         preparingWorktrees.add(pending);
@@ -602,6 +655,10 @@ function startTask(
             true,
         );
     const { row, routed, agent, model, dependencies } = plan;
+    // A worker with depends_on gets its worktree when its dependencies have finished (run.start below).
+    const deferWorktree = Boolean(
+        caller && isolated && dependencies.length > 0,
+    );
     // `continue`: the chat the plan reuses (found by task id or chat id), or replaced by a new one (`replace`).
     const old = plan.reuse
         ? {
@@ -642,6 +699,16 @@ function startTask(
             report,
             reason,
         );
+    }
+    // Teammates' notes held while this worker had finished come first, when it is continued.
+    if (reuse) {
+        const held = Object.values(delegateTasks).filter(
+            (item) =>
+                item.childId === reuse.session.id && item.heldNotes?.length,
+        );
+        const notes = held.flatMap((item) => item.heldNotes ?? []);
+        for (const item of held) delete item.heldNotes;
+        if (notes.length) workerTask = [...notes, workerTask].join('\n\n');
     }
     // Check every byte of the seed as well as the new request before selecting a restricted provider.
     const leak = row.restricted ? privateContentIn(workerTask) : null;
@@ -736,6 +803,8 @@ function startTask(
         ...(routed?.effort ? { effort: routed.effort as Effort } : {}),
     };
     bindTasks(caller.id);
+    registeredTasks.get(call.callId)?.(taskId);
+    registeredTasks.delete(call.callId);
 
     // The worker's end: its report, or why there is none. A worker stopped on an approval card waits for the user's yes.
     const settle = (
@@ -824,6 +893,42 @@ function startTask(
             persistLocal();
             return;
         }
+        if (deferWorktree && caller && !run.worktreeMade) {
+            if (!run.worktreeMaking) {
+                run.worktreeMaking = true;
+                void prepareDependentWorktree(
+                    caller,
+                    record.dependsOn ?? [],
+                    task,
+                ).then(
+                    (info) => {
+                        run.worktreeMaking = false;
+                        if (!taskRuns.has(taskId)) {
+                            discardWorktree(sessionCwd(caller), info);
+                            return;
+                        }
+                        const session = workspace.sessions.find(
+                            (item) => item.id === id,
+                        );
+                        if (session) session.worktree = info;
+                        run.worktreeMade = true;
+                        persistLocal();
+                        run.start?.();
+                    },
+                    (error: unknown) => {
+                        run.worktreeMaking = false;
+                        if (taskRuns.has(taskId))
+                            finishTask(
+                                taskId,
+                                'failed',
+                                `Could not prepare the worktree: ${String(error)}`,
+                                '',
+                            );
+                    },
+                );
+            }
+            return;
+        }
         delete record.waitingFor;
         record.state = 'running';
         armTaskClock(taskId);
@@ -882,6 +987,9 @@ function startTask(
     };
     requestTaskSlot(taskId);
 }
+
+/** A split's worker call waiting for its task id, by call id: a later task of the split may depend on it. */
+const registeredTasks = new Map<string, (taskId: string) => void>();
 
 /** The time limit of a task and of its blocking call (if any) runs only while the worker runs. */
 function armTaskClock(taskId: string): void {
@@ -1284,16 +1392,24 @@ function teamMessage(
     }
     if (target.id === sender.id)
         return answer('A worker cannot message itself.', true);
-    if (!taskRuns.has(target.id))
-        return answer(
-            `${target.label} is no longer running, so it cannot read the message. Use task_status or delegate_task continue=${target.id}.`,
-            true,
-        );
     const prompt = `[AgentDeck coordination]
 Message from teammate ${sender.label} (task ${sender.id}):
 ${message}
 
 Read this before your next step. Keep working on your own task. If it changes your work or you need something from them, answer with team_message to: ${sender.id}.`;
+    if (!taskRuns.has(target.id)) {
+        // A finished teammate is not woken up: the note waits on its task and is read when it is continued.
+        target.heldNotes = [...(target.heldNotes ?? []), prompt];
+        persistLocal();
+        logFlow(
+            sender.childId,
+            'team message held',
+            `task=${sender.id} -> task=${target.id}`,
+        );
+        return answer(
+            `Message kept for ${target.label}: it is read when that worker is continued (delegate_task continue=${target.id}).`,
+        );
+    }
     queueCoordinationPrompt(target.childId, {
         prompt,
         silent: NO_HANDOUT,
@@ -1860,16 +1976,30 @@ export function startProposalWorker(
     callerId: string,
     call: WorkerCall,
     answer: (text: string, isError?: boolean) => void,
-) {
-    startTask(
-        {
-            callId: `split-${crypto.randomUUID()}`,
-            tool: 'delegate_task',
-            caller: callerId,
-            args: workerArgsOf(call),
-        },
-        answer,
-    );
+    dependsOn: string[] = [],
+): Promise<string | undefined> {
+    const callId = `split-${crypto.randomUUID()}`;
+    return new Promise((resolve) => {
+        registeredTasks.set(callId, resolve);
+        startTask(
+            {
+                callId,
+                tool: 'delegate_task',
+                caller: callerId,
+                args: {
+                    ...workerArgsOf(call),
+                    ...(dependsOn.length ? { depends_on: dependsOn } : {}),
+                },
+            },
+            (text, isError) => {
+                if (isError) {
+                    registeredTasks.delete(callId);
+                    resolve(undefined);
+                }
+                answer(text, isError);
+            },
+        );
+    });
 }
 
 /** Auto reviews started per user request (`chat|message id`), this run of the app. */

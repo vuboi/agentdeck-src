@@ -97,6 +97,70 @@ export async function finishWorktree(childId: string, merge: boolean) {
     }
 }
 
+/**
+ * Merges the worktrees of one split's workers in the order they were started, after one question. A worker with
+ * uncommitted files, or a conflict, stops the run and names the worker; a worker with no commit is skipped. Each merged
+ * worktree is removed like finishWorktree does.
+ */
+export async function mergeWorkers(childIds: string[]) {
+    const workers = childIds
+        .map((id) => workspace.sessions.find((item) => item.id === id))
+        .filter((item) => item?.worktree);
+    const first = workers[0];
+    const parent = first
+        ? workspace.sessions.find((item) => item.id === first.parentId)
+        : undefined;
+    const projectPath = first ? projectOf(first)?.path : undefined;
+    if (!first || !parent || !projectPath || workers.length === 0) return;
+    if (
+        !confirm(
+            `Merge ${workers.length} worker branch(es) into the project, in order, then remove their worktrees?`,
+        )
+    )
+        return;
+    for (const worker of workers) {
+        const wt = worker?.worktree;
+        if (!worker || !wt) continue;
+        try {
+            const status = await invoke<WorktreeStatus>('worktree_status', {
+                path: wt.path,
+                base: wt.base,
+            });
+            const gate = mergeGate(status);
+            if (!gate.ok && !gate.canCommit) continue;
+            if (!gate.ok) {
+                toast.error(
+                    `${worker.title}: ${gate.message}. Commit it in its worktree, then merge again.`,
+                );
+                return;
+            }
+            await invoke('worktree_merge', {
+                root: mergeRootOf(projectPath, parent.worktree, wt.base),
+                branch: wt.branch,
+                base: wt.base,
+            });
+        } catch (error) {
+            toast.error(`${worker.title}: ${String(error)}`);
+            return;
+        }
+        await removeWorkerWorktree(
+            {
+                childId: worker.id,
+                root: mergeRootOf(projectPath, parent.worktree, wt.base),
+                worktree: wt,
+                force: false,
+            },
+            {
+                stopTurn: (id) => stopTurn(id),
+                stopProcesses: (id) =>
+                    invoke('stop_chat_processes', { chatId: id }),
+                removeWorktree: (args) => invoke('worktree_remove', args),
+            },
+        );
+        worker.worktree = undefined;
+    }
+}
+
 /** Brings the base branch into a chat's worktree. A conflict aborts the merge: the files are named, nothing is resolved. */
 export async function syncWorktree(sessionId: string) {
     const wt = workspace.sessions.find(

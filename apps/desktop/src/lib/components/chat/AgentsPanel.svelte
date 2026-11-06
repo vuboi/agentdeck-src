@@ -23,6 +23,7 @@
     import { stopWork } from '../../chat/session/work.svelte';
     import { notifyRun } from '../../chat/runs/notices.svelte';
     import { workerUpdatedNotice } from '../../chat/runs/notices';
+    import { sendMessage } from '../../chat/session/sending.svelte';
     import type { CardState } from '../../tasks/delegate-task';
 
     // Sub agents of the open chat beside it: a list, one agent's chat, or a grid of up to four chats.
@@ -133,7 +134,20 @@
 
     function open(id: string) {
         agentView.selected = id;
+        agentView.back = mode === 'grid' ? 'grid' : 'list';
         agentView.mode = 'single';
+    }
+
+    // The grid cells' own boxes: a message to a worker's chat goes straight there, as the side view's box does.
+    const drafts = $state<Record<string, string>>({});
+    function ask(agent: ChildAgent) {
+        if (agent.source.type !== 'session') return;
+        const sessionId = agent.source.sessionId;
+        const text = (drafts[sessionId] ?? '').trim();
+        if (!text) return;
+        sendMessage(text, [], [], [], 'queue', [], sessionId);
+        drafts[sessionId] = '';
+        tellParent(agent);
     }
 
     // Clears the panel of the finished agents; the running ones stay.
@@ -206,7 +220,7 @@
                 class={ICON_BUTTON}
                 aria-label="Back to sub agents"
                 title="Back to sub agents"
-                onclick={() => (agentView.mode = 'list')}
+                onclick={() => (agentView.mode = agentView.back)}
             >
                 <ZIcon
                     zType={'lucideArrowLeft' as ZIconName}
@@ -312,7 +326,7 @@
             >
                 {#each gridAgents as agent (agent.id)}
                     <div
-                        class="flex min-h-0 flex-col overflow-hidden rounded-md border border-border"
+                        class="flex min-h-0 flex-col overflow-hidden rounded-md border border-border bg-card shadow-[var(--shadow-card)]"
                     >
                         <div
                             class="flex h-8 shrink-0 items-center gap-1 border-b border-border px-2"
@@ -341,6 +355,46 @@
                             </button>
                         </div>
                         <SideChat {agent} />
+                        {#if agent.source.type === 'session'}
+                            <form
+                                class="shrink-0 p-2"
+                                onsubmit={(event) => {
+                                    event.preventDefault();
+                                    ask(agent);
+                                }}
+                            >
+                                <div
+                                    class="flex items-center gap-1 rounded-md border border-border bg-background pl-2 pr-1 focus-within:border-primary"
+                                >
+                                    <input
+                                        class="min-w-0 flex-1 bg-transparent py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                                        placeholder="Message {agent.title}"
+                                        aria-label="Message {agent.title}"
+                                        value={drafts[agent.source.sessionId] ??
+                                            ''}
+                                        oninput={(event) => {
+                                            if (agent.source.type === 'session')
+                                                drafts[agent.source.sessionId] =
+                                                    event.currentTarget.value;
+                                        }}
+                                    />
+                                    <button
+                                        type="submit"
+                                        class={ICON_BUTTON}
+                                        aria-label="Send"
+                                        title="Send"
+                                        disabled={!drafts[
+                                            agent.source.sessionId
+                                        ]?.trim()}
+                                    >
+                                        <ZIcon
+                                            zType={'lucideArrowUp' as ZIconName}
+                                            class="size-3.5"
+                                        />
+                                    </button>
+                                </div>
+                            </form>
+                        {/if}
                     </div>
                 {/each}
             </div>

@@ -252,7 +252,6 @@ export function createDualWriter(options: DualWriteOptions): DualWriter {
             );
             if (!fresh.length) return;
             ensureSaved(chatForTurn, state);
-            if (user) send('chat_save', { chat: { ...chatForTurn } }, chat.id);
             for (const message of prepare(fresh)) {
                 const agent = message.agent ?? null;
                 state.pending.push({

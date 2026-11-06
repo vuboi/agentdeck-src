@@ -19,6 +19,8 @@ export const agentView = $state({
     mode: 'grid' as AgentViewMode,
     /** The agent the single view shows. */
     selected: null as string | null,
+    /** The view the single view's back button returns to: the grid when the agent was opened from it. */
+    back: 'list' as 'list' | 'grid',
     /** The agents the grid shows, in the order they were added. */
     picked: [] as string[],
     /** Finished agents the panel was cleared of. They come back only if they run again. */
@@ -34,6 +36,7 @@ export function childAgents(parentId: string): ChildAgent[] {
 
 /** Opens one agent in the side view, beside the chat. */
 export function openAgentView(id: string) {
+    agentView.back = 'list';
     agentView.mode = 'single';
     agentView.selected = id;
     dockTool(AGENTS_TOOL);

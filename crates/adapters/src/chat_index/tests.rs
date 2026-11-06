@@ -137,6 +137,21 @@ fn unique_index_rejects_a_second_owner_even_without_the_check() {
 }
 
 #[test]
+fn a_user_turn_with_a_clock_time_keeps_the_chat_lifetime() {
+    let mut index = ChatIndex::open_in_memory().expect("open");
+    index.save_chat(&chat("a")).expect("save");
+    // A turn with no ISO time falls back to the clock text on screen, which SQLite cannot read as a date.
+    let mut clock_only = turn("hi", None, None);
+    clock_only.time = "10:42 SA".to_string();
+    index
+        .append("a", &[clock_only])
+        .expect("the append must not fail on the clock text");
+    assert_eq!(texts(&page_of(&index, "a")), vec!["hi"]);
+    let stored = index.chat("a").expect("read").expect("chat");
+    assert_eq!(stored.expires_at, "2026-11-15T09:00:00Z");
+}
+
+#[test]
 fn repeated_native_message_is_stored_once() {
     let mut index = ChatIndex::open_in_memory().expect("open");
     index.save_chat(&chat("a")).expect("save");
@@ -678,4 +693,29 @@ fn messages_are_dictionary_compressed_once_enough_rows_exist() {
         )
         .expect("blob");
     assert_eq!(stored[0], crate::codec::DICT_ZSTD);
+}
+
+#[test]
+fn version_seven_migration_keeps_an_undated_chat_without_expiry() {
+    let mut index = ChatIndex::open_in_memory().expect("open");
+    // A version 6 ledger with a chat that has no time at all: the migration must not write NULL to `expires_at`.
+    index
+        .conn
+        .execute_batch(
+            "INSERT INTO chats (id, title, created_at, updated_at) VALUES ('undated', 'old', '', '');
+             UPDATE chats SET expires_at = '';
+             UPDATE meta SET value = '6' WHERE key = 'schema_version';",
+        )
+        .expect("version six rows");
+    super::schema::prepare(&index.conn).expect("migrate to version seven");
+    let (version, expires): (String, String) = index
+        .conn
+        .query_row(
+            "SELECT (SELECT value FROM meta WHERE key = 'schema_version'), expires_at FROM chats WHERE id = 'undated'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("row");
+    assert_eq!(version, "7");
+    assert_eq!(expires, "");
 }

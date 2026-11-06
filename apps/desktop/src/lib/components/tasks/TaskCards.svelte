@@ -98,7 +98,7 @@
 </script>
 
 <div
-    class="block-in w-full max-w-full overflow-hidden rounded-xl border border-border bg-background text-sm shadow-xs"
+    class="block-in w-full max-w-full overflow-hidden rounded-xl border border-border bg-card text-sm shadow-[var(--shadow-card)]"
 >
     <div
         class="flex h-9 min-w-0 items-center gap-2 border-b border-border/70 bg-muted/30 px-3 text-xs"
@@ -276,7 +276,7 @@
                     </button>
                     {#if expanded}<div
                             transition:slide={{ duration: 240 }}
-                            class="mt-2 flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-xs"
+                            class="mt-2 flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm"
                         >
                             {#if card.task}<div>
                                     <div

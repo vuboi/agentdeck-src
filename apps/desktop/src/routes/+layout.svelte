@@ -5,6 +5,7 @@
 
     import { onMount } from 'svelte';
     import { loadAgentStatus } from '../lib/agents/agent-status.svelte';
+    import { warmIcons } from '../lib/app/platform/icons';
     import { invoke } from '@tauri-apps/api/core';
     import {
         fakeData,
@@ -21,6 +22,7 @@
     // In the desktop app, replace the mock workspace with the Claude Code / Codex history on this machine.
     onMount(() => {
         void loadAgentStatus();
+        warmIcons();
         // The start-up splash (app.html) goes once the open chat is read again, or after a few seconds at most.
         const splash = document.getElementById('boot-splash');
         if (splash)
@@ -98,9 +100,6 @@
         };
         document.addEventListener('pointerdown', scrollArrow, true);
 
-        void import('../lib/app/platform/icons').then(({ warmIcons }) =>
-            warmIcons(),
-        );
         // The chat index migration reads IndexedDB once (never writes it) and runs before the history list is built.
         if (!fakeData)
             void import('../lib/chat/session/chat-index')

@@ -187,26 +187,60 @@ export function buildTree(
         return [...list.slice(0, visibleCount).map(row), more];
     };
 
-    const projectNode = (project: Project): ZTreeNode<TreeData> => ({
-        id: `project:${project.id}`,
-        label: project.name,
-        icon: 'lucideFolder',
-        data: { kind: 'project', path: project.path },
-        children: limited(
-            `project:${project.id}`,
-            ordered(
-                workspace.sessions.filter(
-                    (item) =>
-                        item.projectId === project.id &&
-                        !item.parentId &&
-                        !isPinnedSession(item.id) &&
-                        shown(item),
-                ),
+    // Today, Yesterday, Previous 7 days, Older: like the chat lists of Claude and ChatGPT.
+    const day = 86_400_000;
+    const midnight = new SvelteDate().setHours(0, 0, 0, 0);
+    const bucket = (item: SessionItem) => {
+        const time = item.updatedAt ? Date.parse(item.updatedAt) : Date.now();
+        return time >= midnight
+            ? 'today'
+            : time >= midnight - day
+              ? 'yesterday'
+              : time >= midnight - 7 * day
+                ? 'week'
+                : 'older';
+    };
+    const projectNode = (project: Project): ZTreeNode<TreeData> => {
+        const key = `project:${project.id}`;
+        const chats = ordered(
+            workspace.sessions.filter(
+                (item) =>
+                    item.projectId === project.id &&
+                    !item.parentId &&
+                    !isPinnedSession(item.id) &&
+                    shown(item),
             ),
-            LIST_LIMIT,
-            (item) => sessionNode(item),
-        ),
-    });
+        );
+        // Today and Yesterday always show, even empty; Older shows only when it has chats.
+        const dayGroup = (name: 'today' | 'yesterday' | 'older') =>
+            limited(
+                `${key}:${name}`,
+                chats.filter((item) =>
+                    name === 'older'
+                        ? bucket(item) !== 'today' &&
+                          bucket(item) !== 'yesterday'
+                        : bucket(item) === name,
+                ),
+                LIST_LIMIT,
+                (item) => sessionNode(item),
+            );
+        return {
+            id: key,
+            label: project.name,
+            icon: 'lucideFolder',
+            data: { kind: 'project', path: project.path },
+            children: [
+                ...section(`${key}:today`, 'Today', dayGroup('today'), true),
+                ...section(
+                    `${key}:yesterday`,
+                    'Yesterday',
+                    dayGroup('yesterday'),
+                    true,
+                ),
+                ...section(`${key}:older`, 'Older', dayGroup('older')),
+            ],
+        };
+    };
     // A chat listed right under a heading: one line, no branch lines. `key` keeps ids unique when a chat is listed twice.
     const flatNode = (
         session: SessionItem,
@@ -266,21 +300,6 @@ export function buildTree(
     );
     const unpinned = chats.filter((item) => !isPinnedSession(item.id));
     if (view.groupBy === 'date') {
-        // Today, Yesterday, Previous 7 days, Older: like the chat lists of Claude and ChatGPT.
-        const day = 86_400_000;
-        const midnight = new SvelteDate().setHours(0, 0, 0, 0);
-        const bucket = (item: SessionItem) => {
-            const time = item.updatedAt
-                ? Date.parse(item.updatedAt)
-                : Date.now();
-            return time >= midnight
-                ? 'today'
-                : time >= midnight - day
-                  ? 'yesterday'
-                  : time >= midnight - 7 * day
-                    ? 'week'
-                    : 'older';
-        };
         const labels = {
             today: 'Today',
             yesterday: 'Yesterday',

@@ -68,6 +68,7 @@ import {
     pendingInput,
     pendingNew,
     replies,
+    runReplies,
     sendNextQueued,
     startTurn,
 } from './run.svelte';
@@ -251,7 +252,13 @@ export function sendMessage(
                 live?.blocks.at(-1)?.kind === 'response' &&
                 (live.blocks.at(-1) as { streaming?: boolean }).streaming,
             ),
-            backgroundWorkOpen: hasOpenBackgroundWork(activity, session.id),
+            // Only work of a turn that still runs counts: an entry whose turn ended is not waited for.
+            backgroundWorkOpen: hasOpenBackgroundWork(
+                activity.filter(
+                    (item) => !item.turn || runReplies.has(item.turn),
+                ),
+                session.id,
+            ),
             needsUserInput: needsUserInput(session.id),
         }) &&
         !queued[session.id]?.length

@@ -175,7 +175,11 @@ impl ChatIndex {
         }
         if let Some(time) = last_user_at {
             tx.execute(
-                "UPDATE chats SET last_user_at = ?1, expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', ?1, '+14 days') WHERE id = ?2",
+                // A time SQLite cannot read (a clock text) leaves the chat's lifetime as it was, rather than NULL.
+                "UPDATE chats SET
+                    last_user_at = CASE WHEN strftime('%Y-%m-%dT%H:%M:%fZ', ?1) IS NULL THEN last_user_at ELSE ?1 END,
+                    expires_at = COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', ?1, '+14 days'), expires_at)
+                 WHERE id = ?2",
                 params![time, chat_id],
             )?;
         }

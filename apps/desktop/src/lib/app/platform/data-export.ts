@@ -9,8 +9,8 @@ export const EXPORT_VERSION = 1;
 /** `accounts` holds the automatic switching of each connector and the saved usage of its accounts (emails, no tokens). */
 export const SETTINGS_STORES = ['prefs', 'permissions', 'layout', 'providers', 'accounts'] as const;
 export const HISTORY_STORES = ['chats', 'chatmeta', 'transcripts', 'archive'] as const;
-/** localStorage keys that hold settings (the theme). */
-export const LOCAL_KEYS = ['agentdeck.theme'];
+/** localStorage keys that hold settings (the theme, the diff style). */
+export const LOCAL_KEYS = ['agentdeck.theme', 'agentdeck.diffStyle'];
 
 export type ExportFile = {
   format: typeof EXPORT_FORMAT;

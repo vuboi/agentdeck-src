@@ -68,3 +68,28 @@ export function effectivePermission<T extends string>(
 ): T | 'plan' {
     return isGated ? 'plan' : chosen;
 }
+
+/**
+ * The note a chat gets once its plan is approved: the steps may run in parallel workers, each in its own worktree, when
+ * their files do not overlap. '' when the plan is not approved.
+ */
+export function approvedPlanNote(plan: {
+    id: string;
+    title: string;
+    status: string;
+    approvedAt: string;
+}): string {
+    if (
+        !plan.approvedAt ||
+        plan.status === 'draft' ||
+        plan.status === 'dropped'
+    )
+        return '';
+    return (
+        `The user approved the plan "${plan.title}" (id ${plan.id}). Read it with plan_read before you start. ` +
+        'Each step may name its files (`files:`) and who does it (`role:`, e.g. BE or FE). ' +
+        "If two or more steps touch disjoint files and no step needs another step's result, propose the split with propose_session: " +
+        'one task per group of steps, write_scope = the files of those steps, brief = the steps to do. ' +
+        "A task that needs another task's result goes in depends_on. Otherwise do the plan in this chat."
+    );
+}

@@ -4,14 +4,14 @@ Pick the store by what the data is. Do not put a large or queried set of rows in
 
 | Store                                                       | Use for                                                                   | Examples                                                                                                                                      |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| **SQLite** (`sqlite::open`, one shared app DB via `app_db`) | Growing data that is filtered, paged or summed, read by Rust or by agents | `app.db`: usage log, Audit log. `chats.db`: chat ledger (dual-write, off by default). `<project>/.agentdeck/ui-memory/memory.db`: page memory |
-| **IndexedDB** (`prefs-db.ts`)                               | Small UI state read by the webview                                        | layout, tabs, composer, permissions, accounts, providers, chat meta, folder listings (capped at 2,000 keys)                                   |
+| **SQLite** (`sqlite::open`, one shared app DB via `app_db`) | Growing data that is filtered, paged or summed, read by Rust or by agents | `app.db`: usage log, Audit log. `chats.db`: primary AgentDeck chat ledger, including messages, archive and bindings. `<project>/.agentdeck/ui-memory/memory.db`: page memory |
+| **IndexedDB** (`prefs-db.ts`)                               | Small UI state read by the webview                                        | layout, tabs, composer, permissions, accounts, providers, chat meta, folder listings and migration fallback (capped at 2,000 keys) |
 | **localStorage**                                            | Tiny per-window preferences                                               | row heights, theme, active session, browser history                                                                                           |
 | **Plain files**                                             | Things people read, edit or diff                                          | project `memory.md`, `docs/plans/*.md`, `docs/artifacts/*`, attachments, audit and generated images                                           |
 
 ## Choosing
 
-- Stored in IndexedDB and the app only shows it: keep it there while each key stays under about 1 MB and nothing filters it.
+- Stored in IndexedDB and the app only shows it: keep it there while each key stays under about 1 MB and nothing filters it. Chat messages use SQLite after migration; IndexedDB remains rollback storage until migration is verified.
 - Grows with use, needs a range or a count, or Rust needs it: SQLite.
 - A person should read or edit it, or it belongs in git: a file in the project.
 

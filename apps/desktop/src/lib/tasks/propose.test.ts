@@ -5,6 +5,7 @@ import {
     checkProposal,
     parseProposal,
     proposalOfCommand,
+    startOrderOf,
     workerArgsOf,
     workerCallsOf,
 } from './propose.ts';
@@ -226,4 +227,22 @@ test('each split worker passes the same planner as delegate_task: a worktree, no
         assert.equal(planned.plan.args.wait, false);
         assert.match(planned.plan.args.task, /Write only inside: src\//);
     }
+});
+
+test('a split starts each task after the tasks it depends on', () => {
+    const parsed = parseProposal({
+        title: 'Split',
+        tasks: [
+            {
+                title: 'FE',
+                brief: 'screen',
+                write_scope: ['src/ui'],
+                depends_on: ['BE'],
+            },
+            { title: 'BE', brief: 'api', write_scope: ['src/api'] },
+            { title: 'Docs', brief: 'readme', write_scope: ['docs'] },
+        ],
+    });
+    assert.ok(parsed.ok);
+    assert.deepEqual(startOrderOf(parsed.proposal), [1, 0, 2]);
 });

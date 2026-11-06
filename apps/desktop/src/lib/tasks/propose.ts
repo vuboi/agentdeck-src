@@ -243,6 +243,23 @@ export function workerCallsOf(
 }
 
 /** The arguments of a delegate_task call that starts a worker call (the names parseDelegateArgs reads). */
+/** The order a split's tasks start in: each task after the tasks it depends on (parseProposal rejects cycles). */
+export function startOrderOf(proposal: Proposal): number[] {
+    const order: number[] = [];
+    const done = new Set<string>();
+    while (order.length < proposal.tasks.length) {
+        const next = proposal.tasks.findIndex(
+            (task, at) =>
+                !order.includes(at) &&
+                task.dependsOn.every((name) => done.has(name)),
+        );
+        if (next < 0) break;
+        order.push(next);
+        done.add(proposal.tasks[next].title);
+    }
+    return order;
+}
+
 export function workerArgsOf(call: WorkerCall) {
     return {
         agent: call.agent,

@@ -49,7 +49,8 @@ import { formatModelRef, parseModelRef } from '../../agents/model-ref';
 import { customProviderOf } from '../../agents/provider-registry';
 import { mcp } from '../../agents/mcp.svelte';
 import { automation } from '../../app/platform/automation.svelte';
-import { permissionOf } from '../../plans/plan-gate.svelte';
+import { gatePlanOf, permissionOf } from '../../plans/plan-gate.svelte';
+import { approvedPlanNote } from '../../plans/plan-gate';
 import { logError } from '../../app/platform/error-log.svelte';
 import {
     DELEGATE_HINT,
@@ -174,6 +175,8 @@ export const pendingNew = new SvelteSet<string>();
 /** When each chat's CLI was last asked to start ahead (by chat, agent and model), so typing does not ask on every key. */
 /** Chats whose previous turn got DELEGATE_REMINDER (not repeated for a short follow-up). */
 const reminded = new SvelteMap<string, boolean>();
+/** The plan approvals each chat was already told about (`chat|plan|approvedAt`), so the note goes out once per approval. */
+const plannedApprovals = new SvelteSet<string>();
 const prewarmedAt = new SvelteMap<string, number>();
 
 type PreHandler =
@@ -1119,11 +1122,9 @@ export function startTurn(
                 : '';
         // The project's memory (project-memory.ts): read from its file when a conversation starts, so every agent of the
         // project begins with what earlier ones learned.
+        // Workers get it too, so a split's workers share what the project's agents learned.
         const memoryNote =
-            !resume &&
-            !isWorkerChat(session.id) &&
-            cwd &&
-            replyStyle.projectMemory
+            !resume && cwd && replyStyle.projectMemory
                 ? memoryHint(
                       true,
                       cwd,
@@ -1140,6 +1141,16 @@ export function startTurn(
         // when a conversation starts. Workers keep their own language rule.
         const mainChat = !isWorkerChat(session.id) && asked?.role === 'user';
         if (mainChat && replyStyle.userProfile) learnFromPrompt(text);
+        // Once per approval: the first turn after the user approves a plan tells the chat it may split the plan's steps.
+        const plan = gatePlanOf(session.id);
+        const planKey = plan?.approvedAt
+            ? `${session.id}|${plan.id}|${plan.approvedAt}`
+            : '';
+        let planNote = '';
+        if (plan && planKey && !plannedApprovals.has(planKey)) {
+            plannedApprovals.add(planKey);
+            planNote = approvedPlanNote(plan);
+        }
         const profileNote =
             !resume && mainChat && replyStyle.userProfile
                 ? profileHint(loadProfile())
@@ -1150,6 +1161,7 @@ export function startTurn(
             reminder,
             styleHint,
             memoryNote,
+            planNote,
             profileNote,
             routing,
             LANGUAGE_RULE,

@@ -263,7 +263,7 @@ fn render_fm(fm: &FrontMatter) -> String {
     out
 }
 
-/// A checklist step with the detail lines under it (`files:`, `verify:`, `evidence:`).
+/// A checklist step with the detail lines under it (`files:`, `role:`, `verify:`, `evidence:`).
 #[derive(Clone, Debug, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanStep {
@@ -272,6 +272,8 @@ pub struct PlanStep {
     pub text: String,
     pub done: bool,
     pub files: Vec<String>,
+    /// Who does the step when a plan is split across workers (`role: BE`, `role: FE`, ...).
+    pub role: Option<String>,
     pub verify: Option<String>,
     pub evidence: Option<String>,
 }
@@ -323,6 +325,7 @@ pub fn steps(body: &str) -> Vec<PlanStep> {
                     .map(str::to_string)
                     .collect();
             }
+            "role" => step.role = non_empty(value),
             "verify" => step.verify = non_empty(value),
             "evidence" => step.evidence = non_empty(value),
             _ => {}
@@ -1287,6 +1290,19 @@ mod tests {
         assert_eq!(parsed[1].evidence.as_deref(), Some("ran it: ok"));
         assert!(parsed[2].files.is_empty());
         assert_eq!(parsed[2].verify, None);
+    }
+
+    #[test]
+    fn steps_read_role_detail_line() {
+        let body = "- [ ] API
+  - role: BE
+  - files: api/a.rs
+- [ ] Screen
+  - role:
+";
+        let parsed = steps(body);
+        assert_eq!(parsed[0].role.as_deref(), Some("BE"));
+        assert_eq!(parsed[1].role, None);
     }
 
     #[test]

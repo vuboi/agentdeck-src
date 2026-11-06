@@ -334,6 +334,9 @@
         const now = { opened: viewer.opened, active: viewer.active };
         if (now.opened === seen.opened && now.active === seen.active) return;
         if (now.opened !== seen.opened) plansOpen = false;
+        // The tree showing on the landing area stays beside the first file, not shut by it.
+        if (now.active && !seen.active && !narrow && !emptyTreeHidden)
+            viewer.side.open = true;
         seen = now;
         // A file opened from the tree keeps the tree beside it (see openInViewer).
         if (!viewer.fromTree) treeOnly = false;

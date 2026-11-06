@@ -6,6 +6,11 @@
     import { toolOf } from '../../chat/content/blocks';
     import { openProjectFile } from '../../files/file-viewer.svelte';
     import { displayPath } from '../../files/paths';
+    import { diffStyle } from '../../files/diff-style.svelte';
+    import DiffLine from '../files/DiffLine.svelte';
+    import DiffSplit from '../files/DiffSplit.svelte';
+    import DiffHunks from '../files/DiffHunks.svelte';
+    import DiffStyleButton from '../files/DiffStyleButton.svelte';
 
     let {
         blocks,
@@ -81,126 +86,172 @@
 
 {#if files.length}
     <section
-        class="mt-2 overflow-hidden rounded-lg border border-border bg-muted/25 text-sm"
+        class="mt-2 overflow-hidden rounded-lg border border-border bg-card text-sm shadow-[var(--shadow-card)]"
         aria-label="Files changed in this reply"
         in:slide={{ duration: 200 }}
     >
-        <button
-            type="button"
-            class="flex min-h-10 w-full cursor-pointer items-center gap-2 px-3 py-2 text-left outline-none hover:bg-muted/50"
-            aria-expanded={open}
-            onclick={() => (open = !open)}
-        >
-            <ZIcon
-                zType="lucideGitCompare"
-                class="size-4 shrink-0 text-muted-foreground"
-            />
-            <span class="font-semibold"
-                >Edited {files.length}
-                {files.length === 1 ? 'file' : 'files'}</span
+        <div class="flex items-center pr-2">
+            <button
+                type="button"
+                class="flex min-h-10 min-w-0 flex-1 cursor-pointer items-center gap-2 px-3 py-2 text-left outline-none hover:bg-muted/50"
+                aria-expanded={open}
+                onclick={() => (open = !open)}
             >
-            <span class="tabular-nums text-emerald-500">+{added}</span>
-            <span class="tabular-nums text-destructive">−{removed}</span>
-            <ZIcon
-                zType="lucideChevronDown"
-                class="ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 {open
-                    ? 'rotate-180'
-                    : ''}"
-            />
-        </button>
+                <ZIcon
+                    zType="lucideGitCompare"
+                    class="size-4 shrink-0 text-muted-foreground"
+                />
+                <span class="font-semibold"
+                    >Edited {files.length}
+                    {files.length === 1 ? 'file' : 'files'}</span
+                >
+                <span class="tabular-nums text-emerald-500">+{added}</span>
+                <span class="tabular-nums text-destructive">−{removed}</span>
+                <ZIcon
+                    zType="lucideChevronDown"
+                    class="ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 {open
+                        ? 'rotate-180'
+                        : ''}"
+                />
+            </button>
+            {#if open}<DiffStyleButton />{/if}
+        </div>
         {#if open}
             <div
                 class="overflow-hidden border-t border-border"
                 transition:slide={{ duration: 200 }}
             >
-                {#each files as file (file.change.path)}
-                    {@const label = displayPath(projectRoot, file.change.path)}
+                {#if diffStyle.value === 'unified'}
+                    <!-- One stream: the lines of every file one after another, each file under its own heading. -->
                     <div
-                        class="border-b border-border last:border-b-0"
-                        in:slide={{ duration: 180 }}
+                        class="max-h-96 overflow-auto bg-background py-1 font-mono text-[0.6875rem] leading-relaxed"
                     >
-                        <div
-                            class="flex min-h-9 w-full items-center gap-2 px-3 py-1.5 hover:bg-muted/40"
-                        >
-                            <ZIcon
-                                zType={file.deleted
-                                    ? 'lucideTrash2'
-                                    : file.change.create
-                                      ? 'lucideFilePlus'
-                                      : 'lucideFile'}
-                                class="size-3.5 shrink-0 text-muted-foreground"
-                            />
-                            <button
-                                type="button"
-                                class="min-w-0 flex-1 cursor-pointer truncate text-left font-mono underline-offset-2 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring"
-                                title={file.change.path}
-                                aria-label={`Open file ${label}`}
-                                onclick={() =>
-                                    openProjectFile(
-                                        file.change.path,
-                                        projectRoot,
-                                        'changes',
-                                    )}>{label}</button
+                        {#each files as file (file.change.path)}
+                            {@const label = displayPath(
+                                projectRoot,
+                                file.change.path,
+                            )}
+                            <div
+                                class="sticky top-0 z-10 flex h-7 items-center gap-2 border-b border-border bg-muted px-3 font-sans text-xs"
                             >
-                            <button
-                                type="button"
-                                class="flex shrink-0 cursor-pointer items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                aria-label={`Show changes for ${file.change.path}`}
-                                aria-expanded={selected === file.change.path}
-                                onclick={() =>
-                                    (selected =
-                                        selected === file.change.path
-                                            ? ''
-                                            : file.change.path)}
-                            >
+                                <span
+                                    class="min-w-0 flex-1 truncate font-mono"
+                                    title={file.change.path}>{label}</span
+                                >
                                 <span class="tabular-nums text-emerald-500"
                                     >+{file.added}</span
                                 >
                                 <span class="tabular-nums text-destructive"
                                     >−{file.removed}</span
                                 >
-                                <ZIcon
-                                    zType="lucideChevronRight"
-                                    class="size-3 shrink-0 text-muted-foreground transition-transform {selected ===
-                                    file.change.path
-                                        ? 'rotate-90'
-                                        : ''}"
-                                />
-                            </button>
-                        </div>
-                        {#if selected === file.change.path}
+                            </div>
+                            {#if !file.change.before && !file.change.after}
+                                <div class="px-3 py-2 text-muted-foreground">
+                                    The provider reported the file change
+                                    without preview content.
+                                </div>
+                            {:else}
+                                {#each rows(file.change) as row, index (`${file.change.path}:${index}`)}
+                                    <DiffLine {row} />
+                                {/each}
+                            {/if}
+                        {/each}
+                    </div>
+                {:else}
+                    {#each files as file (file.change.path)}
+                        {@const label = displayPath(
+                            projectRoot,
+                            file.change.path,
+                        )}
+                        <div
+                            class="border-b border-border last:border-b-0"
+                            in:slide={{ duration: 180 }}
+                        >
                             <div
-                                class="overflow-hidden"
-                                transition:slide={{ duration: 180 }}
+                                class="flex min-h-9 w-full items-center gap-2 px-3 py-1.5 hover:bg-muted/40"
                             >
+                                <ZIcon
+                                    zType={file.deleted
+                                        ? 'lucideTrash2'
+                                        : file.change.create
+                                          ? 'lucideFilePlus'
+                                          : 'lucideFile'}
+                                    class="size-3.5 shrink-0 text-muted-foreground"
+                                />
+                                <button
+                                    type="button"
+                                    class="min-w-0 flex-1 cursor-pointer truncate text-left font-mono underline-offset-2 outline-none hover:underline focus-visible:underline focus-visible:ring-2 focus-visible:ring-ring"
+                                    title={file.change.path}
+                                    aria-label={`Open file ${label}`}
+                                    onclick={() =>
+                                        openProjectFile(
+                                            file.change.path,
+                                            projectRoot,
+                                            'changes',
+                                        )}>{label}</button
+                                >
+                                {#if diffStyle.value === 'stats'}
+                                    <span
+                                        class="flex shrink-0 items-center gap-2"
+                                    >
+                                        <span class="tabular-nums text-emerald-500"
+                                            >+{file.added}</span
+                                        >
+                                        <span class="tabular-nums text-destructive"
+                                            >−{file.removed}</span
+                                        >
+                                    </span>
+                                {:else}
+                                    <button
+                                        type="button"
+                                        class="flex shrink-0 cursor-pointer items-center gap-2 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        aria-label={`Show changes for ${file.change.path}`}
+                                        aria-expanded={selected ===
+                                            file.change.path}
+                                        onclick={() =>
+                                            (selected =
+                                                selected === file.change.path
+                                                    ? ''
+                                                    : file.change.path)}
+                                    >
+                                        <span class="tabular-nums text-emerald-500"
+                                            >+{file.added}</span
+                                        >
+                                        <span class="tabular-nums text-destructive"
+                                            >−{file.removed}</span
+                                        >
+                                        <ZIcon
+                                            zType="lucideChevronRight"
+                                            class="size-3 shrink-0 text-muted-foreground transition-transform {selected ===
+                                            file.change.path
+                                                ? 'rotate-90'
+                                                : ''}"
+                                        />
+                                    </button>
+                                {/if}
+                            </div>
+                            {#if diffStyle.value !== 'stats' && selected === file.change.path}
                                 <div
-                                    class="max-h-72 overflow-auto border-t border-border/60 bg-background py-1 font-mono text-[0.6875rem] leading-relaxed"
+                                    class="max-h-72 overflow-auto border-t border-border/60 bg-background"
+                                    transition:slide={{ duration: 180 }}
                                 >
                                     {#if !file.change.before && !file.change.after}
                                         <div
-                                            class="px-3 py-2 text-muted-foreground"
+                                            class="px-3 py-2 font-sans text-sm text-muted-foreground"
                                         >
                                             The provider reported the file
                                             change without preview content.
                                         </div>
+                                    {:else if diffStyle.value === 'split'}
+                                        <DiffSplit rows={rows(file.change)} />
                                     {:else}
-                                        {#each rows(file.change) as row, index (`${file.change.path}:${index}`)}
-                                            <div
-                                                class="whitespace-pre-wrap break-all px-3 {row.kind ===
-                                                'add'
-                                                    ? 'bg-emerald-500/10 text-emerald-500'
-                                                    : 'bg-destructive/10 text-destructive'}"
-                                            >
-                                                {row.kind === 'add' ? '+' : '−'}
-                                                {row.text}
-                                            </div>
-                                        {/each}
+                                        <DiffHunks rows={rows(file.change)} />
                                     {/if}
                                 </div>
-                            </div>
-                        {/if}
-                    </div>
-                {/each}
+                            {/if}
+                        </div>
+                    {/each}
+                {/if}
             </div>
         {/if}
     </section>

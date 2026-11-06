@@ -60,6 +60,7 @@ import {
 import { replyStyle } from '../content/reply-style.svelte';
 import {
     activity,
+    closeTurnActivity,
     promoteShellCall,
     trackActivity,
 } from '../runs/activity.svelte';
@@ -197,6 +198,25 @@ function clearShellWait(turn: string | undefined, callId: string) {
     if (timer === undefined) return;
     clearTimeout(timer);
     shellWaits.delete(key);
+}
+
+/**
+ * The turn ended: its background calls end with it. Their timers are cleared and their activity closed, so a
+ * tool whose result never came cannot keep the chat "waiting" or make it take new messages directly.
+ */
+function endTurnBackground(
+    sessionId: string,
+    turn: string,
+    run: { backgroundTools: Set<string> } | undefined,
+) {
+    for (const key of [...shellWaits.keys()]) {
+        if (key.startsWith(`${turn}:`)) {
+            clearTimeout(shellWaits.get(key));
+            shellWaits.delete(key);
+        }
+    }
+    run?.backgroundTools.clear();
+    closeTurnActivity(sessionId, turn);
 }
 
 /** The request a run works on: the text of the newest user message sent at or before the run started. */
@@ -2040,6 +2060,7 @@ function handleEventNow(
             backgroundWork: false,
         });
         runReplies.delete(turn!);
+        endTurnBackground(sessionId, turn!, ownedRun);
         archiveTurn(
             {
                 id: sessionId,
@@ -2259,6 +2280,7 @@ function handleEventNow(
             backgroundWork: false,
         });
         runReplies.delete(turn!);
+        endTurnBackground(sessionId, turn!, ownedRun);
         if (documentTask?.status === 'working' && !recovering) {
             documentTask.status = event.kind === 'error' ? 'error' : 'done';
             documentTask.progress =

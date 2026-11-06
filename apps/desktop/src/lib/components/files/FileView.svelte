@@ -50,6 +50,11 @@
     import ChangeRuler from '../chat/ChangeRuler.svelte';
     import DevEmpty from '../browser/DevEmpty.svelte';
     import DiffView from './DiffView.svelte';
+    import DiffSplit from './DiffSplit.svelte';
+    import DiffHunks from './DiffHunks.svelte';
+    import DiffStats from './DiffStats.svelte';
+    import DiffStyleButton from './DiffStyleButton.svelte';
+    import { diffStyle } from '../../files/diff-style.svelte';
     import Markdown from '../ui/Markdown.svelte';
     import OfficePreview from './OfficePreview.svelte';
     import { middlePan } from '../../app/ui/middle-pan';
@@ -662,36 +667,19 @@
 
 {#snippet viewToggle()}
     <!-- A file with changes can be read as it is, or as its change: removed lines red, added lines green. -->
-    <!-- Two equal halves with a pill that slides to the chosen one. -->
-    <div
-        class="relative grid h-7 w-14 shrink-0 grid-cols-2 rounded-md border border-border bg-muted p-0.5 text-sm"
-        role="radiogroup"
-        aria-label="How to show the file"
+    <!-- One button: it shows the view it switches to. -->
+    <button
+        type="button"
+        class="{tool} {toolOff}"
+        aria-label={view === 'changes' ? 'Show the file' : 'Show the changes'}
+        title={view === 'changes' ? 'Show the file' : 'Show the changes'}
+        onclick={() => (file.view = view === 'changes' ? 'file' : 'changes')}
     >
-        <span
-            class="pointer-events-none absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded bg-background shadow-sm transition-transform duration-200 ease-out"
-            style:transform={view === 'changes'
-                ? 'translateX(100%)'
-                : 'translateX(0)'}
-            aria-hidden="true"
-        ></span>
-        {#each [{ value: 'file', label: 'File', glyph: 'lucideFileText' }, { value: 'changes', label: 'Changes', glyph: 'lucideGitCompare' }] as item (item.value)}
-            <button
-                type="button"
-                role="radio"
-                aria-checked={view === item.value}
-                aria-label={item.label}
-                title={item.label}
-                class="relative z-10 grid size-6 cursor-pointer place-items-center rounded outline-none transition-colors {view ===
-                item.value
-                    ? 'text-primary'
-                    : 'text-muted-foreground hover:text-foreground'}"
-                onclick={() => (file.view = item.value as 'file' | 'changes')}
-            >
-                <ZIcon zType={icon(item.glyph)} zSize="16" />
-            </button>
-        {/each}
-    </div>
+        <ZIcon
+            zType={icon(view === 'changes' ? 'lucideFileText' : 'lucideGitCompare')}
+            zSize="16"
+        />
+    </button>
     <span class="ml-1 font-mono text-emerald-500">+{counts.added}</span>
     <span class="font-mono text-red-500">−{counts.removed}</span>
 {/snippet}
@@ -873,13 +861,31 @@
                         />
                     {/if}
                 </div>
+            {:else}
+                <div class="flex shrink-0 items-center gap-1">
+                    <DiffStyleButton />
+                </div>
             {/if}
         </div>
         {#if view === 'changes'}
             <div class="relative min-h-0 flex-1">
                 {#if changed}
                     <div class="h-full" in:fade={{ duration: 200 }}>
-                        <DiffView {rows} lang={language} />
+                        {#if diffStyle.value === 'split'}
+                            <div class="h-full overflow-auto">
+                                <DiffSplit {rows} />
+                            </div>
+                        {:else if diffStyle.value === 'hunks'}
+                            <div class="h-full overflow-auto">
+                                <DiffHunks {rows} />
+                            </div>
+                        {:else if diffStyle.value === 'stats'}
+                            <div class="h-full overflow-auto">
+                                <DiffStats {rows} />
+                            </div>
+                        {:else}
+                            <DiffView {rows} lang={language} />
+                        {/if}
                     </div>
                 {:else if !diffRead}
                     <LoadingBar label="Loading changes" />

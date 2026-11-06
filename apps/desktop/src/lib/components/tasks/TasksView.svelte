@@ -743,7 +743,7 @@
                         <div
                             class="group/code relative rounded-md border {failed
                                 ? 'border-destructive/30 bg-destructive/5'
-                                : 'border-border bg-background'}"
+                                : 'border-border bg-card shadow-[var(--shadow-card)]'}"
                         >
                             {#if item.input}
                                 <pre

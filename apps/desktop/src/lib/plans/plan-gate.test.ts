@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+    approvedPlanNote,
     boundPlan,
     effectivePermission,
     gated,
@@ -62,4 +63,25 @@ test('the effective permission is Plan while gated and the chosen one otherwise'
     assert.equal(effectivePermission('yolo', true), 'plan');
     assert.equal(effectivePermission('yolo', false), 'yolo');
     assert.equal(effectivePermission('auto', false), 'auto');
+});
+
+test('an approved plan gets the split note once it is approved', () => {
+    assert.equal(
+        approvedPlanNote({
+            id: 'p1',
+            title: 'Feature',
+            status: 'draft',
+            approvedAt: '',
+        }),
+        '',
+    );
+    const note = approvedPlanNote({
+        id: 'p1',
+        title: 'Feature',
+        status: 'approved',
+        approvedAt: '2026-11-07T10:00:00Z',
+    });
+    assert.match(note, /plan_read/);
+    assert.match(note, /propose_session/);
+    assert.match(note, /depends_on/);
 });

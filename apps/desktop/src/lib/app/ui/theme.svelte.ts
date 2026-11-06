@@ -100,9 +100,9 @@ const DEFAULTS: Saved = {
     chatLayout: 'split',
     turnDividers: true,
     fontSize: UI_FONT_SIZE.default,
-    uiFont: 'system',
-    codeFont: 'system',
-    darkStyle: 'charcoal',
+    uiFont: 'inter',
+    codeFont: 'jetbrains-mono',
+    darkStyle: 'graphite',
     lightStyle: 'white',
 };
 // The corner radii live in app.css (--radius-small / --radius-large). `--radius` itself is what z-ui falls back to when
@@ -301,7 +301,7 @@ class Theme {
     }
 
     private keyNow() {
-        return `${this.dark}|${this.primary}|${this.neutral}`;
+        return `${this.dark}|${this.primary}|${this.neutral}|${this.dark ? this.darkStyle : this.lightStyle}`;
     }
 
     toggle() {

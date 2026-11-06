@@ -19,6 +19,11 @@
 @import '@fontsource-variable/roboto/index.css';
 @import '@fontsource-variable/manrope/index.css';
 
+/* Light mode: a softer card shadow than z-ui's gray theme. Dark mode keeps the theme's own token. */
+:root:not(.dark) {
+    --shadow-card: 0 0 3px 0 rgba(0, 0, 0, 0.07), 0 0 1px 0 rgba(0, 0, 0, 0.08);
+}
+
 html,
 body {
     background-color: var(--background);
@@ -290,6 +295,14 @@ body {
     width: 14px !important;
     height: 14px !important;
 }
+
+/* Phosphor Bold glyphs read slightly smaller at the existing compact icon boxes. */
+.z-icon[data-icon^='lucide'] > svg,
+.z-icon[data-icon^='phosphor'] > svg {
+    transform: scale(1.08);
+    transform-origin: center;
+    overflow: visible;
+}
 .z-command input {
     font-size: 0.8125rem;
 }
@@ -555,7 +568,8 @@ html[data-warming] [data-z-popover] {
     overscroll-behavior-x: contain;
     border: 1px solid var(--border);
     border-radius: var(--radius-large);
-    background: var(--muted);
+    background: var(--color-card);
+    box-shadow: var(--shadow-card);
 }
 .md-table table {
     width: 100%;
@@ -679,7 +693,8 @@ html[data-warming] [data-z-popover] {
     overflow: clip;
     border: 1px solid var(--border);
     border-radius: var(--radius-large);
-    background: var(--muted);
+    background: var(--color-card);
+    box-shadow: var(--shadow-card);
 }
 .md-code-head,
 .md-code-foot {
