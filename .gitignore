@@ -44,3 +44,9 @@
 .codegraph/
 # build output of a second target dir
 target-dev2/
+.mcp.json
+.codegraph/
+docs/plans/plan-agent-teams.md
+docs/plans/plan-memory-ui-index.md
+docs/plans/plan-spec-driven.md
+docs/plans/plan-storage-sqlite.md
