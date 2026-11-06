@@ -4,8 +4,10 @@ Read first: `docs/plans/plan-storage-sqlite.md` (master plan), `docs/development
 
 ## Where the work is
 
+- Status (2026-11-06): all P items written in code. Committed on `feat/chat-read-ledger` as `07eb338`, merged to `main` as `f8f3950`, pushed to `origin/main`. Nothing verified in app yet; the owner will test.
 - Worktree: `E:\WORK\PROJECTS\agentdeck-merge`, branch `feat/chat-read-ledger`.
-- Last commit: `2f83f69` (ledger schema v3, `messages.client_id`). Not pushed. Not merged to `main`.
+- Commit history of this work: `2f83f69` (ledger schema v3), `07eb338` (P5.3-P7 code).
+- Pre-commit hook gotcha: put `~/.cargo/bin` first on PATH (the mise rustfmt shim fails). The hook reformats staged files; re-check `git status` after commit.
 - Uncommitted (all intended, verified where noted):
     - `apps/desktop/src/lib/chat/index/dual-write.ts`: `storedCopy(message)` writes the whole message to the ledger minus transient fields (`live`, `dispatching`, `dispatchingImages`, `notice`, `callOutput`, `startedAt`, `credentialId`).
     - `apps/desktop/src/lib/chat/index/dual-write.test.ts`: helper reads `blocks.blocks`; test for `storedCopy`. 16 pass.
