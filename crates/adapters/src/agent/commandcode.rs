@@ -226,6 +226,7 @@ impl CommandCode {
             change,
             // A shell call the agent started with `run_in_background` keeps running after its call returns.
             background,
+            child_kind: None,
         }]
     }
 
@@ -590,6 +591,7 @@ mod tests {
                 input: "git status".into(),
                 change: None,
                 background: false,
+                child_kind: None,
             }]
         );
         assert_eq!(

@@ -7,6 +7,10 @@ export const IMAGE_NOT_FOUND_SRC = '/assets/image-not-found.png';
 // The UI side of the agent event stream. The Rust side (crates/adapters/src/agent) turns each CLI's output
 // into these events; nothing here knows a CLI's format.
 
+/** What a tool call starts, when the adapter knows (Rust `classify_child`): a sub-agent or a spawned agent. */
+export type ChildKind =
+    'agent' | 'subagent' | 'open_code_task' | 'spawn_agent' | 'agy_subagent';
+
 export type AgentEvent =
     | { kind: 'delta'; text: string }
     | { kind: 'thinking'; text: string }
@@ -23,6 +27,8 @@ export type AgentEvent =
           input: string;
           change: FileChange | null;
           background: boolean;
+          /** Set only for a call that starts a child agent; absent for every other tool. */
+          child_kind?: ChildKind;
       }
     /** The model a sub-agent call was given; sent right after its `tool_call`. */
     | { kind: 'tool_model'; id: string; model: string }

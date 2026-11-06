@@ -3,6 +3,7 @@
     import Menu from '../ui/Menu.svelte';
     import { closeOnScroll } from '../../app/ui/close-on-scroll';
     import { agentDisplayName } from '../../agents/provider-registry';
+    import { BUILT_IN_IDS } from '../../agents/provider-descriptors';
     import { untrack } from 'svelte';
     import { SvelteSet } from 'svelte/reactivity';
     import {
@@ -733,18 +734,7 @@
                     checked: view.filter === 'imported',
                     onClick: () => setView({ filter: 'imported' }),
                 },
-                ...(
-                    [
-                        'claude',
-                        'codex',
-                        'antigravity',
-                        'opencode',
-                        'workbuddy',
-                        'copilot',
-                        'command-code',
-                        'custom',
-                    ] as const
-                ).map((agent) => ({
+                ...[...BUILT_IN_IDS, 'custom' as const].map((agent) => ({
                     label: agentDisplayName(agent),
                     class: ITEM,
                     checked: view.filter === agent,

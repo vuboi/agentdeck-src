@@ -3,7 +3,7 @@
 // in `~/.agentdeck/audit.jsonl` so it survives a restart.
 
 import { SvelteDate, SvelteMap, SvelteSet } from 'svelte/reactivity';
-import { pictureUrl, type AgentEvent } from '../agent';
+import { pictureUrl, type AgentEvent, type ChildKind } from '../agent';
 import { inTauri } from '../../app/platform/history';
 import { stopServers } from '../../browser/browser.svelte';
 import {
@@ -47,6 +47,8 @@ export type Activity = {
     /** The project the chat belongs to, by name ('' when none). Old entries have none. */
     project?: string;
     name: string;
+    /** The kind of child agent this call starts, as the adapter classified it; undefined for any other tool. */
+    childKind?: ChildKind;
     input: string;
     background: boolean;
     /** Whether the call itself was started as background work (a shell with run_in_background, an agent). A task event
@@ -502,6 +504,7 @@ export function trackActivity(
             project,
             // A served project lists as a Run project, so its log and Stop button are the same as the Preview's Run.
             name: serve ? 'Run project' : event.name,
+            childKind: event.child_kind,
             input: serve ? `${serve.command}\n${serve.cwd}` : event.input,
             background: serving || event.background || promoted,
             launchedInBackground: serving || event.background,

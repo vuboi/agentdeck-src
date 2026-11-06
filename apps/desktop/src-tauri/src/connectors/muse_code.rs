@@ -1,5 +1,6 @@
 //! Muse Code subscription connector: RFC 8628 device login and inference-key minting.
 
+use crate::endpoints::ENDPOINTS;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -9,8 +10,6 @@ use super::{secret_delete, secret_load, secret_save, Login};
 const ACCESS_SECRET: &str = "agentdeck:muse-code:access";
 const DCA_SECRET: &str = "agentdeck:muse-code:dca";
 const EXPIRY_SECRET: &str = "agentdeck:muse-code:expiry";
-const AUTH_BASE: &str = "https://auth.meta.com";
-const API_BASE: &str = "https://api.meta.ai";
 const CLIENT_ID: &str = "1031625952748946";
 const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 const USER_AGENT: &str = "AgentDeck/1.0";
@@ -76,7 +75,7 @@ pub(crate) async fn mint_key(dca: &str) -> Result<String, String> {
         .build()
         .map_err(|error| error.to_string())?;
     let response = client
-        .post(format!("{API_BASE}/muse-code/key"))
+        .post(format!("{}/muse-code/key", ENDPOINTS.muse_code.api))
         .bearer_auth(dca)
         .header("Accept", "application/json")
         .header("Content-Type", "application/json")
@@ -126,7 +125,7 @@ pub(crate) async fn refresh_access_token() -> Result<String, String> {
 
 pub(super) async fn sign_in() -> Result<(), String> {
     let device = form_post(
-        &format!("{AUTH_BASE}/oidc/device/authorization/"),
+        &format!("{}/oidc/device/authorization/", ENDPOINTS.muse_code.auth),
         &[("client_id", CLIENT_ID)],
     )
     .await?;
@@ -143,7 +142,7 @@ pub(super) async fn sign_in() -> Result<(), String> {
     while now() < deadline {
         tokio::time::sleep(Duration::from_secs(interval)).await;
         let payload = form_post(
-            &format!("{AUTH_BASE}/oidc/device/token/"),
+            &format!("{}/oidc/device/token/", ENDPOINTS.muse_code.auth),
             &[
                 ("client_id", CLIENT_ID),
                 ("device_code", device_code),
@@ -196,7 +195,7 @@ pub(crate) async fn models() -> Result<Vec<String>, String> {
         // Muse Code exposes the model catalogue through the OpenAI-compatible
         // endpoint used by its inference API; /muse-code/models is not that
         // catalogue path.
-        .get(format!("{API_BASE}/v1/models"))
+        .get(format!("{}/v1/models", ENDPOINTS.muse_code.api))
         .bearer_auth(token)
         .header("Accept", "application/json")
         .send()

@@ -50,6 +50,10 @@ pub enum AgentEvent {
         change: Option<FileChange>,
         /// Runs on its own while the agent carries on: a shell started in the background, or a sub-agent.
         background: bool,
+        /// The sub-agent kind this call starts (`agent`, `subagent`, `open_code_task`, `spawn_agent`, `agy_subagent`), absent
+        /// for an ordinary tool. See [`classify_child`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        child_kind: Option<ChildKind>,
     },
     /// The model a sub-agent call was given in its input. Sent right after its [`AgentEvent::ToolCall`]: the task
     /// start event does not carry the model.
@@ -576,6 +580,36 @@ pub fn is_proposal_tool(name: &str) -> bool {
     )
 }
 
+/// Which provider's sub-agent (or task spawn) a tool call starts. One list of names for every provider; a caller
+/// matches the variant it needs, so each path keeps the names it accepted before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildKind {
+    /// Claude's `Agent`, and the older name `Task`.
+    Agent,
+    /// OpenCode CLI's `subagent`.
+    Subagent,
+    /// The name OpenCode's server gives the same sub-agent: `task`. Its own variant because the CLI path never accepted it.
+    OpenCodeTask,
+    /// Codex's `spawnAgent`.
+    SpawnAgent,
+    /// Antigravity's `invoke_subagent`, `define_subagent` and `browser_subagent`.
+    AgySubagent,
+}
+
+/// The sub-agent kind a tool call starts, by its tool name. `_input` is not read yet; it is there so a provider whose
+/// spawn is told apart by its input can use the same entry point.
+pub fn classify_child(tool_name: &str, _input: &serde_json::Value) -> Option<ChildKind> {
+    match tool_name {
+        "Agent" | "Task" => Some(ChildKind::Agent),
+        "subagent" => Some(ChildKind::Subagent),
+        "task" => Some(ChildKind::OpenCodeTask),
+        "spawnAgent" => Some(ChildKind::SpawnAgent),
+        "invoke_subagent" | "define_subagent" | "browser_subagent" => Some(ChildKind::AgySubagent),
+        _ => None,
+    }
+}
+
 /// One line describing a tool call's input: the part a person would look at.
 pub fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
     // The webview parses proposal and ExitPlanMode JSON to render/save it: preserve the complete input.
@@ -599,7 +633,9 @@ pub fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
         "Grep" | "Glob" => field(&["pattern"]),
         "WebFetch" => field(&["url"]),
         "WebSearch" => field(&["query"]),
-        "Task" | "Agent" => field(&["description", "prompt"]),
+        _ if classify_child(name, input) == Some(ChildKind::Agent) => {
+            field(&["description", "prompt"])
+        }
         _ => None,
     };
     let text = picked.unwrap_or_else(|| {
@@ -1042,5 +1078,110 @@ pub fn allow_entry(tool: &str, input: &serde_json::Value) -> String {
     match (tool, input["command"].as_str()) {
         ("Bash", Some(command)) => format!("Bash({command})"),
         _ => tool.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod child_kind_tests {
+    use super::{classify_child, AgentEvent, ChildKind};
+    use serde_json::{json, Value};
+
+    #[test]
+    fn claude_sub_agent_names_classify_as_agent() {
+        assert_eq!(
+            classify_child("Agent", &Value::Null),
+            Some(ChildKind::Agent)
+        );
+        assert_eq!(classify_child("Task", &Value::Null), Some(ChildKind::Agent));
+    }
+
+    #[test]
+    fn opencode_names_are_kept_apart() {
+        // The CLI writes `subagent`; the server names the same sub-agent `task`. Each path accepts only its own.
+        assert_eq!(
+            classify_child("subagent", &Value::Null),
+            Some(ChildKind::Subagent)
+        );
+        assert_eq!(
+            classify_child("task", &Value::Null),
+            Some(ChildKind::OpenCodeTask)
+        );
+    }
+
+    #[test]
+    fn codex_spawn_classifies_as_spawn_agent() {
+        assert_eq!(
+            classify_child("spawnAgent", &json!({"prompt": "x"})),
+            Some(ChildKind::SpawnAgent)
+        );
+    }
+
+    #[test]
+    fn antigravity_sub_agent_tools_classify_as_agy_subagent() {
+        for name in ["invoke_subagent", "define_subagent", "browser_subagent"] {
+            assert_eq!(
+                classify_child(name, &Value::Null),
+                Some(ChildKind::AgySubagent),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_and_delegate_tools_are_not_children() {
+        for name in [
+            "Bash",
+            "Read",
+            "Edit",
+            "Grep",
+            "bash",
+            "Subagent",
+            "Spawn",
+            "spawn_agent",
+            "delegate_task",
+            "call_mcp_tool",
+            "agent",
+            "",
+        ] {
+            assert_eq!(classify_child(name, &Value::Null), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn child_kind_serializes_snake_case_and_is_omitted_when_absent() {
+        assert_eq!(
+            serde_json::to_value(ChildKind::OpenCodeTask).unwrap(),
+            json!("open_code_task")
+        );
+        assert_eq!(
+            serde_json::to_value(ChildKind::SpawnAgent).unwrap(),
+            json!("spawn_agent")
+        );
+        assert_eq!(
+            serde_json::to_value(ChildKind::AgySubagent).unwrap(),
+            json!("agy_subagent")
+        );
+        let call = AgentEvent::ToolCall {
+            id: "1".into(),
+            name: "Bash".into(),
+            input: "ls".into(),
+            change: None,
+            background: false,
+            child_kind: None,
+        };
+        let value = serde_json::to_value(&call).unwrap();
+        assert!(value.get("child_kind").is_none());
+        let child = AgentEvent::ToolCall {
+            id: "2".into(),
+            name: "Agent".into(),
+            input: "scan".into(),
+            change: None,
+            background: true,
+            child_kind: Some(ChildKind::Agent),
+        };
+        assert_eq!(
+            serde_json::to_value(&child).unwrap()["child_kind"],
+            json!("agent")
+        );
     }
 }

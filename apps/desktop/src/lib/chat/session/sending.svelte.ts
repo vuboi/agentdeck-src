@@ -4,6 +4,7 @@ import {
     waitForCredential,
 } from '../../agents/credential-switch';
 import { credentialScope } from '../../agents/credential-scope';
+import { isBuiltInAgent } from '../../agents/provider-descriptors';
 import { type Message } from '../mock';
 import { handbackMode, agentdeckLead } from '../../tasks/delegate-task';
 import { HANDBACK_HEAD } from '../runs/handback';
@@ -728,14 +729,7 @@ export function send(
         extra.silent &&
         extra.prompt &&
         inTauri() &&
-        (session.agent === 'claude' ||
-            session.agent === 'codex' ||
-            session.agent === 'antigravity' ||
-            session.agent === 'opencode' ||
-            session.agent === 'workbuddy' ||
-            session.agent === 'copilot' ||
-            session.agent === 'command-code' ||
-            session.agent === 'custom')
+        (isBuiltInAgent(session.agent) || session.agent === 'custom')
     ) {
         if (!extra.report || extra.report.workflowRunId)
             beginWorkflowIntegration(sessionId, extra.report?.workflowRunId);
@@ -776,14 +770,7 @@ export function send(
     if (workflow) beginWorkflowRun(session.id, body, workflow);
     if (
         inTauri() &&
-        (session.agent === 'claude' ||
-            session.agent === 'codex' ||
-            session.agent === 'antigravity' ||
-            session.agent === 'opencode' ||
-            session.agent === 'workbuddy' ||
-            session.agent === 'copilot' ||
-            session.agent === 'command-code' ||
-            session.agent === 'custom')
+        (isBuiltInAgent(session.agent) || session.agent === 'custom')
     )
         startTurn(
             session,
@@ -963,7 +950,7 @@ export function handoffDigest(
 
 /** Whether a chat's CLI switches its model in the same conversation (Claude's `set_model`, see warm.rs): a model change
  *  then keeps the conversation. The other agents start a new one (and carry the turns so far, see MODEL_LEAD). */
-export const liveModel = (agent: string) => agent === 'claude';
+export { liveModel } from '../../agents/provider-descriptors';
 
 /** What an edited message carries over: the chat before it (the edited message and what came after are gone). */
 const EDIT_LEAD =

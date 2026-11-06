@@ -403,6 +403,7 @@ async fn run_session(
                                 input: event.data["arguments"].as_str().map(str::to_string).unwrap_or_else(|| event.data["arguments"].to_string()),
                                 change,
                                 background,
+                                child_kind: None,
                             })
                         }
                         "tool.execution_complete" => {

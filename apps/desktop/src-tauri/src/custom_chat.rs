@@ -976,6 +976,7 @@ pub async fn run_turn(
                 change: change_for(&call.name, &args, turn.cwd.as_deref()),
                 // Only a blocking delegate call runs on its own while the agent waits: the same rule as the other adapters.
                 background: ag_adapters::agent::delegate_wait(&shown, &args),
+                child_kind: None,
             });
             let waits_only = user_tool.is_none()
                 && args.is_object()

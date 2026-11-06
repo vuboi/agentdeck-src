@@ -144,6 +144,7 @@ mod tests {
             input: "cargo test".into(),
             change: None,
             background: false,
+            child_kind: None,
         });
         tokio::time::advance(Duration::from_secs(30 * 60)).await;
         assert!(!dog.expired(), "a long build is not a stall");
@@ -185,6 +186,7 @@ mod tests {
             input: "scan".into(),
             change: None,
             background: true,
+            child_kind: None,
         });
         tokio::time::advance(Duration::from_secs(19 * 60)).await;
         assert!(!dog.expired(), "a sub-agent may think for a while");
@@ -204,6 +206,7 @@ mod tests {
             input: String::new(),
             change: None,
             background: true,
+            child_kind: None,
         });
         dog.note(&AgentEvent::ToolCall {
             id: "b".into(),
@@ -211,6 +214,7 @@ mod tests {
             input: "cargo build".into(),
             change: None,
             background: false,
+            child_kind: None,
         });
         tokio::time::advance(Duration::from_secs(60 * 60)).await;
         assert!(!dog.expired());

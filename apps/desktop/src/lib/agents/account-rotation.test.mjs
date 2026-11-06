@@ -149,6 +149,7 @@ async function harness({
             reloadModels: async () => {},
         },
         './agent-status.svelte': { loadAgentStatus: async () => {} },
+        './endpoints': { ENDPOINTS: { workbuddy: { chatApi: '' } } },
         'svelte/reactivity': { SvelteMap: Map, SvelteSet: Set },
     };
     const cache = new Map();
@@ -172,6 +173,7 @@ async function harness({
                     './credential-switch',
                     './credential-scope',
                     './check-runs',
+                    './custom-ids',
                 ].includes(specifier),
                 `Unexpected module: ${specifier}`,
             );

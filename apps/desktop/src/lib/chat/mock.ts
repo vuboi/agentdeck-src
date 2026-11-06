@@ -1,5 +1,6 @@
 import type { ProposalState } from '../tasks/propose';
 
+import type { ProviderId } from '../agents/provider-descriptors';
 /** A file a tool wrote: lines added and removed, and the text for a small diff. `create` once the result says so. */
 export type FileChange = {
     path: string;
@@ -11,15 +12,7 @@ export type FileChange = {
     cumulative?: boolean;
 };
 
-export type Agent =
-    | 'claude'
-    | 'codex'
-    | 'antigravity'
-    | 'opencode'
-    | 'workbuddy'
-    | 'copilot'
-    | 'command-code'
-    | 'custom';
+export type Agent = ProviderId;
 export type Session = {
     id: string;
     title: string;

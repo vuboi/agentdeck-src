@@ -15,83 +15,73 @@ import {
     providerLogo,
 } from './brand-icons';
 import { connectors } from './connectors.svelte';
-import { BUILT_IN_AGENT_IDS } from './built-in-ids';
+import {
+    PROVIDERS,
+    type BuiltInAgent,
+    type ProviderDescriptor,
+} from './provider-descriptors';
+import { parseModelRef } from './model-ref';
 
-export type BuiltInAgent = (typeof BUILT_IN_AGENT_IDS)[number];
+export type { BuiltInAgent };
 /** `icon` is an icon-set name; `mark`, when set, is the provider's own SVG and wins over `icon` everywhere. */
-export type AgentProfile = {
-    id: BuiltInAgent;
-    label: string;
-    binary: string;
+export type AgentProfile = ProviderDescriptor & {
     icon: ZIconName;
     mark?: string;
     image?: string;
     tone: string;
 };
 
-/** Single UI registry for built-in agents. Session, workflow, composer, model and image surfaces read the same metadata. */
-export const BUILT_IN_AGENTS: AgentProfile[] = [
-    {
-        id: 'claude',
-        label: 'Claude',
-        binary: 'claude',
+/** How each built-in provider looks. The facts (label, binary, scope, flags) live in provider-descriptors.ts. */
+const LOOK: Record<
+    BuiltInAgent,
+    Pick<AgentProfile, 'icon' | 'mark' | 'image' | 'tone'>
+> = {
+    claude: {
         icon: 'brandClaude' as ZIconName,
         mark: CLAUDE_SVG,
         image: CLAUDE_LOGO,
         tone: 'text-orange-500',
     },
-    {
-        id: 'codex',
-        label: 'Codex',
-        binary: 'codex',
+    codex: {
         icon: 'brandOpenai' as ZIconName,
         mark: OPENAI_SVG,
         tone: 'text-foreground',
     },
-    {
-        id: 'antigravity',
-        label: 'Antigravity',
-        binary: 'agy',
+    antigravity: {
         icon: 'brandGemini' as ZIconName,
         mark: GEMINI_SVG,
         image: GEMINI_LOGO,
         tone: 'text-sky-500',
     },
-    {
-        id: 'opencode',
-        label: 'OpenCode',
-        binary: 'opencode',
+    opencode: {
         icon: 'lucideTerminal' as ZIconName,
         mark: OPENCODE_SVG,
         tone: 'text-foreground',
     },
-    {
-        id: 'workbuddy',
-        label: 'WorkBuddy',
-        binary: 'codebuddy',
+    workbuddy: {
         icon: 'lucideBot' as ZIconName,
         image: WORKBUDDY_LOGO,
         tone: 'text-blue-500',
     },
-    {
-        id: 'copilot',
-        label: 'GitHub Copilot',
-        binary: 'gh',
+    copilot: {
         icon: 'lucideBot' as ZIconName,
         mark: GITHUB_SVG,
         image: COPILOT_LOGO,
         tone: 'text-violet-500',
     },
-    {
-        id: 'command-code',
-        label: 'Command Code',
-        binary: 'command-code',
+    'command-code': {
         icon: 'lucideTerminal' as ZIconName,
         mark: COMMAND_CODE_SVG,
         image: COMMAND_CODE_LOGO,
         tone: 'text-foreground',
     },
-];
+};
+
+/** Single UI registry for built-in agents. Session, workflow, composer, model and image surfaces read the same metadata. */
+export const BUILT_IN_AGENTS: AgentProfile[] = PROVIDERS.map((item) => ({
+    ...item,
+    ...LOOK[item.id],
+}));
 
 export const agentProfile = (id: string) =>
     BUILT_IN_AGENTS.find((item) => item.id === id);
@@ -100,10 +90,10 @@ export const agentProfile = (id: string) =>
 
 /** The custom provider a chat, step or reply used: named by its model (`<provider id>::<model>`, or the bare model). */
 export function customProviderOf(model?: string | null) {
-    const at = model?.indexOf('::') ?? -1;
-    const id = model && at > 0 ? model.slice(0, at) : '';
     const enabled = connectors.custom.filter((item) => item.enabled);
-    if (id) return connectors.custom.find((item) => item.id === id);
+    const named = model?.includes('::') ? parseModelRef(model) : null;
+    if (named)
+        return connectors.custom.find((item) => item.id === named.provider);
     // A reply keeps the bare model name (`deepseek/deepseek-v4.1-flash`): the provider is the one that lists it, or the
     // only custom provider there is. Two providers listing the same name: no guess, a model of one must not show as the other.
     if (!model) return undefined;
