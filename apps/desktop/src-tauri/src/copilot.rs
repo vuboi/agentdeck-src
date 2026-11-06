@@ -130,6 +130,40 @@ pub(crate) async fn run_turn(
     request: TurnRequest,
     stop: ag_adapters::agent::interrupt::StopToken,
 ) {
+    let sink_app = app.clone();
+    let sink_chat = chat_id.clone();
+    let sink_turn = turn_id.clone();
+    let sink_message = message_id.clone();
+    run_turn_with_sink(
+        app,
+        chat_id,
+        turn_id,
+        message_id,
+        request,
+        stop,
+        move |event| {
+            emit(
+                &sink_app,
+                &sink_chat,
+                &sink_turn,
+                sink_message.as_deref(),
+                event,
+            )
+        },
+    )
+    .await;
+}
+
+/// Same Copilot turn with a caller-owned event sink, so the desktop runtime can project the shared lifecycle.
+pub(crate) async fn run_turn_with_sink(
+    app: AppHandle,
+    chat_id: String,
+    turn_id: String,
+    message_id: Option<String>,
+    request: TurnRequest,
+    stop: ag_adapters::agent::interrupt::StopToken,
+    mut out: impl FnMut(AgentEvent),
+) {
     let refused: Refusals = Arc::default();
     let permissions = Arc::new(CopilotPermissions {
         app: app.clone(),
@@ -140,17 +174,10 @@ pub(crate) async fn run_turn(
         allowed: request.allowed_tools.clone(),
         refused: Arc::clone(&refused),
     });
-    let sink = |event: AgentEvent| emit(&app, &chat_id, &turn_id, message_id.as_deref(), event);
-    let result = run_turn_core(&chat_id, request, permissions, stop, refused, sink).await;
+    let result = run_turn_core(&chat_id, request, permissions, stop, refused, &mut out).await;
     forget_pending(&turn_id);
     if let Err(error) = result {
-        emit(
-            &app,
-            &chat_id,
-            &turn_id,
-            message_id.as_deref(),
-            AgentEvent::Error { message: error },
-        );
+        out(AgentEvent::Error { message: error });
     }
 }
 

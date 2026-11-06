@@ -129,7 +129,7 @@ mod tests {
             .anthropic
             .console_prepaid_credits
             .contains("{org}"));
-        assert_eq!(endpoints.local.len(), 3);
+        assert_eq!(endpoints.local.len(), 5);
         assert!(endpoints
             .local
             .iter()

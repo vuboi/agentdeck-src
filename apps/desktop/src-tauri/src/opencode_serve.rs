@@ -236,8 +236,32 @@ pub(crate) async fn run_turn(
     req: TurnRequest,
     mut stop: StopToken,
 ) {
-    let mut out =
-        |event: AgentEvent| crate::copilot::emit(&app, &chat, &turn, message_id.as_deref(), event);
+    let sink_app = app.clone();
+    let sink_chat = chat.clone();
+    let sink_turn = turn.clone();
+    let sink_message = message_id.clone();
+    run_turn_with_sink(app, chat, turn, message_id, req, stop, |event| {
+        crate::copilot::emit(
+            &sink_app,
+            &sink_chat,
+            &sink_turn,
+            sink_message.as_deref(),
+            event,
+        )
+    })
+    .await;
+}
+
+/// Same OpenCode turn with a caller-owned event sink, keeping lifecycle projection outside this adapter.
+pub(crate) async fn run_turn_with_sink(
+    app: AppHandle,
+    chat: String,
+    turn: String,
+    message_id: Option<String>,
+    req: TurnRequest,
+    mut stop: StopToken,
+    mut out: impl FnMut(AgentEvent),
+) {
     let (lease, _held) = match acquire().await {
         Ok(held) => held,
         Err(message) => return out(AgentEvent::Error { message }),

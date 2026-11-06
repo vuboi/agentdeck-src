@@ -18,7 +18,7 @@ import {
 } from '../../app/platform/prefs';
 import { applyAgentEvent, closeRestoredTasks } from '../agent-reply';
 import { sendSystemNotification } from '../../app/platform/system-notifications';
-import { answerCopilotPermission } from '../agent';
+import { answerCopilotPermission, type HarnessState } from '../agent';
 import { samePath } from '../../files/paths';
 import { listen } from '../../app/platform/tauri-event';
 import { lastChat } from './turns.svelte';
@@ -344,6 +344,28 @@ export const runOf = (sessionId: string): RunState =>
     runStates[sessionId] ?? IDLE;
 export function advanceRun(sessionId: string, event: RunEvent) {
     runStates[sessionId] = step(runOf(sessionId), event).state;
+}
+
+export type HarnessView = {
+    turn: string;
+    state: HarnessState;
+    seq: number;
+};
+
+/** Latest provider-neutral lifecycle fact. Kept beside runStates until both reducers share the same counters. */
+export const harnessStates = $state<Record<string, HarnessView>>({});
+export const harnessOf = (sessionId: string): HarnessView | undefined =>
+    harnessStates[sessionId];
+
+export function applyHarnessState(
+    sessionId: string,
+    turn: string,
+    state: HarnessState,
+    seq: number,
+) {
+    const current = harnessStates[sessionId];
+    if (current?.turn === turn && seq <= current.seq) return;
+    harnessStates[sessionId] = { turn, state, seq };
 }
 
 /** What was typed but not sent, per session: switch away and back and it is still there. */

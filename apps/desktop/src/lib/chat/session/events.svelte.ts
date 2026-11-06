@@ -29,7 +29,12 @@ import {
 import { getPref, setPref } from '../../app/platform/prefs';
 import { parseResetAt } from '../recovery/limit-reset';
 import { classifyLimitGate, type LimitGateKind } from '../recovery/limit-gate';
-import { type AgentEvent, listenAgentEvents } from '../agent';
+import {
+    type AgentEnvelope,
+    type AgentEvent,
+    listenAgentEvents,
+    listenHarnessEvents,
+} from '../agent';
 import { logError } from '../../app/platform/error-log.svelte';
 import { chatMetaOf, ledger } from '../index/ledger';
 import { hangTraceOn, logFlow, markStep } from '../../tasks/flow-log';
@@ -83,6 +88,7 @@ import { archiveTurn } from '../content/archive';
 import {
     MODELS,
     advanceRun,
+    applyHarnessState,
     nextId,
     persistLocal,
     replySuggestions,
@@ -1550,7 +1556,9 @@ function beginAutoTurn(sessionId: string, turn: string, messageId?: string) {
 // Streamed text and tool output come as many small events, and each one used to redraw the whole reply on its own: a
 // turn of a few thousand events froze the page. They are applied together every COALESCE_MS, in their order; any other
 // event first applies what came before it, so a stop or a finished turn never overtakes the text it follows.
-const COALESCE_MS = 100;
+// DeepSeek's desktop stream keeps live chunks transient and publishes them in short batches. 32ms matches the Markdown
+// reveal commit cadence, so the UI stays responsive without making every provider token a separate render.
+const COALESCE_MS = 32;
 const STREAMED = new Set<AgentEvent['kind']>([
     'delta',
     'thinking',
@@ -2500,20 +2508,29 @@ function handleEventNow(
 
 if (inTauri() && !isPreviewCopy()) {
     // A fast stream sends dozens of deltas a second; each one re-rendered the chat. Apply them once per frame.
-    let queue: {
-        session: string;
-        turn: string;
-        message_id?: string;
-        event: AgentEvent;
-    }[] = [];
+    let queue: AgentEnvelope[] = [];
     const flush = () => {
         if (!queue.length) return; // already applied by the other of the two triggers
         const batch = queue;
         queue = [];
-        for (const { session, turn, message_id, event } of batch) {
+        for (const {
+            session,
+            turn,
+            message_id,
+            harness_state,
+            harness_seq,
+            event,
+        } of batch) {
             // One event that throws must not drop the rest of the frame: a `done` behind it (of this chat or of another
             // running at the same time) would be lost, and that chat would show it is working for ever.
             try {
+                if (harness_state !== undefined && harness_seq !== undefined)
+                    applyHarnessState(
+                        session,
+                        turn,
+                        harness_state,
+                        harness_seq,
+                    );
                 handleAgentEvent(session, event, turn, message_id);
             } catch (error) {
                 console.error('agent event failed', session, event.kind, error);
@@ -2527,4 +2544,12 @@ if (inTauri() && !isPreviewCopy()) {
         requestAnimationFrame(flush);
         setTimeout(flush, 250);
     });
+    void listenHarnessEvents((envelope) =>
+        applyHarnessState(
+            envelope.session,
+            envelope.turn,
+            envelope.state,
+            envelope.seq,
+        ),
+    );
 }

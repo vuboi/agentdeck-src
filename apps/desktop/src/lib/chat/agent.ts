@@ -102,7 +102,30 @@ export type AgentEnvelope = {
     session: string;
     turn: string;
     message_id?: string;
+    /** Provider-neutral lifecycle fact from Rust HarnessRuntime. */
+    harness_state?: HarnessState;
+    /** Monotonic HarnessRuntime event sequence for stale event protection. */
+    harness_seq?: number;
     event: AgentEvent;
+};
+
+export type HarnessState =
+    | 'created'
+    | 'starting'
+    | 'ready'
+    | 'running'
+    | 'waiting_tool'
+    | 'waiting_approval'
+    | 'stopping'
+    | 'completed'
+    | 'failed'
+    | 'cancelled';
+
+export type HarnessEnvelope = {
+    session: string;
+    turn: string;
+    state: HarnessState;
+    seq: number;
 };
 
 /** What a turn is started with, apart from its message. */
@@ -560,6 +583,16 @@ export async function listenAgentEvents(
 ): Promise<() => void> {
     const { listen } = await import('../app/platform/tauri-event');
     return listen<AgentEnvelope>('agent-event', (event) =>
+        onEvent(event.payload),
+    );
+}
+
+/** Subscribe to lifecycle-only updates, including a terminal cancel that has no AgentEvent payload. */
+export async function listenHarnessEvents(
+    onEvent: (envelope: HarnessEnvelope) => void,
+): Promise<() => void> {
+    const { listen } = await import('../app/platform/tauri-event');
+    return listen<HarnessEnvelope>('agent-harness', (event) =>
         onEvent(event.payload),
     );
 }

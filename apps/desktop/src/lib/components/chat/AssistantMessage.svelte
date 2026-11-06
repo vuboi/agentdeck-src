@@ -10,6 +10,7 @@
         replyRendering,
         workspace,
     } from '../../chat/sessions.svelte';
+    import { harnessOf } from '../../chat/session/state.svelte';
     import { fly } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import { runPosition } from '../../chat/content/chat-dividers';
@@ -93,6 +94,7 @@
     );
     // Live only while the chat really runs: a reply left marked live (a lost "done") shows its footer.
     const showLive = $derived(message.live && isRunning(sid));
+    const harness = $derived(harnessOf(sid));
     // The footer (copy, fork, time) waits until the text has been written out on screen, not only until the run ends.
     const typing = $derived(!showLive && replyRendering(sid, message.id));
     // Any provider: text that stops growing while the turn runs is no longer being written. The agent is deciding or
@@ -118,7 +120,7 @@
     });
     const line = $derived.by(() => {
         if (!showLive) return null;
-        const now = liveLine(message);
+        const now = liveLine(message, harness?.state);
         if (!isWriting(now)) return now;
         return paused ? { label: 'Thinking', spinner: LOADER.thinking } : null;
     });

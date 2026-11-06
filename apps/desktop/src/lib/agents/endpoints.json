@@ -76,6 +76,16 @@
       "kind": "openai",
       "label": "llama.cpp",
       "base": "http://127.0.0.1:8080/v1"
+    },
+    {
+      "kind": "openai",
+      "label": "vLLM",
+      "base": "http://127.0.0.1:8000/v1"
+    },
+    {
+      "kind": "openai",
+      "label": "Jan",
+      "base": "http://127.0.0.1:1337/v1"
     }
   ],
   "freeCloud": [
@@ -157,6 +167,33 @@
       "model": "MiniMax-M2.5",
       "note": "Fast coding and agent models",
       "keyUrl": "https://platform.minimax.io/user-center/basic-information/interface-key",
+      "capabilities": ["chat", "coding", "tools", "reasoning"]
+    },
+    {
+      "name": "MiniMax (China)",
+      "base": "https://api.minimaxi.com/v1",
+      "keyEnv": "MINIMAX_API_KEY",
+      "model": "MiniMax-M2.5",
+      "note": "MiniMax China API endpoint",
+      "keyUrl": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+      "capabilities": ["chat", "coding", "tools", "reasoning"]
+    },
+    {
+      "name": "Kimi (Moonshot China)",
+      "base": "https://api.moonshot.cn/v1",
+      "keyEnv": "MOONSHOT_API_KEY",
+      "model": "kimi-k2.5",
+      "note": "Moonshot China API endpoint",
+      "keyUrl": "https://platform.moonshot.cn/console/api-keys",
+      "capabilities": ["chat", "coding", "tools", "vision"]
+    },
+    {
+      "name": "GLM (Z.AI China)",
+      "base": "https://open.bigmodel.cn/api/paas/v4",
+      "keyEnv": "ZAI_API_KEY",
+      "model": "glm-4.7",
+      "note": "Z.AI China API endpoint",
+      "keyUrl": "https://open.bigmodel.cn/usercenter/apikeys",
       "capabilities": ["chat", "coding", "tools", "reasoning"]
     },
     {

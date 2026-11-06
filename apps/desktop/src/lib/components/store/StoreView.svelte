@@ -43,6 +43,7 @@
     import StoreBar from './StoreBar.svelte';
     import StoreAddDialog from './StoreAddDialog.svelte';
     import StoreDiscover from './StoreDiscover.svelte';
+    import DshPluginStore from './DshPluginStore.svelte';
     import StoreEmpty from './StoreEmpty.svelte';
     import StoreSkeleton, { GUTTER, ROW } from './StoreSkeleton.svelte';
     import StoreSources from './StoreSources.svelte';
@@ -363,6 +364,7 @@
 
         {#if section === 'mcp'}
             <div class="flex min-h-0 flex-1 flex-col">
+                <DshPluginStore />
                 <McpView
                     {category}
                     query={searched.value}

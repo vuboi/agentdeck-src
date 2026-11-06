@@ -289,3 +289,206 @@ Chưa làm / cần kiểm:
 - `pnpm check`: 0 lỗi (cần `NODE_OPTIONS=--max-old-space-size=8192`, mặc định hết bộ nhớ). Test chat/tasks: 190/190.
 - Rust desktop: `cargo check -p agentdeck-desktop` thất bại do artifact trong `target/` hỏng (rustc `STATUS_STACK_BUFFER_OVERRUN` ở build script của tauri-plugin-fs, `can't find crate tauri`). Chưa xác minh được Rust desktop. Cần `cargo clean` (hoặc xoá `target/`) rồi build lại trong VS dev shell.
 - Chưa làm và lý do: W5b Codex steer tới thread con (cần protocol app-server thật để xác minh `expectedTurnId` của thread con); deliver `AutoTurn` của Claude (cần đường mới trong `tail.rs`); dòng "Synced N changes" trong group.
+
+---
+
+# AgentDeck Harness Core and DeepSeek Harness Integration Plan
+
+## Goal
+
+Build a provider-neutral Harness Core for stable sessions, streams, tools, approvals, sub-agents, process cleanup, and UI state. Integrate DeepSeek Harness through ACP or SDK JSON-RPC as first external runtime.
+
+## Scope
+
+- Preserve Svelte 5 and Tauri.
+- Preserve existing provider behavior.
+- Do not embed Cordis or replace AgentDeck persistence wholesale.
+- Add dsh profile, skill, plugin, MCP, and UI integration behind opt-in.
+
+## Audit conclusions
+
+DeepSeek Harness source audit found the most useful patterns: scoped plugin lifecycle, profile/bundle composition, explicit turn/step state, durable event projection, versioned resume, bidirectional approvals, parent/child sessions, serialized stream delivery, quiescent shutdown, typed desktop readiness/fatal recovery, and UI capability contributions.
+
+AgentDeck already has useful foundations: Rust process ownership, provider adapters, event protocol, stream coalescing, MCP settings, recovery, delegation, child-agent state, and Tauri IPC. The work should add contracts around those pieces instead of replacing them.
+
+## Architecture
+
+AgentDeck UI -> canonical runtime events/snapshots -> Harness Core -> provider adapters -> existing CLIs or dsh ACP/SDK.
+
+Harness Core capabilities:
+
+- SessionStore
+- AgentRuntime
+- EventBus
+- ToolRegistry
+- ApprovalBroker
+- ChildAgentRegistry
+- McpRegistry
+- ProcessRuntime
+- ProviderAdapter registry
+
+## Runtime contract
+
+State: created, starting, ready, running, waiting_tool, waiting_approval, stopping, completed, failed, cancelled.
+
+Events: session_started, turn_started, step_started, assistant_delta, tool_started, tool_progress, tool_finished, approval_requested, approval_resolved, subagent_started, subagent_finished, file_changed, turn_completed, turn_failed, turn_cancelled, session_status.
+
+Each event carries stable session, turn, step, tool-call, and parent-child identifiers where applicable. Durable events and live notifications are separate. UI coalescing must preserve sequence and terminal settlement.
+
+Each session owns its process, child agents, MCP attachments, approvals, subscriptions, and cleanup. Close means cancel, drain, stop, flush, and dispose in dependency order.
+
+## Phase 0: baseline
+
+- Keep all unrelated changes in the original checkout.
+- Record Rust, Svelte, package, and native runtime checks.
+- Freeze event IDs, lifecycle states, errors, approval, cancellation, and cleanup contracts.
+- Do not change existing provider behavior.
+
+Acceptance: clean isolated worktree, recorded baseline, contract types compile.
+
+## Phase 1: Harness Core
+
+- Add provider-neutral runtime seams at the current Rust adapter boundary.
+- Add disposer-based registration and per-session scope.
+- Keep existing providers behind compatibility adapters.
+- Add runtime snapshots for UI reads.
+- Add fake provider full-turn test.
+
+Acceptance: one terminal result, idempotent cancel, no process/subscription leak.
+
+## Phase 2: events, replay, recovery
+
+- Version canonical event envelope.
+- Project transcript, activity, tool cards, approvals, child agents, and usage.
+- Reconcile interrupted streams and tool calls on reload.
+- Keep current persistence/index where sufficient.
+- Make resume a real session runtime operation, not a hidden continuation prompt.
+
+Acceptance: deterministic replay, no duplicate messages, recoverable interruption, preserved parent-child identity.
+
+## Phase 3: process supervisor
+
+- Centralize start, stderr drain, stall detection, timeout, cancellation, tree cleanup, and exit classification.
+- Preserve Windows console suppression and integrated terminal behavior.
+- Prevent duplicate runtime processes per session.
+- Add bounded restart diagnostics.
+- Normalize existing CLI adapters incrementally.
+
+Acceptance: noisy stderr cannot block, silent process gets clear error, cancel closes process tree, existing providers do not regress.
+
+## Phase 4: dsh ACP/SDK adapter
+
+- Add DeepSeek Harness provider descriptor.
+- Start dsh --profile acp or dsh --profile sdk through ProcessRuntime.
+- Implement newline-delimited JSON-RPC framing, correlation, notifications, malformed-frame handling, and shutdown.
+- Implement initialize, session creation, prompt receipt, session.event, status, wait, resume, working-directory, cancel, and shutdown.
+- Map dsh assistant, tool, approval, sub-agent, error, status, and completion events to canonical events.
+- Send AgentDeck approval decisions back to dsh.
+
+Acceptance: early prompt receipt, incremental stream, tool/approval cards without dsh-specific branches, same-session resume, no orphan process.
+
+## Phase 5: dsh plugin and skill bridge
+
+- Add settings for executable, profile, home, model, and workspace.
+- Add profile health/version checks.
+- Add plugin discovery and compatibility diagnostics.
+- Support explicit local/package plugin operations.
+- Keep install, enable, disable, and reset separate from chat execution.
+- Display profile capabilities: tools, MCP, sub-agents, approval, and UI metadata.
+- Prevent plugins from silently changing AgentDeck global providers or permissions.
+
+Acceptance: disposable profile loads a plugin and exposes its tool; invalid plugin fails before ready; reset restores known composition.
+
+## Phase 6: MCP, sandbox, workspace policy
+
+- Make MCP lifecycle provider-neutral and session-scoped.
+- Expose health, testing, failure, retry, and usage to existing MCP UI.
+- Define read-only, workspace-write, and workspace-write plus private-temp modes.
+- Keep Windows ACL/job support behind platform capabilities.
+- Control inherited environment, stdio, handles, and working-directory boundaries.
+
+Acceptance: MCP operations observable, session close cleans owned servers, workspace boundaries hold, Windows native process does not flash a console.
+
+## Phase 7: UI update
+
+Keep Svelte 5 and Tauri. Learn from dsh desktop/Web UI:
+
+- Session shell phases: blank, loading, active, waiting, error.
+- Tool cards with lifecycle, progress, output, and retry.
+- Approval cards with detail, warning, allow-once, reject, expiry, and transport retry.
+- Root/child session sidebar with stable identity.
+- One-shot child session with read-only composer.
+- Settings contributed by capability/profile metadata.
+- Typed host readiness and fatal recovery.
+- Runtime-event-based loading/error state, not text heuristics.
+- Per-session stream coalescing while preserving event order.
+
+Acceptance: runtime screenshot checks for chat, tool, approval, child session, settings, loading, and error; every UI state maps to event/snapshot.
+
+## Phase 8: verification and rollout
+
+- Fake runtime tests: slow/broken stream, approval, tool failure, child agent, duplicate/out-of-order event, cancel, crash, resume.
+- Fake JSON-RPC ACP/SDK server tests.
+- Disposable dsh profile smoke tests.
+- Svelte, Rust, focused adapter, Preview, and native Windows checks.
+- Feature flag or provider opt-in first.
+- Remove compatibility paths only after replay, protocol, and cleanup pass.
+
+## Risks and stop conditions
+
+- dsh is developer preview; pin audited version and isolate profiles.
+- Do not migrate all providers before canonical replay and cleanup are stable.
+- Require restart if plugin reload cannot prove quiescence.
+- Keep sandbox capability disabled when platform proof is incomplete.
+- Stop if event replay is nondeterministic, approval correlation is unsafe, cancel/resume is unstable, existing providers regress, or UI state cannot be traced to runtime facts.
+
+## Expected checks
+
+    pnpm exec svelte-check
+    pnpm exec vitest run <focused frontend tests>
+    pnpm test --filter <focused package>
+    cargo test -p <focused crate>
+    cargo check -p <focused crate>
+    pnpm dev
+
+Runtime proof must distinguish static checks, fake protocol tests, disposable dsh smoke tests, Preview UI checks, and native Tauri checks.
+
+## Implementation status (2026-11-07)
+
+### Master completion checklist
+
+- [x] Provider-neutral Harness lifecycle for CLI, custom API, Copilot, OpenCode, Command Code, Kimi, MiniMax, Z.AI, and local model routes.
+- [x] Shared MCP/OfficeCLI route for workbook and office-tool calls.
+- [x] MCP Store dsh plugin install/remove bridge.
+- [x] Stream coalescing, stale turn protection, live Harness status, and caret hidden from the reply UI.
+- [x] Regional cloud presets and local host discovery for Ollama, LM Studio, llama.cpp, vLLM, and Jan.
+- [ ] Durable canonical event store with deterministic replay and interrupted-turn recovery.
+- [ ] Approval broker with provider request correlation, expiry, resolve, reject, and retry transport.
+- [ ] Session-scoped child Harness runtimes with parent/child event identity and cleanup.
+- [ ] Process supervisor with stderr drain, stall timeout, tree cleanup, bounded restart, and Windows exit proof.
+- [ ] dsh SDK/ACP provider adapter with prompt receipt, event stream, resume, approval, cancellation, and shutdown.
+- [ ] dsh profile/plugin capability health, version diagnostics, reset, and disposable smoke profile.
+- [ ] Provider health, quota, latency telemetry, routing fallback, and offline/local preference policy.
+- [ ] MCP session lifecycle, sandbox modes, inherited environment policy, and Windows handle/ACL proof.
+- [ ] Google Sheets OAuth/MCP connector for online spreadsheets; `.xlsx` remains covered by OfficeCLI.
+- [ ] Runtime UI for tool progress/retry, approval expiry, child sessions, recovery, transport errors, and settings capabilities.
+- [ ] Contract, protocol, provider, frontend, Preview, and native Windows verification matrix.
+
+- MCP Store integration started: `apps/desktop/src-tauri/src/store/dsh.rs` delegates plugin installation and removal to the official `dsh plugin --profile sdk` commands and reads `$DSH_HOME/profiles/sdk/package.json` for the installed list.
+- DSH compatibility boundary: dsh keeps ownership of profile composition, manifest format, dependency resolution, and external bundle lifecycle. AgentDeck does not rewrite dsh manifests, repackage bundles, or model dsh plugins as native MCP providers.
+- MCP Store UI started: `DshPluginStore.svelte` is embedded in the existing MCP Store section and supports package, git, and local plugin specs plus removal.
+- Phase 0: isolated worktree retained; existing provider behavior untouched.
+- Phase 1 started: `crates/orchestrator/src/harness.rs` now owns the provider-neutral session lifecycle, ordered event envelope, runtime snapshot, tool/approval/child-agent transitions, and idempotent cancellation boundary.
+- Phase 1 evidence: `cargo fmt --all` and `cargo test -p ag-orchestrator` pass; 9 unit tests pass.
+- Phase 1 runtime wiring: existing `agent_runs` now projects every provider `AgentEvent` through `HarnessRuntime` while preserving the legacy `agent-event` stream. Envelopes carry `harness_state` and monotonic `harness_seq`; parallel tools, multiple approvals, child tasks, completion, failure, and cancellation share one lifecycle boundary.
+- Phase 1 regression proof: focused Harness tests pass, including parallel-tool waiting; `pnpm -r --if-present run check` passes with 0 Svelte errors and 0 warnings.
+- Phase 4 foundation started: `crates/adapters/src/dsh_protocol.rs` now provides incremental NDJSON framing, CRLF handling, malformed-frame diagnostics, and newline encoding; 3 focused tests pass.
+- Phase 4 transport boundary extended: JSON-RPC request correlation, notification separation, pending-response tracking, and shutdown state now require actual process exit before a future resume/restart. Focused adapter tests: 5 pass.
+- Phase 4 protocol decision: use dsh SDK as the primary runtime path for early `session/prompt` receipt and durable `session.event`; retain ACP compatibility for standard session, permission, cancel, and resume semantics. SDK cancellation remains a supervisor restart boundary until dsh exposes a wire-level `session/cancel`.
+- Phase 2 started: `agent-event` now preserves Harness metadata through the frontend frame queue, applies stale turn/sequence protection, and projects lifecycle facts into a dedicated `harnessStates` store. Live reply status consumes `waiting_tool`, `waiting_approval`, `starting`, and `stopping` without replacing the existing tool/task reducer.
+- Phase 2 lifecycle safety: scoped child events no longer mutate the parent Harness terminal state; cancellation emits a separate `agent-harness` terminal envelope for the frontend.
+- Provider coverage extended: custom OpenAI-compatible turns, Copilot SDK turns, and OpenCode server turns now accept the shared Harness event sink; legacy `agent-event` emission remains intact and each path emits terminal Harness status.
+- Provider matrix extended: official Kimi, MiniMax, Z.AI, Command Code and regional China API presets share the custom provider adapter and Harness path; local discovery now probes Ollama, LM Studio, llama.cpp, vLLM, and Jan. OfficeCLI remains the shared MCP route for Word, Excel/Sheets, and PowerPoint, so custom API providers inherit the same tool surface through the existing MCP Store/config bridge.
+- Phase 7 stream UI slice: live AgentEvent chunks now coalesce at 32ms to match the Markdown reveal cadence, and streamed replies expose `aria-busy` while text is still arriving; the visual caret is hidden. Existing block reuse, word-safe reveal, and deferred code highlighting remain intact.
+- dsh ACP/SDK adapter, durable replay, process supervisor, MCP policy, UI projection, and native runtime checks remain pending.
+- Verification: `cargo test -p ag-orchestrator harness::tests` passed with 4 tests; `cargo test -p ag-adapters dsh_protocol::tests` passed with 5 tests; `git diff --check` passed. Full desktop Cargo validation is blocked by the pre-existing `whisper-rs-sys` native build requiring unavailable Visual Studio 18 2026 and `stdbool.h`. Workspace TypeScript/Svelte validation is blocked because this worktree has no installed `node_modules`.

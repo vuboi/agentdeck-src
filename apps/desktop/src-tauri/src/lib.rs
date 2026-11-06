@@ -2672,6 +2672,8 @@ pub fn run() {
             store::store_skill_remove,
             store::store_plugin_set,
             store::store_plugin_uninstall,
+            store::store_dsh_plugin_install,
+            store::store_dsh_plugin_remove,
             mcp_manage::mcp_test,
             mcp_manage::mcp_add,
             mcp_providers::mcp_provider_set,
