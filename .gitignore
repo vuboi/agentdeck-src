@@ -37,3 +37,10 @@
 !apps/desktop/.env.production
 *.key.old
 .svelte-kit/
+
+# local MCP endpoint with a session token; never commit
+.mcp.json
+# code graph index data (generated)
+.codegraph/
+# build output of a second target dir
+target-dev2/
