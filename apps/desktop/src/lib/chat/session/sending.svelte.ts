@@ -55,7 +55,8 @@ import {
     closePendingPermissions,
     continueCurrentRun,
     liveReplies,
-    messagesOf,
+    messagesView,
+    ensureMessages,
     needsUserInput,
     openQuestions,
     pendingInput,
@@ -288,7 +289,7 @@ export function sendImmediate(sessionId: string, item: Queued) {
     }
     const preface = listener
         ? handoffDigest(
-              messagesOf(sessionId),
+              messagesView(sessionId),
               'The user sent a new message while your previous task continues in the background. Handle this request independently and keep your reply under the new message. Avoid modifying files likely owned by the still-running task; if the requests conflict, explain the conflict before changing shared files. Do not claim the background task has finished.',
           )
         : undefined;
@@ -332,7 +333,7 @@ export const queuedCount = (sessionId: string) =>
 /** Sends a delegated worker its task again: the last message of its own chat that was written by the user. For a worker
  *  that failed or was interrupted; the new reply goes in the worker's chat, where the run can open it. */
 export function retryWorker(childId: string) {
-    const last = [...messagesOf(childId)]
+    const last = [...messagesView(childId)]
         .reverse()
         .find((message) => message.role === 'user');
     const text =
@@ -370,7 +371,7 @@ export function editMessage(
     const session = activeSession();
     if (!session || !text.trim()) return;
     beginSessionWork(session.id);
-    const list = messagesOf(session.id);
+    const list = ensureMessages(session.id);
     const index = list.findIndex(
         (message) => message.id === messageId && message.role === 'user',
     );
@@ -636,7 +637,7 @@ export function send(
         delete resumeAutoChoice[sessionId];
         delete resumeSince[sessionId];
     }
-    const messages = messagesOf(sessionId);
+    const messages = ensureMessages(sessionId);
     if (
         extra.silent &&
         extra.prompt &&
@@ -825,7 +826,7 @@ function compressContext(session: SessionItem) {
  *  compaction, then the queue. True when a compaction started (the caller waits for it to finish). */
 export function compressIfNeeded(sessionId: string): boolean {
     const session = workspace.sessions.find((item) => item.id === sessionId);
-    if (!session || !needsCompress(session, messagesOf(sessionId)))
+    if (!session || !needsCompress(session, messagesView(sessionId)))
         return false;
     compressContext(session);
     return true;
@@ -843,7 +844,7 @@ export function handoffFor(sessionId: string, prompt: string): string {
     const session = workspace.sessions.find((item) => item.id === sessionId);
     return needsContext(prompt)
         ? handoffDigest(
-              messagesOf(sessionId),
+              messagesView(sessionId),
               undefined,
               contextLimitOf(session),
           )
@@ -955,7 +956,7 @@ export function forkSession(sourceId: string, fromMessageId?: string) {
     if (!source) return;
     const id = nextId();
     // Fork from a message: only the chat up to and including it. Turns after it (and a run still going) stay with the parent.
-    const all = messagesOf(sourceId);
+    const all = messagesView(sourceId);
     const cut = fromMessageId
         ? all.findIndex((message) => message.id === fromMessageId)
         : -1;

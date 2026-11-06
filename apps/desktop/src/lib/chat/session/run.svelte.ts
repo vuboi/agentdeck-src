@@ -550,7 +550,7 @@ export function startTurn(
     );
     // The chat's ledger: the turns before the one being sent (a hand-back, `silent`, has no message of its own). A
     // background lane never reads it here: its prompt carries its own digest (see `sendImmediate`).
-    const chatHistory = messagesOf(session.id);
+    const chatHistory = messagesView(session.id);
     const ledger = silent ? chatHistory : chatHistory.slice(0, -1);
     const accountGen = accountEpoch[session.agent] ?? 0;
     // The id a new conversation gets: Claude takes one we choose (an account switch keeps the id it had per account);
@@ -607,7 +607,7 @@ export function startTurn(
             session.forkContext =
                 (session.forkContext ?? '') +
                 handoffDigest(
-                    messagesOf(session.id),
+                    messagesView(session.id),
                     reason === 'model' ? MODEL_LEAD : undefined,
                 );
             digested = true;
@@ -632,7 +632,7 @@ export function startTurn(
         `turn=${turn} agent=${session.agent} model=${selectedModel ?? session.model ?? '-'} resume=${resume} silent=${Boolean(silent)} worker=${isWorkerChat(session.id)}`,
     );
     if (!isWorkerChat(session.id)) prewarmFallback(session);
-    const list = messagesOf(session.id);
+    const list = messagesView(session.id);
     const asked = silent ? undefined : list.at(-1);
     // A silent turn (the hand-back) continues the finished reply that handed work out: it is one message on screen.
     const host = silent ? list.at(-1) : undefined;
@@ -1301,7 +1301,7 @@ export function continueCurrentRun(sessionId: string): string {
         liveReplies[sessionId]?.runGroup ??
         nextId();
     continuationGroups[sessionId] = group;
-    const current = liveReplies[sessionId] ?? messagesOf(sessionId).at(-1);
+    const current = liveReplies[sessionId] ?? ensureMessages(sessionId).at(-1);
     if (current?.role === 'assistant') current.runGroup = group;
     return group;
 }
@@ -1373,8 +1373,17 @@ export function withLive(sessionId: string, list: Message[]): Message[] {
     return next;
 }
 
-/** Messages of a session: its own list (see `messagesById`), whichever chat is open. */
-export function messagesOf(sessionId: string): Message[] {
+/** Read-only view of a session's messages, safe inside `$derived`, templates and getters. It never creates or stores
+ *  a list: a read must not write state, which Svelte rejects while it renders. Writers use `ensureMessages`. */
+export function messagesView(sessionId: string): Message[] {
+    if (sessionId === workspace.activeId && chat.messages === mockMessages)
+        return mockMessages;
+    return messagesById.get(sessionId) ?? localMessages[sessionId] ?? [];
+}
+
+/** The session's own list (see `messagesById`), created and stored if it has none. Only for write paths (send, apply
+ *  events, load history, fork, delete): a list it returns is the one the chat keeps, so a write to it is kept. */
+export function ensureMessages(sessionId: string): Message[] {
     if (sessionId === workspace.activeId && chat.messages === mockMessages)
         setMessages(sessionId, [...mockMessages]);
     let list = messagesById.get(sessionId);
@@ -1382,13 +1391,14 @@ export function messagesOf(sessionId: string): Message[] {
         list = localMessages[sessionId] ??= [];
         messagesById.set(sessionId, list);
     }
+    // Dev guard (R2): a write path reached from a reactive read would store state while it renders.
+    if (import.meta.env.DEV && $effect.tracking())
+        console.error(
+            new Error(
+                `ensureMessages(${sessionId}) called during a reactive read`,
+            ),
+        );
     return list;
-}
-
-/** Read-only view of a chat's messages, safe inside `$derived` and templates: it never creates or stores a list
- *  (`messagesOf` does, and writing state while a derived is computed is an error). */
-export function messagesView(sessionId: string): Message[] {
-    return messagesById.get(sessionId) ?? localMessages[sessionId] ?? [];
 }
 
 /** What the latest user turn still waits for: a permission request, or questions the agent asked. */
@@ -1462,7 +1472,7 @@ const cancelNotes = new SvelteSet<string>();
 function addCancelNote(sessionId: string) {
     cancelNotes.delete(sessionId);
     const session = workspace.sessions.find((item) => item.id === sessionId);
-    const list = messagesOf(sessionId);
+    const list = ensureMessages(sessionId);
     const last = list.at(-1);
     const lastBlock = last?.blocks.at(-1);
     if (
@@ -1487,7 +1497,7 @@ function addCancelNote(sessionId: string) {
  *  task was cancelled. */
 export function cancelPending(sessionId: string) {
     if (replies[sessionId] || !pendingInput(sessionId)) return;
-    const list = messagesOf(sessionId);
+    const list = ensureMessages(sessionId);
     for (let index = list.length - 1; index >= 0; index--) {
         const message = list[index];
         if (message.role === 'user') break;
@@ -1510,7 +1520,7 @@ export function cancelPending(sessionId: string) {
 /** Closes the permission requests the latest user turn left unanswered, as "not answered" (what the cards say), and for a
  *  Copilot turn, which holds the request open, refuses it so that turn can end. */
 export function closePendingPermissions(sessionId: string) {
-    const list = messagesOf(sessionId);
+    const list = ensureMessages(sessionId);
     for (let index = list.length - 1; index >= 0; index--) {
         const message = list[index];
         if (message.role === 'user') break;

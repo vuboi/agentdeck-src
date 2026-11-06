@@ -55,7 +55,7 @@ import {
 import {
     liveAsks,
     liveReplies,
-    messagesOf,
+    messagesView,
     replies,
     sessionLanes,
     withLive,
@@ -132,7 +132,7 @@ export async function conversationForExport(
             sourcePath: session.path,
         };
     }
-    const messages = messagesOf(sessionId);
+    const messages = messagesView(sessionId);
     return {
         title: session.title,
         messages: JSON.parse(JSON.stringify(messages)) as Message[],
@@ -566,7 +566,7 @@ void getPref<Record<string, Message[]>>('chat.otherTurns').then((saved) => {
     if (saved) Object.assign(otherTurns, saved);
 });
 export function keepOtherTurn(session: SessionItem, reply: Message) {
-    const list = messagesOf(session.id);
+    const list = messagesView(session.id);
     const index = list.indexOf(reply);
     const asked =
         index > 0 && list[index - 1].role === 'user' ? [list[index - 1]] : [];

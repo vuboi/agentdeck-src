@@ -54,7 +54,6 @@ import { inTauri } from '../../app/platform/history';
 import { startPageMemoryBridge } from '../../browser/page-memory-bridge';
 import {
     MODELS,
-    localMessages,
     persistLocal,
     workspace,
     type Agent,
@@ -76,7 +75,8 @@ import {
     askText,
     liveAsks,
     liveReplies,
-    messagesOf,
+    messagesView,
+    ensureMessages,
     runReplies,
     sendNextQueued,
 } from './run.svelte';
@@ -521,7 +521,7 @@ function startTask(
     let workerTask = task;
     if (replace && old) {
         const transcript = digestOf(
-            messagesOf(old.session.id).filter((message) =>
+            messagesView(old.session.id).filter((message) =>
                 message.blocks.some((block) =>
                     block.kind === 'response'
                         ? Boolean(block.text.trim())
@@ -588,7 +588,7 @@ function startTask(
         });
     // A chat with no messages and no draft flag is not a local chat: the next history import rebuilt the list without it, and a
     // worker waiting for a free place then had no chat to start in.
-    localMessages[id] ??= [];
+    ensureMessages(id);
     delegateTasks[taskId] = {
         id: taskId,
         caller: caller.id,
