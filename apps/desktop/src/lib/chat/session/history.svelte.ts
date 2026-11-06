@@ -968,6 +968,7 @@ function mergeWorkMessages(
     debug?: string,
 ): Message[] {
     const restored = [...messages];
+    const claimed = new SvelteSet<number>();
     const work = extras.filter(isWorkMessage);
     let matched = 0;
     let autoPushed = 0;
@@ -975,11 +976,16 @@ function mergeWorkMessages(
     for (const extra of work) {
         const text = responseText(extra);
         const index = restored.findIndex(
-            (message) =>
+            (message, at) =>
                 message.id === extra.id ||
                 (Boolean(text) &&
+                    !claimed.has(at) &&
                     message.role === extra.role &&
-                    responseText(message) === text &&
+                    // A file message holds the reply and what Claude wrote after it (a background result), so an
+                    // archived reply is the start of the file's text, not always all of it.
+                    (responseText(message) === text ||
+                        (extra.role === 'assistant' &&
+                            responseText(message).startsWith(text))) &&
                     (!message.at ||
                         !extra.at ||
                         Math.abs(
@@ -988,7 +994,25 @@ function mergeWorkMessages(
                             10 * 60_000)),
         );
         if (index >= 0) {
-            restored[index] = { ...restored[index], ...extra };
+            claimed.add(index);
+            // What the file says after the archived reply stays on screen, behind the work it started.
+            const ownText = responseText(restored[index]);
+            const tail =
+                text && ownText.startsWith(text)
+                    ? ownText.slice(text.length).trim()
+                    : '';
+            restored[index] = {
+                ...restored[index],
+                ...extra,
+                ...(tail
+                    ? {
+                          blocks: [
+                              ...extra.blocks,
+                              { kind: 'response' as const, text: tail },
+                          ],
+                      }
+                    : {}),
+            };
             matched++;
         } else if (extra.autoTurn) {
             restored.push(extra);

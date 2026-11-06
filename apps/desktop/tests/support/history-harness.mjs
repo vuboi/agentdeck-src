@@ -1,5 +1,6 @@
 import { load } from './load-session.mjs';
 import { mergeTranscripts } from '../../src/lib/chat/session/transcript-merge.ts';
+import { responseText } from '../../src/lib/chat/session/held.ts';
 
 /** Lets the promise chains of the module under test (prefs read at load time, saves) run before an assertion. */
 export const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -53,6 +54,7 @@ export async function historyWith({
     ledger,
     ledgerOn = Boolean(ledger),
     messages = [],
+    archived = [],
 } = {}) {
     if (mixed) prefs['chat.mixed'] = mixed;
     if (otherTurns) prefs['chat.otherTurns'] = otherTurns;
@@ -93,7 +95,7 @@ export async function historyWith({
         restoreCommandImages: async (_id, list) => list,
         stripCommandImageData: (list) => list,
         deleteCommandImages() {},
-        archivedMessages: async () => [],
+        archivedMessages: async () => clone(archived),
         deleteArchivedMessages: async () => {},
         splitAttachments: () => ({ text: '', images: [], files: [] }),
         attachmentBlocks: () => [],
@@ -160,6 +162,7 @@ export async function historyWith({
         resumes: {},
         backlog: new Map(),
         mergeTranscripts,
+        responseText,
     };
     const globals = {
         $state: Object.assign((value) => value, {
