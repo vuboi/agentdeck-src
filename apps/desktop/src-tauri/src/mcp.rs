@@ -597,6 +597,7 @@ pub(crate) fn tool_list() -> Value {
                 })
             })
             .chain(crate::index::tool_defs())
+            .chain(crate::codegraph::tool_defs())
             .chain(crate::devtools::tool_defs())
             .chain(crate::plans::tool_defs())
             .chain(crate::artifacts::tool_defs())
@@ -707,6 +708,12 @@ async fn call_tool(app: &AppHandle, name: &str, args: &Value, chat: &str) -> Val
     }
     if crate::index::is_tool(name) {
         return match crate::index::call(name, args, chat).await {
+            Ok(text) => text_reply(text),
+            Err(error) => error_reply(error),
+        };
+    }
+    if crate::codegraph::is_tool(name) {
+        return match crate::codegraph::call(name, args, chat).await {
             Ok(text) => text_reply(text),
             Err(error) => error_reply(error),
         };
@@ -975,7 +982,7 @@ pub async fn handle(app: &AppHandle, body: &str, chat: &str) -> Option<String> {
             "protocolVersion": params["protocolVersion"].as_str().unwrap_or("2025-06-18"),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "agentdeck", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "The page open in AgentDeck's Preview panel, the browser the user is looking at. To act on it: browser_recall first (what is remembered about this site), else browser_elements or browser_find; then browser_click_element / browser_fill / browser_type / browser_key. A click answers which dialog or menu is open afterwards; check browser_console and browser_network for errors. Take browser_screenshot only to check how something looks or when the DOM tools cannot find it. When a goal is reached, save the steps with browser_remember. For a requested video guide, call browser_record_start with the absolute project root before operating the page, then browser_record_stop when finished; it saves the WebM under docs/user-guides. Computer Use is on by default: computer_screenshot, computer_click, computer_type, computer_press_key and computer_scroll operate the user's Windows desktop immediately; the user can disable these calls in AgentDeck Settings. The code_* tools search an index of the project (symbols, outlines, definitions, references, imports): use them before grepping the tree. delegate_task routes work to another AgentDeck provider; use native sub-agents for internal orchestration when your CLI provides them. Keep ownership of integration and the final answer. Plans: plan_list shows plans every AgentDeck agent shares; only change code for an approved plan, tick its steps with plan_step, and save a new plan with plan_write when you plan multi-step work (it stays a draft until the user approves it in Plans). artifact_create shows an HTML page, SVG, Markdown or code in the user's Canvas panel; update it with artifact_update instead of creating a new one.",
+            "instructions": "The page open in AgentDeck's Preview panel, the browser the user is looking at. To act on it: browser_recall first (what is remembered about this site), else browser_elements or browser_find; then browser_click_element / browser_fill / browser_type / browser_key. A click answers which dialog or menu is open afterwards; check browser_console and browser_network for errors. Take browser_screenshot only to check how something looks or when the DOM tools cannot find it. When a goal is reached, save the steps with browser_remember. For a requested video guide, call browser_record_start with the absolute project root before operating the page, then browser_record_stop when finished; it saves the WebM under docs/user-guides. Computer Use is on by default: computer_screenshot, computer_click, computer_type, computer_press_key and computer_scroll operate the user's Windows desktop immediately; the user can disable these calls in AgentDeck Settings. For a question about how the project works (how X works, how X reaches Y, what an area does), call codegraph_explore first: one call returns the relevant source, call paths and blast radius. The code_* tools search an index of the project (symbols, outlines, definitions, references, imports): use them before grepping the tree. delegate_task routes work to another AgentDeck provider; use native sub-agents for internal orchestration when your CLI provides them. Keep ownership of integration and the final answer. Plans: plan_list shows plans every AgentDeck agent shares; only change code for an approved plan, tick its steps with plan_step, and save a new plan with plan_write when you plan multi-step work (it stays a draft until the user approves it in Plans). artifact_create shows an HTML page, SVG, Markdown or code in the user's Canvas panel; update it with artifact_update instead of creating a new one.",
         }),
         "ping" => json!({}),
         "tools/list" => json!({ "tools": tool_list() }),

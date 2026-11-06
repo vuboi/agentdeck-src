@@ -621,7 +621,7 @@
                                                 <!-- Grey while the version is read; the text morphs into the checked version in green. -->
                                                 <span
                                                     class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.6875rem] tabular-nums transition-colors duration-300 {connectors.detected &&
-                                                    version
+                                                    (version || path)
                                                         ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
                                                         : 'bg-muted text-muted-foreground'}"
                                                 >

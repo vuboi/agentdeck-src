@@ -104,6 +104,7 @@ import {
     updateWorkflowWorker,
 } from './delegation.svelte';
 import {
+    hasCoordinationPrompt,
     queueCoordinationPrompt,
     shorten,
     taskWaiters,
@@ -122,6 +123,7 @@ import { continuePrompt } from '../recovery/turn-failure';
 import {
     canonicalRole,
     firstAvailableRoute,
+    roleOn,
     routesOf,
 } from '../../agents/task-roles';
 import { taskRoles } from '../../agents/task-roles.svelte';
@@ -145,6 +147,8 @@ type Ending = 'user' | 'caller' | 'timeout' | 'abort' | 'cascade' | 'chat';
 const NO_REPORT_ENDINGS: Ending[] = ['user', 'caller', 'cascade', 'chat'];
 /** What a running task needs besides its record: the tool call that waits for its report, the timer, why it is ending. */
 type TaskRun = {
+    /** The worker's first report, kept while its teammates' notes run as turns of their own (see teamNoteDone). */
+    report?: { answer: string; workerReply?: Message };
     callId?: string;
     timer?: ReturnType<typeof setTimeout>;
     ending?: Ending;
@@ -438,7 +442,8 @@ export function bindTasks(callerId: string) {
             kindOfCommand(block.command) === 'delegate_task',
     );
     for (const line of lines) {
-        if (line.taskId) continue;
+        // A refused call (status fail) started no task: it must not take a task that a later call started.
+        if (line.taskId || line.status === 'fail') continue;
         const taken = new SvelteSet(lines.map((item) => item.taskId));
         const free = Object.values(delegateTasks).filter(
             (item) =>
@@ -511,6 +516,7 @@ function planStateOf(depth: number): PlanState {
         sessions: workspace.sessions,
         rows: agentRows,
         routesFor: (role) => routesOf(taskRoles, role),
+        roleOn: (role) => roleOn(taskRoles, role),
         routedFor: (role, rows) => firstRouted(role, rows),
         isRunning: (taskId) => taskRuns.has(taskId),
         customModelId,
@@ -747,6 +753,14 @@ function startTask(
         if (!run.ending && !error && needsApproval(id)) {
             record.state = 'approval';
             taskWaiters.set(id, settle);
+            return;
+        }
+        // Teammates' notes queued for this worker run as turns of their own, after this one. This turn's answer is the
+        // report: it is kept until the note turns are over (teamNoteDone settles it).
+        if (!run.ending && !error && hasCoordinationPrompt(id)) {
+            run.report ??= { answer, workerReply };
+            taskWaiters.set(id, settle);
+            sendNextQueued(id);
             return;
         }
         const verdict: Verdict = run.ending
@@ -1153,6 +1167,24 @@ Call task_answer with this question_id and a focused answer. Do not write a norm
     logFlow(record.childId, 'task ask', `task=${record.id} waits for ${label}`);
 }
 
+/**
+ * A teammate's note turn of a worker ended (answered or failed). The next queued note runs first; when none is left,
+ * the worker's first report is settled, so the task ends with the report it gave before the notes.
+ */
+export function teamNoteDone(childId: string): void {
+    const record = Object.values(delegateTasks).find(
+        (item) => item.childId === childId && taskRuns.has(item.id),
+    );
+    const waiter = taskWaiters.get(childId);
+    if (!record || !waiter) return;
+    if (hasCoordinationPrompt(childId)) return sendNextQueued(childId);
+    // No report kept: the note ran while the worker was paused or waiting for an approval. Its real end still comes.
+    const report = taskRuns.get(record.id)?.report;
+    if (!report) return;
+    taskWaiters.delete(childId);
+    waiter(report.answer, null, report.workerReply);
+}
+
 /** Fallback for a parent that answered the hidden coordination turn in prose instead of calling task_answer. */
 export function answerPendingTaskQuestion(
     questionId: string,
@@ -1213,6 +1245,70 @@ function answerTaskQuestion(
     const record = delegateTasks[pending.taskId];
     answerPendingTaskQuestion(questionId, call.caller, response);
     answer(`Answer delivered to ${record?.label ?? 'the child agent'}.`);
+}
+
+/**
+ * A worker's note to a sibling worker (same parent, so the same team). Queued like a coordination prompt: the receiver
+ * reads it after its current turn. Only a task that is still running can receive it.
+ */
+function teamMessage(
+    call: DelegateCall,
+    answer: (text: string, isError?: boolean) => void,
+): void {
+    const to = typeof call.args.to === 'string' ? call.args.to.trim() : '';
+    const message =
+        typeof call.args.message === 'string' ? call.args.message.trim() : '';
+    if (!to || !message) return answer('to and message are required.', true);
+    const sender = Object.values(delegateTasks).find(
+        (item) => item.childId === call.caller && taskRuns.has(item.id),
+    );
+    if (!sender)
+        return answer(
+            'Only a running worker has teammates: team_message works between the workers of one parent.',
+            true,
+        );
+    const target = delegateTasks[to];
+    if (!target || target.caller !== sender.caller) {
+        const teammates = Object.values(delegateTasks)
+            .filter(
+                (item) =>
+                    item.caller === sender.caller &&
+                    item.id !== sender.id &&
+                    taskRuns.has(item.id),
+            )
+            .map((item) => `${item.id} (${item.label})`);
+        return answer(
+            `No running teammate ${to}.${teammates.length ? ` Running teammates: ${teammates.join(', ')}.` : ' This parent has no other running worker.'}`,
+            true,
+        );
+    }
+    if (target.id === sender.id)
+        return answer('A worker cannot message itself.', true);
+    if (!taskRuns.has(target.id))
+        return answer(
+            `${target.label} is no longer running, so it cannot read the message. Use task_status or delegate_task continue=${target.id}.`,
+            true,
+        );
+    const prompt = `[AgentDeck coordination]
+Message from teammate ${sender.label} (task ${sender.id}):
+${message}
+
+Read this before your next step. Keep working on your own task. If it changes your work or you need something from them, answer with team_message to: ${sender.id}.`;
+    queueCoordinationPrompt(target.childId, {
+        prompt,
+        silent: NO_HANDOUT,
+        deliverable: () => taskRuns.has(target.id),
+        teamNote: true,
+    });
+    sendNextQueued(target.childId);
+    logFlow(
+        sender.childId,
+        'team message',
+        `task=${sender.id} -> task=${target.id}`,
+    );
+    answer(
+        `Message queued for ${target.label}. It is read after that teammate's current turn, and dropped if the teammate has finished by then.`,
+    );
 }
 
 function parentAgent(chatId: string): Agent {
@@ -1845,6 +1941,7 @@ export function onDelegateCall(call: DelegateCall, checked = false) {
     if (call.tool === 'delegate_task') return startTask(call, reply);
     if (call.tool === 'task_ask') return askParent(call, reply);
     if (call.tool === 'task_answer') return answerTaskQuestion(call, reply);
+    if (call.tool === 'team_message') return teamMessage(call, reply);
     const id = call.args.task_id;
     const record = isTaskId(id) ? delegateTasks[id] : undefined;
     if (!record)

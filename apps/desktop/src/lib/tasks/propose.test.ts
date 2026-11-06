@@ -197,6 +197,7 @@ test('each split worker passes the same planner as delegate_task: a worktree, no
             },
         ],
         routesFor: () => [],
+        roleOn: () => true,
         routedFor: () => undefined,
         isRunning: () => false,
         customModelId: (rowId: string, model: string) => `${rowId}/${model}`,

@@ -137,6 +137,7 @@ import {
     pauseDelegateTask,
     resumeDelegateTask,
     taskRuns,
+    teamNoteDone,
 } from './delegate-task.svelte';
 import { attachmentsOf, handoffFor, send } from './sending.svelte';
 import {
@@ -301,7 +302,7 @@ function noteRunFiles(
                 : owner.listener
                   ? 'listener'
                   : 'primary',
-        intentAt: owner.reply.startedAt ?? Date.now(),
+        intentAt: owner.reply.intentAt ?? owner.reply.startedAt ?? Date.now(),
         ...(subId !== undefined ? { subId } : {}),
     };
     if (
@@ -2343,11 +2344,14 @@ function handleEventNow(
             }
             // A worker or a hand-back that is being carried on is not over: its waiter gets the turn that finishes it.
             if (!recovering) {
-                onDelegateDone(
-                    sessionId,
-                    reply,
-                    event.kind === 'error' ? event.message : null,
-                );
+                // A teammate's note turn is not the worker's end: its report was kept (see teamNoteDone).
+                if (coordination?.teamNote) teamNoteDone(sessionId);
+                else
+                    onDelegateDone(
+                        sessionId,
+                        reply,
+                        event.kind === 'error' ? event.message : null,
+                    );
                 finishWorkflowTurn(
                     sessionId,
                     event.kind === 'error' && !recovering,

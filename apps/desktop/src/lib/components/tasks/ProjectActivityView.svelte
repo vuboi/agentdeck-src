@@ -7,7 +7,12 @@
     import Markdown from '../ui/Markdown.svelte';
     import { toast } from '../../app/platform/toast';
     import { inTauri } from '../../app/platform/history';
-    import { workspace } from '../../chat/sessions.svelte';
+    import {
+        activeSession,
+        draftFiles,
+        workspace,
+    } from '../../chat/sessions.svelte';
+    import { saveFileAttachment } from '../../chat/agent';
     import {
         activityEntries,
         loadProjectActivity,
@@ -297,6 +302,37 @@
     function activityBody(markdown: string) {
         return markdown.replace(/(^|[\r\n])## [^\r\n]*(?:\r?\n){2}/, '$1');
     }
+    function copyActivity(markdown: string) {
+        void navigator.clipboard
+            .writeText(markdown)
+            .then(() => toast.success('Copied'))
+            .catch(() => toast.error('Could not access the clipboard'));
+    }
+    async function addActivityToChat(title: string, markdown: string) {
+        const session = activeSession();
+        if (!session) return toast.error('Open a chat first');
+        if (!inTauri()) return toast.error('Attaching needs the desktop app');
+        try {
+            const name = `${safeName(title)}-activity.md`;
+            const bytes = new TextEncoder().encode(markdown);
+            let binary = '';
+            for (const byte of bytes) binary += String.fromCharCode(byte);
+            const path = await saveFileAttachment(name, btoa(binary));
+            draftFiles[session.id] = [
+                ...(draftFiles[session.id] ?? []),
+                {
+                    id: crypto.randomUUID(),
+                    name,
+                    path,
+                    size: bytes.length,
+                    note: 'a project activity log',
+                },
+            ];
+            toast.success('Added to chat');
+        } catch (error) {
+            toast.error(`Could not attach activity log: ${String(error)}`);
+        }
+    }
 </script>
 
 {#snippet dayHeader(group: { key: string; rows: Row[] }, pin: boolean)}
@@ -470,7 +506,39 @@
                     zWave={false}
                     zType="outline"
                     zSize="sm"
-                    class="h-8 gap-1.5 px-3 text-sm"
+                    class="h-8 gap-1.5 px-3 text-sm max-sm:px-2"
+                    aria-label="Add to chat"
+                    title="Add to chat"
+                    onclick={() => {
+                        void addActivityToChat(
+                            selected!.title,
+                            selected!.markdown,
+                        );
+                        modalOpen = false;
+                    }}
+                    ><ZIcon
+                        zType={'lucidePlus' as ZIconName}
+                        class="size-3.5"
+                    /><span class="max-sm:hidden">Add to chat</span></ZButton
+                ><ZButton
+                    zWave={false}
+                    zType="outline"
+                    zSize="sm"
+                    class="h-8 gap-1.5 px-3 text-sm max-sm:px-2"
+                    aria-label="Copy"
+                    title="Copy"
+                    onclick={() => copyActivity(selected!.markdown)}
+                    ><ZIcon
+                        zType={'lucideCopy' as ZIconName}
+                        class="size-3.5"
+                    /><span class="max-sm:hidden">Copy</span></ZButton
+                ><ZButton
+                    zWave={false}
+                    zType="outline"
+                    zSize="sm"
+                    class="h-8 gap-1.5 px-3 text-sm max-sm:px-2"
+                    aria-label="Download"
+                    title="Download"
                     disabled={saving}
                     onclick={() => {
                         void download(
@@ -482,12 +550,18 @@
                     ><ZIcon
                         zType={'lucideDownload' as ZIconName}
                         class="size-3.5"
-                    /> Download</ZButton
+                    /><span class="max-sm:hidden">Download</span></ZButton
                 ><ZButton
                     zWave={false}
                     zSize="sm"
-                    class="h-8 px-3 text-sm"
-                    onclick={() => (modalOpen = false)}>Close</ZButton
+                    class="h-8 gap-1.5 px-3 text-sm max-sm:px-2"
+                    aria-label="Close"
+                    title="Close"
+                    onclick={() => (modalOpen = false)}
+                    ><ZIcon
+                        zType={'lucideX' as ZIconName}
+                        class="size-3.5 sm:hidden"
+                    /><span class="max-sm:hidden">Close</span></ZButton
                 >
             </div>{/snippet}</ZModal
     >{/if}

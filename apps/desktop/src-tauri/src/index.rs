@@ -255,6 +255,7 @@ pub fn set_root(chat: &str, root: &str) {
     if refusal(&root).is_some() {
         return;
     }
+    crate::codegraph::prepare(&root);
     std::thread::spawn(move || {
         let _ = refresh(&root);
     });

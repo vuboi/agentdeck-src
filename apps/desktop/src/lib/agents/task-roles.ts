@@ -165,10 +165,14 @@ export function migrateOff(
     }).map((role) => role.id);
 }
 
-/** The routes a role offers, in priority order: none while the master flag is off or the role is switched off, and rows
- *  without a model are left out. */
+/** Whether a role is in use: the master flag is on and the role is not switched off. */
+export function roleOn(state: RoleState, id: TaskRoleId): boolean {
+    return state.on && !state.off.includes(id);
+}
+
+/** The routes a role offers, in priority order: none while the role is not in use, and rows without a model are left out. */
 export function routesOf(state: RoleState, id: TaskRoleId): string[] {
-    if (!state.on || state.off.includes(id)) return [];
+    if (!roleOn(state, id)) return [];
     return (state.routes[id] ?? []).filter(
         (route) => route.includes('|') && !route.startsWith('source:'),
     );

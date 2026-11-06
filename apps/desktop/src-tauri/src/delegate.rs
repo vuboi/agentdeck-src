@@ -36,7 +36,10 @@ pub const PROPOSE_REPLY: &str = "Proposed to the user; wait for their choice.";
 /// A proposal's title is a short name: under 60 characters.
 const PROPOSAL_TITLE_MAX: usize = 59;
 const PROPOSAL_TASKS: std::ops::RangeInclusive<usize> = 2..=4;
-const TOOLS: [&str; 7] = [
+/// A worker sends a short message to a sibling worker of the same parent (its team). The webview delivers it after the
+/// receiver's current turn; the sender gets the delivery answer at once.
+pub const TEAM_MESSAGE_TOOL: &str = "team_message";
+const TOOLS: [&str; 8] = [
     DELEGATE_TOOL,
     "list_agents",
     "task_status",
@@ -44,6 +47,7 @@ const TOOLS: [&str; 7] = [
     "task_ask",
     "task_answer",
     PROPOSE_TOOL,
+    TEAM_MESSAGE_TOOL,
 ];
 
 pub fn is_tool(name: &str) -> bool {
@@ -120,7 +124,7 @@ pub fn tool_defs() -> Vec<Value> {
                     "agent": { "type": "string", "description": "claude, codex, antigravity, or the id of a local model provider as listed by list_agents. Left out: the agent of the calling chat" },
                     "continue": { "type": "string", "description": "a task_id (e.g. t-ab12cd) or worker chat id of a worker that already answered and is idle: its chat is reused and `task` is sent to it as a follow-up. agent and model may then be left out" },
                     "model": { "type": "string", "description": "a model of that agent as listed by list_agents (a part of its name is enough); left out: the agent's usual one" },
-                    "role": { "type": "string", "description": "the kind of work, as set in Settings > Tasks: read, research, plan, review, security, refactor, coding, test, write, text or logic. AgentDeck then sends the work to the first agent set for that role, so agent and model can be left out" },
+                    "role": { "type": "string", "description": "the kind of work: a role switched on in Settings > Tasks and listed in this chat's task routing note. AgentDeck then sends the work to the first agent set for that role, so agent and model can be left out" },
                     "isolation": { "type": "string", "enum": ["shared", "worktree"], "description": "worktree: the worker gets its own git worktree and branch from this chat's branch, so its file edits stay out of the main checkout until merged. It cannot be combined with depends_on (the worktree starts from the base branch). Default shared." },
                     "task": { "type": "string", "description": "the self-contained task: goal, paths, constraints, what to report back" },
                     "wait": { "type": "boolean", "description": "true (default): wait for the report because the next step depends on it. false: run in the background and return a task_id now" },
@@ -154,6 +158,18 @@ pub fn tool_defs() -> Vec<Value> {
             "name": "task_answer",
             "description": "Answer a task_ask from a child agent. Use the question_id and give the decision or context directly so the child can continue its work.",
             "inputSchema": { "type": "object", "properties": { "question_id": { "type": "string", "description": "the question_id shown in the coordination prompt" }, "answer": { "type": "string", "description": "the answer the child should use" } }, "required": ["question_id", "answer"] },
+        }),
+        json!({
+            "name": TEAM_MESSAGE_TOOL,
+            "description": "Sends a short message to a sibling worker of the same parent agent (your team): the other worker receives it as a coordination note after its current turn. Use it to share a finding or an interface change that affects a teammate's files. It does not wait for a reply and does not reach other chats. To ask the parent, use task_ask instead.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "to": { "type": "string", "description": "the task_id of a running teammate; if it is wrong, the error lists the running teammates" },
+                    "message": { "type": "string", "description": "the message: what changed or was found, and what the teammate should check" }
+                },
+                "required": ["to", "message"]
+            },
         }),
         json!({
             "name": PROPOSE_TOOL,
@@ -327,6 +343,19 @@ pub fn parse_question_id(args: &Value) -> Result<(String, String), String> {
         return Err(format!("answer is longer than {TASK_MAX_CHARS} characters"));
     }
     Ok((id, answer))
+}
+
+/// The arguments of `team_message`: a task_id of a sibling and a message of at most `TASK_MAX_CHARS` characters.
+pub fn parse_team_message(args: &Value) -> Result<(String, String), String> {
+    let to = parse_task_id(&json!({ "task_id": args["to"] }))?;
+    let message = text_of(&args["message"])
+        .ok_or("message is required: what changed or was found, for the teammate")?;
+    if message.chars().count() > TASK_MAX_CHARS {
+        return Err(format!(
+            "message is longer than {TASK_MAX_CHARS} characters"
+        ));
+    }
+    Ok((to, message))
 }
 
 /// How long the call waits for the webview's answer.
@@ -505,6 +534,7 @@ pub async fn call(app: &AppHandle, tool: &str, args: &Value, chat: &str) -> Valu
         "task_status" | "task_stop" => parse_task_id(args).map(|id| json!({ "task_id": id })),
         "task_ask" => parse_question(args).map(|question| json!({ "question": question })),
         "task_answer" => parse_question_id(args).map(|(question_id, answer)| json!({ "question_id": question_id, "answer": answer })),
+        TEAM_MESSAGE_TOOL => parse_team_message(args).map(|(to, message)| json!({ "to": to, "message": message })),
         _ => Ok(json!({})),
     };
     let args = match checked {
@@ -920,10 +950,17 @@ mod tests {
                 "task_stop",
                 "task_ask",
                 "task_answer",
+                "team_message",
                 "propose_session"
             ]
         );
         assert!(names.iter().all(|name| is_tool(name)));
+        assert_eq!(
+            parse_team_message(&json!({ "to": "t-ab12cd", "message": "API changed" })),
+            Ok(("t-ab12cd".to_string(), "API changed".to_string()))
+        );
+        assert!(parse_team_message(&json!({ "to": "../x", "message": "m" })).is_err());
+        assert!(parse_team_message(&json!({ "to": "t-ab12cd", "message": " " })).is_err());
         let text = defs[0]["description"].as_str().unwrap_or_default();
         for phrase in [
             "wait=true",

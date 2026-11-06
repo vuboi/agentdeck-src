@@ -507,6 +507,11 @@ function wordsOf(item: CommandBlock): Omit<Step, 'icon'> {
             verb: verbs('Stopped a task', 'Stopping a task'),
             subject: '',
         };
+    if (delegation === 'team_message')
+        return {
+            verb: verbs('Messaged a teammate', 'Messaging a teammate'),
+            subject: '',
+        };
     if (tool === 'PackageInfo')
         return {
             verb: verbs('Checked the package', 'Checking the package'),

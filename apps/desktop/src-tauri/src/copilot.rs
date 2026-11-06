@@ -280,6 +280,8 @@ async fn run_session(
     let mut last_message: Option<String> = None;
     let mut file_snapshots: HashMap<String, FileSnapshot> = HashMap::new();
     let mut children = Children::default();
+    // The sub-agents started and not yet ended in this run, by task id.
+    let mut open_children: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut finished = false;
     let mut turn_error = None;
     // After an abort the SDK still sends the end of the run (`session.idle`): read up to it so the stream is not cut mid-way.
@@ -334,6 +336,13 @@ async fn run_session(
                     let task = children.lifecycle(&event.event_type, event.agent_id.as_deref(), &event.data);
                     let parent = children.parent_of(event.agent_id.as_deref(), &event.data);
                     if let Some(task) = task {
+                        if let AgentEvent::Task { id, status, .. } = &task {
+                            if status.is_end() {
+                                open_children.remove(id);
+                            } else {
+                                open_children.insert(id.clone());
+                            }
+                        }
                         watchdog.note(&task);
                         out(task);
                     }
@@ -351,8 +360,9 @@ async fn run_session(
                             out(progress);
                         }
                     }
-                    if event.event_type == "system.notification" {
-                        // A shell that ran on its own finished: Copilot goes on by itself with a new turn.
+                    // A shell that ran on its own finished: Copilot goes on by itself with a new turn. While a sub-agent is
+                    // still running, its completion is part of the same answer, so it does not start a new block.
+                    if event.event_type == "system.notification" && open_children.is_empty() {
                         let reason = event.data["kind"]["type"].as_str().unwrap_or("notification").to_string();
                         out(AgentEvent::AutoTurn { reason });
                     }

@@ -26,6 +26,8 @@ export type AgentEvent =
       }
     /** The model a sub-agent call was given; sent right after its `tool_call`. */
     | { kind: 'tool_model'; id: string; model: string }
+    /** The name of a teammate of an agent team; sent right after its `tool_call`. */
+    | { kind: 'teammate'; id: string; name: string }
     | {
           kind: 'tool_result';
           id: string;
@@ -590,7 +592,8 @@ export type DelegateCall = {
         | 'task_status'
         | 'task_stop'
         | 'task_ask'
-        | 'task_answer';
+        | 'task_answer'
+        | 'team_message';
     /** The chat whose agent called; empty when the agent's MCP link names none (Antigravity's stored link). */
     caller: string;
     args: Record<string, unknown>;

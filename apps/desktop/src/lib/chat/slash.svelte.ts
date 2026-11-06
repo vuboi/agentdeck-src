@@ -201,6 +201,15 @@ export const BUILTIN: SlashItem[] = [
             "Design this: $ARGUMENTS\n\nUse the Baoyu Design workflow. First inspect the project context, existing screens, design tokens, UI components and any supplied references. Define the user, the job they need to finish, the content hierarchy and the visual direction before writing code. Reuse the project's existing components and tokens; do not invent a new design system.\n\nCreate a focused concept or interactive prototype in the project's normal format. Prefer a self-contained HTML prototype under designs/<short-slug>/ when the request is exploratory; when the request is for an existing screen, edit the real screen in the project. Make the important states visible: loading, empty, error, success and the main responsive layout when they matter. Use real-looking content with varied lengths instead of filler.\n\nKeep the visual system restrained: clear hierarchy, deliberate spacing, readable typography, one accent colour, no gradients, glass effects, glow, decorative animation, heavy shadows or equal card grids. Check keyboard focus, accessible names, contrast, responsive behaviour and the project's existing interaction patterns. Open the result in the AgentDeck Preview, take a screenshot, inspect the console, and fix visible or functional problems before reporting. Summarise the design decisions, files created or changed, and what you verified. If the request is ambiguous in a way that changes the design, ask one focused question before editing.",
     },
     {
+        name: 'codegraph',
+        description:
+            'Update the CodeGraph index of this project (force: rebuild all)',
+        kind: 'builtin',
+        origin: 'AgentDeck',
+        template:
+            'Update the CodeGraph index of this project. $ARGUMENTS\n\nCall the agentdeck tool codegraph_sync once: with force set to true only when the words above ask for a full rebuild ("force", "rebuild", "làm lại", "tất cả"), otherwise false. Then reply in one line with the result it returned, or the error exactly. Do not call any other tool.',
+    },
+    {
         name: 'research',
         description: 'Research a question quickly, with sources',
         kind: 'builtin',

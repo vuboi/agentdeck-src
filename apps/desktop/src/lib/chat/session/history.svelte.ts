@@ -1,4 +1,5 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { chatFiles } from './chat-files';
 import { messages as mockMessages, type Message, type Block } from '../mock';
 import {
     loadHistory,
@@ -363,6 +364,7 @@ function knownParent(id: string, ids: Set<string>): string | undefined {
 }
 
 function applyHistory(all: HistorySession[]) {
+    indexedIds = new Set(all.map((item) => item.id));
     // The sub chats that exist now keep their parent through this import.
     rememberParents();
     // One entry per id (first = newest): an older cache can still hold a duplicated Codex thread,
@@ -415,8 +417,14 @@ function applyHistory(all: HistorySession[]) {
         filesOf.set(id, files);
     }
     let filesChanged = false;
-    for (const [id, files] of filesOf) {
+    for (const [id, indexed] of filesOf) {
         const saved = mixed[id];
+        // A file the index has not scanned yet (see chat-files.ts) stays in the chat's list.
+        const files = chatFiles(
+            indexed,
+            saved?.paths,
+            saved ? providerAliasesOf(saved) : [],
+        );
         if (files.length > 1) {
             if (!sameFiles(saved?.paths, files)) filesChanged = true;
             mixed[id] ??= {} as SavedProviderState;
@@ -662,6 +670,26 @@ function providerAliasesOf(state: SavedProviderState): string[] {
     return [...aliases];
 }
 
+/** Native ids the last history scan listed. */
+let indexedIds = new Set<string>();
+/** Native ids already asked for a scan in this run, so a thread the index never lists does not scan on every turn. */
+const scannedFor = new SvelteSet<string>();
+let scanSoon: ReturnType<typeof setTimeout> | undefined;
+/**
+ * A chat that already has its file took on another native session (a model or account change): the index has not
+ * listed that file yet, so the chat's files would miss it until the next start. Scan once, shortly, so it joins the chat.
+ */
+function scanForNewAliases(state: SavedProviderState) {
+    if (indexedIds.size === 0) return;
+    const unseen = providerAliasesOf(state).filter(
+        (alias) => !indexedIds.has(alias) && !scannedFor.has(alias),
+    );
+    if (unseen.length === 0) return;
+    for (const alias of unseen) scannedFor.add(alias);
+    clearTimeout(scanSoon);
+    scanSoon = setTimeout(() => void importHistory({ refresh: true }), 1500);
+}
+
 /** Provider ids of a chat, including every thread replaced by a model/account change or edit. */
 export function rememberMixed(session: SessionItem) {
     const current = $state.snapshot({
@@ -686,6 +714,7 @@ export function rememberMixed(session: SessionItem) {
         ...(mixed[session.id]?.paths ? { paths: mixed[session.id].paths } : {}),
     };
     mixed[session.id] = saved;
+    if (!session.draft && session.path) scanForNewAliases(saved);
     if (!mixedHydrated) pendingMixed.set(session.id, saved);
     // Each native session of a chat that has run is bound in the ledger (once per session; a draft has none yet).
     if (ledgerOn() && !session.draft) {

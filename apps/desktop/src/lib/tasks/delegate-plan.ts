@@ -43,6 +43,8 @@ export type PlanState = {
     rows: () => AgentRow[];
     /** The routes configured for a task role, in Settings > Tasks. */
     routesFor: (role: TaskRoleId) => string[];
+    /** Whether a task role is switched on in Settings > Tasks. */
+    roleOn: (role: TaskRoleId) => boolean;
     /** The first configured route of a role that is available now, with its effort. */
     routedFor: (
         role: TaskRoleId,
@@ -111,7 +113,9 @@ export function planTask(input: PlanInput, state: PlanState): PlanResult {
     const configured = roleId ? state.routesFor(roleId) : [];
     if (roleId && !configured.length)
         return refuse(
-            `No route is configured for task role "${roleId}" in Settings > Tasks. Choose an agent there or call delegate_task without role to select one directly.`,
+            state.roleOn(roleId)
+                ? `No route is configured for task role "${roleId}" in Settings > Tasks. Choose an agent there or call delegate_task without role to select one directly.`
+                : `Task role "${roleId}" is switched off in Settings > Tasks. Call delegate_task without role to select an agent directly, or ask the user to switch the role on.`,
         );
     const dependencies = [...new Set(args.dependsOn)];
     for (const dependencyId of dependencies)

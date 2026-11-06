@@ -102,6 +102,15 @@ function cardTask(tasks: Record<string, TaskRecord>): TaskRecord {
     };
 }
 
+/** A teammate's card is named by the teammate: "teammate-one · general-purpose: Write ALPHA". */
+function teammateLabel(
+    teammate: string | undefined,
+    label: string | null | undefined,
+): string | undefined {
+    if (!label) return undefined;
+    return teammate ? `${teammate} · ${label}` : label;
+}
+
 /** Applies a task event to the background call it belongs to. Each task keeps its own record, so a call that started
  *  several (one spawn, several agents) shows each, and the card's task is the whole. A task that has ended is not
  *  reopened by its late events (a finished worker, a stopped one). */
@@ -117,7 +126,7 @@ function applyTaskEvent(call: CommandBlock, event: TaskEvent) {
         // Set once, when the task first shows: the activity card counts from here.
         startedAt: before?.startedAt ?? now,
         endedAt: ENDED.has(event.status) ? now : undefined,
-        label: event.label ?? before?.label,
+        label: teammateLabel(call.teammate, event.label) ?? before?.label,
         summary: event.summary ?? before?.summary,
         tools: event.tools ?? before?.tools,
     };
@@ -385,6 +394,11 @@ export function applyAgentEvent(
         case 'tool_model': {
             const call = findCommand(blocks, event.id);
             if (call) call.model = event.model;
+            return { blocks, finished: false };
+        }
+        case 'teammate': {
+            const call = findCommand(blocks, event.id);
+            if (call) call.teammate = event.name;
             return { blocks, finished: false };
         }
         case 'task': {

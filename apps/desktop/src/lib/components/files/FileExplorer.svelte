@@ -12,6 +12,8 @@
     import { untrack } from 'svelte';
     import { activeSession, workspace } from '../../chat/sessions.svelte';
     import { openProjectFile, viewer } from '../../files/file-viewer.svelte';
+    import { resolveInProject } from '../../files/paths';
+    import { openDocument } from '../../browser/preview.svelte';
     import { inTauri } from '../../app/platform/history';
     import { getPref, setPref, setPrefs } from '../../app/platform/prefs';
     import { toast } from '../../app/platform/toast';
@@ -331,10 +333,20 @@
             )?.dir
         )
             return;
-        if (root)
-            openProjectFile(node.id.slice(1), root, undefined, {
-                fromTree: true,
-            });
+        if (root) openFileNode(node.id, true);
+    }
+
+    // A Markdown file opens straight in the lightbox, like a chat artifact; other files open in the viewer.
+    function openFileNode(id: string, fromTree = false) {
+        if (!root) return;
+        if (/\.md$/i.test(nameOf(id))) {
+            void openDocument(
+                resolveInProject(id.slice(1), root),
+                nameOf(id),
+            ).catch(() => toast.error('Could not open the file'));
+            return;
+        }
+        openProjectFile(id.slice(1), root, undefined, { fromTree });
     }
 
     const parentOf = (id: string) => id.slice(0, id.lastIndexOf('/'));
@@ -493,8 +505,7 @@
                       icon: 'lucideFile',
                       iconSize: 12,
                       class: 'text-sm! py-1',
-                      onClick: () =>
-                          menu && openProjectFile(menu.id.slice(1), root),
+                      onClick: () => menu && openFileNode(menu.id),
                   },
                   ...openWithMenuItems(),
                   {

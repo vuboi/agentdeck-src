@@ -20,6 +20,7 @@ mod channel;
 mod chat_index;
 mod chat_suggest;
 mod claude_bash;
+mod codegraph;
 mod computer;
 mod connectors;
 mod copilot;
@@ -2550,6 +2551,7 @@ pub fn run() {
             if let Ok(dir) = app.path().resource_dir() {
                 // Plain path: image_gen starts node scripts from here (see without_verbatim).
                 image_gen::set_resource_dir(ag_adapters::agent::runner::without_verbatim(&dir));
+                codegraph::set_resource_dir(ag_adapters::agent::runner::without_verbatim(&dir));
             }
             // Processes a previous run of the app left behind (it was killed or crashed) are ended before anything starts.
             if let Ok(data) = app.path().app_data_dir() {

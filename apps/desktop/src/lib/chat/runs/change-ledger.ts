@@ -130,6 +130,20 @@ export function appendWrite(
     return entry;
 }
 
+/** When the user's latest request in a chat was sent (ms), or undefined when there is none. A retry or continuation
+ *  answers that same request, so its run keeps this time, not the time it started. */
+export function requestAt(
+    list: readonly { role: string; at?: string }[],
+): number | undefined {
+    for (let index = list.length - 1; index >= 0; index--) {
+        const message = list[index];
+        if (message.role !== 'user' || !message.at) continue;
+        const at = Date.parse(message.at);
+        if (!Number.isNaN(at)) return at;
+    }
+    return undefined;
+}
+
 /** Writes of one turn, as a list of paths (for notices and for the parent's summary). */
 export function pathsWrittenBy(
     writes: readonly LedgerWrite[],

@@ -264,6 +264,11 @@ fn far() -> Instant {
 }
 
 /// An event that is part of what the CLI says, not bookkeeping around it.
+/// A result with no text: the CLI's own bookkeeping, not an answer.
+fn is_empty_done(event: &AgentEvent) -> bool {
+    matches!(event, AgentEvent::Done { text, .. } if text.is_empty())
+}
+
 fn is_content(event: &AgentEvent) -> bool {
     !matches!(
         event,
@@ -346,6 +351,8 @@ async fn run(
     // The turn id of the answer in progress; empty while the CLI is silent.
     let mut turn = String::new();
     let mut held: Vec<AgentEvent> = Vec::new();
+    // The end of the answer, held while background work is still open (see `hold_end`).
+    let mut pending_end: Option<AgentEvent> = None;
     // The tasks the CLI has started and not ended, by id, with the call that started each: on park or drop they end.
     let mut open: BTreeMap<String, Option<String>> = BTreeMap::new();
     // The last turn of this tail, for the events sent after the answer has ended.
@@ -463,8 +470,14 @@ async fn run(
                     open.insert(id.clone(), tool_use_id.clone());
                 }
             }
+            // While background work is still open, the end of an answer does not close the turn: the output of that work
+            // goes into the same turn, and the end is sent once the last task has ended (see below).
+            let hold_end = terminal && warm.open_tasks && !stopping && !asked;
+            if hold_end && is_empty_done(&event) {
+                continue;
+            }
             if turn.is_empty() {
-                if is_content(&event) {
+                if is_content(&event) || hold_end {
                     turn = format!("auto-{}", SERIAL.fetch_add(1, Ordering::Relaxed) + 1);
                     last_turn.clone_from(&turn);
                     super::trace::note(&chat, "tail", format!("the CLI went on by itself: {turn}"));
@@ -478,14 +491,27 @@ async fn run(
                     for earlier in held.drain(..) {
                         sink(&chat, &turn, earlier);
                     }
-                    sink(&chat, &turn, event);
+                    if hold_end {
+                        pending_end = Some(event);
+                    } else {
+                        sink(&chat, &turn, event);
+                    }
                 } else {
                     hold(&mut held, event, &chat);
                 }
+            } else if hold_end {
+                pending_end = Some(event);
             } else {
                 sink(&chat, &turn, event);
             }
-            if terminal && !turn.is_empty() {
+            if terminal && !turn.is_empty() && !hold_end {
+                ended = true;
+            }
+        }
+        // The last task has ended: the held end of the answer goes out now.
+        if !warm.open_tasks {
+            if let Some(end) = pending_end.take() {
+                sink(&chat, &turn, end);
                 ended = true;
             }
         }
@@ -501,6 +527,11 @@ async fn run(
             }
         }
     };
+    // The end held for background work is sent as it is: the process is gone, so nothing else is coming.
+    if let Some(end) = pending_end.take() {
+        sink(&chat, &turn, end);
+        turn.clear();
+    }
     // A reply that was open when the process was given up must be closed, or the chat shows it working for ever.
     if matches!(fate, Fate::Drop) && !turn.is_empty() {
         let closing = if asked || stopping {
@@ -787,6 +818,51 @@ read more
         );
         // Only this chat's process: `reset` would end the other tests' tails too (they share the agent id).
         let _ = crate::agent::warm::take("chat-tail", &key, None);
+    }
+
+    /// The CLI reports a result with no text between two parts of its answer while a background task is still open: the
+    /// parts are one answer, in one turn, and the end is sent once.
+    #[tokio::test]
+    async fn a_result_with_no_text_while_background_work_is_open_does_not_split_the_answer() {
+        listen();
+        const GATHER: &str = r#"read first
+echo '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"a"}]}'
+echo '{"type":"result","subtype":"success","session_id":"s1","result":"started"}'
+sleep 1
+echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"part1"}}}'
+echo '{"type":"result","subtype":"success","session_id":"s1","result":""}'
+echo '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'
+echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"part2"}}}'
+echo '{"type":"result","subtype":"success","session_id":"s1","result":"part1part2"}'
+read second
+"#;
+        let (path, provider) = script("gather", GATHER);
+        first_turn(&provider, "chat-gather").await;
+        let ended = until(|| {
+            heard_of("chat-gather").iter().any(
+                |(_, event)| matches!(event, AgentEvent::Done { text, .. } if text == "part1part2"),
+            )
+        })
+        .await;
+        let _ = std::fs::remove_file(&path);
+        let told = heard_of("chat-gather");
+        assert!(ended, "the answer did not end: {told:?}");
+        let autos = told
+            .iter()
+            .filter(|(_, event)| matches!(event, AgentEvent::AutoTurn { .. }))
+            .count();
+        let dones = told
+            .iter()
+            .filter(|(_, event)| matches!(event, AgentEvent::Done { .. }))
+            .count();
+        assert_eq!(autos, 1, "{told:?}");
+        assert_eq!(dones, 1, "{told:?}");
+        let turns: std::collections::BTreeSet<&String> =
+            told.iter().map(|(turn, _)| turn).collect();
+        assert_eq!(turns.len(), 1, "one answer, one turn: {told:?}");
+
+        let key = settings_key("faketail", &provider.args(&request("chat-gather")), &[]);
+        let _ = crate::agent::warm::take("chat-gather", &key, None);
     }
 
     #[tokio::test]
