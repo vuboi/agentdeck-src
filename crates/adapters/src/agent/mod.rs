@@ -23,7 +23,7 @@ pub mod trace;
 pub mod warm;
 pub mod workbuddy;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// One thing an agent did or said, in the shape the chat UI renders.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -617,7 +617,7 @@ pub fn summarize_tool_input(name: &str, input: &serde_json::Value) -> String {
 }
 
 /// What one Write or Edit does to a file, for the "created 2 files +222 -0" summary and its diff.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileChange {
     pub path: String,
     pub added: usize,

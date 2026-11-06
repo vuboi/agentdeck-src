@@ -6,14 +6,14 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde_json::Value;
 
 use super::{
-    AppendReport, Binding, BindingOrigin, BindingState, ChatIndex, ChatIndexError, ChatMeta,
-    ChatPage, NativeRef, NewMessage, Result, StoredMessage,
+    AppendReport, ArchiveEntry, Binding, BindingOrigin, BindingState, ChatIndex, ChatIndexError,
+    ChatMeta, ChatPage, NativeRef, NewMessage, Result, StoredMessage,
 };
 
 const BINDING_COLUMNS: &str =
     "id, chat_id, provider, native_id, path, model, epoch, origin, state, synced_seq, cursor_json";
 const MESSAGE_COLUMNS: &str =
-    "seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks";
+    "seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks, client_id";
 
 impl ChatIndex {
     /// Creates the chat, or updates its title, folder, project and agent. `created_at` is kept once it is set.
@@ -137,7 +137,7 @@ impl ChatIndex {
                 continue;
             }
             seq += 1;
-            insert_message(&tx, chat_id, seq, message)?;
+            insert_message(&tx, chat_id, seq, message, &self.dicts)?;
             report.inserted += 1;
             if let Some(binding_id) = &message.binding_id {
                 writers.insert(binding_id.clone());
@@ -213,7 +213,7 @@ impl ChatIndex {
                 binding_id: Some(binding_id.to_string()),
                 ..(*message).clone()
             };
-            insert_message(&tx, chat_id, seq, &row)?;
+            insert_message(&tx, chat_id, seq, &row, &self.dicts)?;
             report.inserted += 1;
             if !message.time.is_empty() {
                 last_time = Some(message.time.clone());
@@ -251,7 +251,7 @@ impl ChatIndex {
              WHERE chat_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3"
         ))?;
         let rows = statement.query_map(params![chat_id, before, fetch], |row| {
-            Ok(parse_message(row))
+            Ok(parse_message(row, &self.dicts))
         })?;
         let mut messages = Vec::new();
         for row in rows {
@@ -284,6 +284,188 @@ impl ChatIndex {
         tx.execute("DELETE FROM chats WHERE id = ?1", [chat_id])?;
         tx.commit()?;
         Ok(paths)
+    }
+
+    /// Stores one of another agent's turns of a chat (`chat.otherTurns`) at `seq`. A turn at the same seq is replaced.
+    pub fn put_other_turn(&mut self, chat_id: &str, seq: i64, blocks: &Value) -> Result<()> {
+        require_chat(&self.conn, chat_id)?;
+        let blob = self
+            .dicts
+            .encode_keep(blocks)
+            .map_err(ChatIndexError::Codec)?;
+        self.conn.execute(
+            "INSERT INTO other_turns (chat_id, seq, blocks) VALUES (?1, ?2, ?3)
+             ON CONFLICT(chat_id, seq) DO UPDATE SET blocks = excluded.blocks",
+            params![chat_id, seq, blob],
+        )?;
+        Ok(())
+    }
+
+    /// The other agents' turns of a chat, oldest first.
+    pub fn other_turns(&self, chat_id: &str) -> Result<Vec<(i64, Value)>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT seq, blocks FROM other_turns WHERE chat_id = ?1 ORDER BY seq")?;
+        let rows = statement
+            .query_map([chat_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(seq, bytes)| {
+                Ok((
+                    seq,
+                    self.dicts.decode(&bytes).map_err(ChatIndexError::Codec)?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Stores an archived message's snapshot (what the archive kept of a reply) under its message id. Replaces the same id.
+    pub fn put_archive(
+        &mut self,
+        chat_id: &str,
+        msg_id: &str,
+        at: &str,
+        tokens: Option<i64>,
+        snapshot: &Value,
+    ) -> Result<()> {
+        require_chat(&self.conn, chat_id)?;
+        let blob = self
+            .dicts
+            .encode_keep(snapshot)
+            .map_err(ChatIndexError::Codec)?;
+        self.conn.execute(
+            "INSERT INTO archive (chat_id, msg_id, at, tokens, snapshot) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(chat_id, msg_id) DO UPDATE SET at = excluded.at, tokens = excluded.tokens, snapshot = excluded.snapshot",
+            params![chat_id, msg_id, at, tokens, blob],
+        )?;
+        Ok(())
+    }
+
+    /// The archived snapshots of a chat, oldest first (by `at`, then message id).
+    pub fn archive(&self, chat_id: &str) -> Result<Vec<ArchiveEntry>> {
+        let mut statement = self.conn.prepare(
+            "SELECT msg_id, at, tokens, snapshot FROM archive WHERE chat_id = ?1 ORDER BY at, msg_id",
+        )?;
+        let rows = statement
+            .query_map([chat_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(msg_id, at, tokens, bytes)| {
+                Ok(ArchiveEntry {
+                    msg_id,
+                    at,
+                    tokens,
+                    snapshot: self.dicts.decode(&bytes).map_err(ChatIndexError::Codec)?,
+                })
+            })
+            .collect()
+    }
+}
+
+impl ChatIndex {
+    /// Removes every other-agent turn of a chat (before its list is written again in order).
+    pub fn clear_other_turns(&mut self, chat_id: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM other_turns WHERE chat_id = ?1", [chat_id])?;
+        Ok(())
+    }
+
+    /// Every other-agent turn of every chat as `(chat id, seq, blocks)`, in chat then seq order.
+    pub fn other_turns_all(&self) -> Result<Vec<(String, i64, Value)>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT chat_id, seq, blocks FROM other_turns ORDER BY chat_id, seq")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(chat_id, seq, bytes)| {
+                Ok((
+                    chat_id,
+                    seq,
+                    self.dicts.decode(&bytes).map_err(ChatIndexError::Codec)?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Every archived entry of every chat as `(chat id, entry)`, in chat then time order.
+    pub fn archive_all(&self) -> Result<Vec<(String, ArchiveEntry)>> {
+        let mut statement = self.conn.prepare(
+            "SELECT chat_id, msg_id, at, tokens, snapshot FROM archive ORDER BY chat_id, at, msg_id",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(chat_id, msg_id, at, tokens, bytes)| {
+                Ok((
+                    chat_id,
+                    ArchiveEntry {
+                        msg_id,
+                        at,
+                        tokens,
+                        snapshot: self.dicts.decode(&bytes).map_err(ChatIndexError::Codec)?,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    /// Records that a chat uses these attachment files (plan storage-sqlite P7).
+    pub fn note_attachments(&mut self, chat_id: &str, paths: &[String]) -> Result<()> {
+        require_chat(&self.conn, chat_id)?;
+        for path in paths {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO attachment_refs (path, chat_id) VALUES (?1, ?2)",
+                params![path, chat_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Attachment files whose every chat has been idle since before `cutoff`, the files to remove.
+    pub fn idle_attachments(&self, cutoff: &str) -> Result<Vec<String>> {
+        let mut statement = self.conn.prepare(
+            "SELECT r.path FROM attachment_refs r JOIN chats c ON c.id = r.chat_id
+             GROUP BY r.path HAVING MAX(c.updated_at) < ?1 ORDER BY r.path",
+        )?;
+        let rows = statement
+            .query_map([cutoff], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Drops the references to attachment files that were removed.
+    pub fn forget_attachments(&mut self, paths: &[String]) -> Result<()> {
+        for path in paths {
+            self.conn
+                .execute("DELETE FROM attachment_refs WHERE path = ?1", [path])?;
+        }
+        Ok(())
     }
 }
 
@@ -415,12 +597,15 @@ pub(super) fn insert_message(
     chat_id: &str,
     seq: i64,
     message: &NewMessage,
+    dicts: &crate::codec::Dicts,
 ) -> Result<()> {
     // The blocks go in as a codec blob (version 2); `blocks_json` stays empty for these rows.
-    let blocks = crate::codec::encode_keep(&message.blocks).map_err(ChatIndexError::Codec)?;
+    let blocks = dicts
+        .encode_keep(&message.blocks)
+        .map_err(ChatIndexError::Codec)?;
     conn.execute(
-        "INSERT INTO messages (chat_id, seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks, preview)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', ?10, ?11)",
+        "INSERT INTO messages (chat_id, seq, role, agent, model, binding_id, native_provider, native_msg_id, time, blocks_json, blocks, preview, client_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, '', ?10, ?11, ?12)",
         params![
             chat_id,
             seq,
@@ -433,6 +618,7 @@ pub(super) fn insert_message(
             message.time,
             blocks,
             preview_of(&message.blocks),
+            message.client_id,
         ],
     )?;
     Ok(())
@@ -490,7 +676,7 @@ fn parse_binding(row: &Row) -> Result<Binding> {
     })
 }
 
-fn parse_message(row: &Row) -> Result<StoredMessage> {
+fn parse_message(row: &Row, dicts: &crate::codec::Dicts) -> Result<StoredMessage> {
     let native_provider: Option<String> = row.get(5)?;
     let native_msg_id: Option<String> = row.get(6)?;
     let native = match (native_provider, native_msg_id) {
@@ -500,7 +686,7 @@ fn parse_message(row: &Row) -> Result<StoredMessage> {
     // Version 2 rows keep the blocks as a blob; older rows keep their JSON text.
     let blob: Option<Vec<u8>> = row.get(9)?;
     let blocks: Value = match blob {
-        Some(bytes) => crate::codec::decode(&bytes).map_err(|error| {
+        Some(bytes) => dicts.decode(&bytes).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Blob, error.into())
         })?,
         None => {
@@ -524,6 +710,7 @@ fn parse_message(row: &Row) -> Result<StoredMessage> {
             time: row.get(7)?,
             native,
             blocks,
+            client_id: row.get(10)?,
         },
     })
 }

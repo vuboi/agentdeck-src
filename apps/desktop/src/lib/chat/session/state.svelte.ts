@@ -5,6 +5,7 @@ import {
 } from '../../agents/provider-registry';
 import type { ZIconName } from '@shival99/z-ui-svelte';
 import { modelCatalog } from '../../agents/models.svelte';
+import { invoke } from '@tauri-apps/api/core';
 import { fakeData, inTauri, isPreviewCopy } from '../../app/platform/history';
 import { type RunState, IDLE, type RunEvent, step } from '../runs/run-state';
 import { type Message } from '../mock';
@@ -603,88 +604,166 @@ async function loadLocalState(): Promise<{
     return { saved: { sessions, messages, activeId }, legacy: !folders.length };
 }
 
-const localReady = loadLocalState().then(
-    async ({ saved, legacy }) => {
-        if (!saved) return;
-        // A reply that was still running when the app closed is not running any more: its open blocks are closed (as a
-        // stopped turn closes them), and its chat is idle, or the send button would stay a stop button after a reload.
-        // Background tasks still open when the app closed are closed too (their CLI went with the app), and said once.
-        let closedTasks = 0;
-        for (const list of Object.values(saved.messages ?? {}))
-            for (const message of list)
-                closedTasks += closeRestoredTasks(message.blocks);
-        for (const [id, list] of Object.entries(saved.messages ?? {}))
-            localMessages[id] = list.map((message) => ({
-                ...message,
-                agent: renamedAgent(message.agent),
-                live: false,
-                blocks: [
-                    ...applyAgentEvent(message.blocks, {
-                        kind: 'error',
-                        message: 'stopped',
-                    }).blocks,
-                    // Said once, on the reply that was cut: the work may be half done, and "continue" picks it up.
-                    ...(message.live && message.role === 'assistant'
-                        ? [
-                              {
-                                  kind: 'response' as const,
-                                  text: '> ↻ The app closed while this reply was being written. Send "continue" to pick it up.',
-                              },
-                          ]
-                        : []),
-                ].map((block) => {
-                    // A card still waiting when the app reloaded has nobody to answer it: it is closed, not Allow-able again.
-                    if (
-                        block.kind !== 'permission' ||
-                        block.state !== 'pending'
+/** Set once the AgentDeck-only chats have left IndexedDB (plan storage-sqlite P5.5). */
+const P55_WIPED = 'storage.p55_wiped';
+
+/**
+ * Plan storage-sqlite P5.5, once: the AgentDeck-only chats (`local.*`), their archive and the other agents' turns
+ * (`chat.otherTurns`) leave IndexedDB. A JSON backup is written under `<home>/backup/` first; if that fails, nothing is
+ * removed and the chats load as before.
+ */
+async function wipeLocalChatsOnce(): Promise<void> {
+    if (!inTauri() || isPreviewCopy()) return;
+    if ((await getPref<boolean>(P55_WIPED)) === true) return;
+    const [chats, archive, otherTurns] = await Promise.all([
+        listPrefs<unknown>('local.'),
+        listPrefs<unknown>('archive.'),
+        getPref<unknown>('chat.otherTurns'),
+    ]);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    await invoke<string>('chat_backup_write', {
+        name: `indexeddb-chats-${stamp}.json`,
+        json: JSON.stringify({ chats, archive, otherTurns }, null, 1),
+    });
+    // The archive and the other agents' turns move into the ledger first (plan P5.4). A chat the ledger does not have
+    // is left out: its copy is in the backup. Any failure stops here, before anything is removed.
+    const known = new Set(
+        (await invoke<{ id: string }[]>('chat_list')).map((item) => item.id),
+    );
+    for (const [chatId, list] of Object.entries(
+        (otherTurns ?? {}) as Record<string, unknown[]>,
+    )) {
+        if (!known.has(chatId) || !Array.isArray(list)) continue;
+        await invoke('chat_clear_other_turns', { chatId });
+        for (let seq = 0; seq < list.length; seq++)
+            await invoke('chat_put_other_turn', {
+                chatId,
+                seq,
+                blocks: list[seq],
+            });
+    }
+    for (const [key, record] of archive as [
+        string,
+        Record<string, unknown>,
+    ][]) {
+        const session = key.startsWith('archive.s.')
+            ? key.slice('archive.s.'.length)
+            : null;
+        const message =
+            session === null ? key.slice('archive.m.'.length) : null;
+        const chatId =
+            session ??
+            (message ? message.slice(0, message.indexOf('.')) : null);
+        if (!chatId || !known.has(chatId)) continue;
+        const at = String(record.savedAt ?? '');
+        const tokens = record.tokens as
+            { input: number; output: number } | null | undefined;
+        await invoke('chat_put_archive', {
+            chatId,
+            msgId: session !== null ? '@session' : String(record.id),
+            at,
+            tokens: tokens ? tokens.input + tokens.output : null,
+            snapshot: record,
+        });
+    }
+    await setPrefs(
+        [...chats, ...archive].map(([key]) => [key, null] as [string, null]),
+    );
+    await setPref('chat.otherTurns', null);
+    await setPref(P55_WIPED, true);
+}
+
+const localReady = wipeLocalChatsOnce()
+    .catch(() => {
+        // Backup or removal failed: the chats stay where they are, and the next start tries again.
+    })
+    .then(() => loadLocalState())
+    .then(
+        async ({ saved, legacy }) => {
+            if (!saved) return;
+            // A reply that was still running when the app closed is not running any more: its open blocks are closed (as a
+            // stopped turn closes them), and its chat is idle, or the send button would stay a stop button after a reload.
+            // Background tasks still open when the app closed are closed too (their CLI went with the app), and said once.
+            let closedTasks = 0;
+            for (const list of Object.values(saved.messages ?? {}))
+                for (const message of list)
+                    closedTasks += closeRestoredTasks(message.blocks);
+            for (const [id, list] of Object.entries(saved.messages ?? {}))
+                localMessages[id] = list.map((message) => ({
+                    ...message,
+                    agent: renamedAgent(message.agent),
+                    live: false,
+                    blocks: [
+                        ...applyAgentEvent(message.blocks, {
+                            kind: 'error',
+                            message: 'stopped',
+                        }).blocks,
+                        // Said once, on the reply that was cut: the work may be half done, and "continue" picks it up.
+                        ...(message.live && message.role === 'assistant'
+                            ? [
+                                  {
+                                      kind: 'response' as const,
+                                      text: '> ↻ The app closed while this reply was being written. Send "continue" to pick it up.',
+                                  },
+                              ]
+                            : []),
+                    ].map((block) => {
+                        // A card still waiting when the app reloaded has nobody to answer it: it is closed, not Allow-able again.
+                        if (
+                            block.kind !== 'permission' ||
+                            block.state !== 'pending'
+                        )
+                            return block;
+                        // A Copilot turn holds its request open until it is answered: refuse it so the turn ends.
+                        if (message.agent === 'copilot')
+                            for (const request of block.requests)
+                                void answerCopilotPermission(
+                                    request.id,
+                                    false,
+                                ).catch(() => {});
+                        return { ...block, state: 'expired' as const };
+                    }),
+                }));
+            for (const savedItem of saved.sessions ?? []) {
+                const item = {
+                    ...renamedSession(savedItem),
+                    status: 'idle' as const,
+                };
+                // Empty new chats saved by an earlier version are not restored.
+                if (isEmptyDraft(item)) continue;
+                if (
+                    !workspace.sessions.some(
+                        (existing) => existing.id === item.id,
                     )
-                        return block;
-                    // A Copilot turn holds its request open until it is answered: refuse it so the turn ends.
-                    if (message.agent === 'copilot')
-                        for (const request of block.requests)
-                            void answerCopilotPermission(
-                                request.id,
-                                false,
-                            ).catch(() => {});
-                    return { ...block, state: 'expired' as const };
-                }),
-            }));
-        for (const savedItem of saved.sessions ?? []) {
-            const item = {
-                ...renamedSession(savedItem),
-                status: 'idle' as const,
-            };
-            // Empty new chats saved by an earlier version are not restored.
-            if (isEmptyDraft(item)) continue;
-            if (!workspace.sessions.some((existing) => existing.id === item.id))
-                workspace.sessions.push(item);
-            rememberSessionPlacement(item.id, item.projectId, 'agentdeck');
-        }
-        if (closedTasks > 0)
-            void sendSystemNotification(
-                'Background task closed',
-                `${closedTasks} background task(s) were cut off when AgentDeck closed.`,
-                { evenFocused: true },
-            );
-        if (saved.activeId && !workspace.activeId)
-            workspace.activeId = saved.activeId;
-        // Screenshots of these chats: their files are drawn again from the screenshot index (the saved copy has none).
-        for (const id of Object.keys(saved.messages ?? {}))
-            localMessages[id] = await restoreCommandImages(
-                id,
-                localMessages[id] ?? [],
-            );
-        if (legacy) {
-            // The one-blob save (or the single index) is moved to the folder records; the old keys go.
-            persistLocalNow();
-            void setPref('local.state', null);
-            void setPref(LOCAL_INDEX, null);
-        }
-    },
-    () => {
-        // Nothing saved, or no IndexedDB: start empty.
-    },
-);
+                )
+                    workspace.sessions.push(item);
+                rememberSessionPlacement(item.id, item.projectId, 'agentdeck');
+            }
+            if (closedTasks > 0)
+                void sendSystemNotification(
+                    'Background task closed',
+                    `${closedTasks} background task(s) were cut off when AgentDeck closed.`,
+                    { evenFocused: true },
+                );
+            if (saved.activeId && !workspace.activeId)
+                workspace.activeId = saved.activeId;
+            // Screenshots of these chats: their files are drawn again from the screenshot index (the saved copy has none).
+            for (const id of Object.keys(saved.messages ?? {}))
+                localMessages[id] = await restoreCommandImages(
+                    id,
+                    localMessages[id] ?? [],
+                );
+            if (legacy) {
+                // The one-blob save (or the single index) is moved to the folder records; the old keys go.
+                persistLocalNow();
+                void setPref('local.state', null);
+                void setPref(LOCAL_INDEX, null);
+            }
+        },
+        () => {
+            // Nothing saved, or no IndexedDB: start empty.
+        },
+    );
 
 // The two most recent chats (other than the open one) start their CLI a moment after start-up, so the first message to
 // either does not wait for it. Bounded: the idle pool keeps only a few processes (warm.rs), and prewarmChat throttles.

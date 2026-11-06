@@ -220,6 +220,8 @@
     <div style:height="{first * rowHeight}px" aria-hidden="true"></div>
     {#each visible as item, offset (item.key)}
         {@const isSelected = item.selected}
+        <!-- eslint-disable svelte/no-unused-svelte-ignore -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -- the keys are handled by the tree (onkeydown above), which holds the focus -->
         <div
             role="treeitem"
             tabindex="-1"

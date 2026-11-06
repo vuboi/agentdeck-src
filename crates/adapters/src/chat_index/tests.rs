@@ -36,6 +36,7 @@ fn binding(id: &str, chat_id: &str, provider: &str, native_id: Option<&str>) -> 
 /// A turn whose text is `text`. `native` is `(provider, native message id)` when it came from a native session.
 fn turn(text: &str, binding_id: Option<&str>, native: Option<(&str, &str)>) -> NewMessage {
     NewMessage {
+        client_id: None,
         role: "user".to_string(),
         agent: None,
         model: None,
@@ -530,4 +531,174 @@ fn a_row_written_before_version_two_still_reads() {
         .expect("page")
         .expect("chat");
     assert_eq!(texts(&page.messages), vec!["from version one"]);
+}
+
+#[test]
+fn other_turns_and_archive_are_kept_per_chat_and_die_with_it() {
+    let mut index = ChatIndex::open_in_memory().expect("open");
+    index.save_chat(&chat("a")).expect("save");
+    index.save_chat(&chat("b")).expect("save");
+    index
+        .put_other_turn("a", 2, &json!({ "id": "o2", "text": "second" }))
+        .expect("put");
+    index
+        .put_other_turn("a", 1, &json!({ "id": "o1", "text": "first" }))
+        .expect("put");
+    index
+        .put_other_turn("a", 1, &json!({ "id": "o1", "text": "first again" }))
+        .expect("replace");
+    let turns = index.other_turns("a").expect("read");
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0].0, 1);
+    assert_eq!(turns[0].1["text"], "first again");
+    assert!(index.other_turns("b").expect("read").is_empty());
+
+    index
+        .put_archive(
+            "a",
+            "m1",
+            "2026-11-02T10:00:00Z",
+            Some(120),
+            &json!({ "text": "reply" }),
+        )
+        .expect("archive");
+    index
+        .put_archive(
+            "a",
+            "m1",
+            "2026-11-02T10:00:00Z",
+            Some(130),
+            &json!({ "text": "reply v2" }),
+        )
+        .expect("archive again");
+    let archived = index.archive("a").expect("read");
+    assert_eq!(archived.len(), 1);
+    assert_eq!(archived[0].tokens, Some(130));
+    assert_eq!(archived[0].snapshot["text"], "reply v2");
+
+    index.delete_chat("a").expect("delete");
+    assert!(index.other_turns("a").expect("read").is_empty());
+    assert!(index.archive("a").expect("read").is_empty());
+}
+
+fn chat_at(id: &str, updated_at: &str) -> ChatMeta {
+    ChatMeta {
+        updated_at: updated_at.to_string(),
+        ..chat(id)
+    }
+}
+
+#[test]
+fn an_attachment_is_removed_only_when_every_chat_using_it_is_idle() {
+    let mut index = ChatIndex::open_in_memory().expect("open");
+    index
+        .save_chat(&chat_at("old", "2026-09-01T00:00:00Z"))
+        .expect("save");
+    index
+        .save_chat(&chat_at("recent", "2026-11-05T00:00:00Z"))
+        .expect("save");
+    index
+        .save_chat(&chat_at("other", "2026-09-01T00:00:00Z"))
+        .expect("save");
+    index
+        .note_attachments("old", &["/a/one.png".to_string()])
+        .expect("note");
+    index
+        .note_attachments("recent", &["/a/two.png".to_string()])
+        .expect("note");
+    index
+        .note_attachments("other", &["/a/two.png".to_string()])
+        .expect("note");
+
+    let idle = index
+        .idle_attachments("2026-10-06T00:00:00Z")
+        .expect("idle");
+    assert_eq!(idle, vec!["/a/one.png".to_string()]);
+
+    index.forget_attachments(&idle).expect("forget");
+    assert!(index
+        .idle_attachments("2026-10-06T00:00:00Z")
+        .expect("idle")
+        .is_empty());
+}
+
+#[test]
+fn the_all_readers_list_every_chats_turns_and_archive() {
+    let mut index = ChatIndex::open_in_memory().expect("open");
+    index.save_chat(&chat("a")).expect("save");
+    index.save_chat(&chat("b")).expect("save");
+    index
+        .put_other_turn("b", 0, &json!({ "text": "b0" }))
+        .expect("put");
+    index
+        .put_other_turn("a", 1, &json!({ "text": "a1" }))
+        .expect("put");
+    index
+        .put_other_turn("a", 0, &json!({ "text": "a0" }))
+        .expect("put");
+    index
+        .put_archive(
+            "b",
+            "m1",
+            "2026-11-02T10:00:00Z",
+            None,
+            &json!({ "text": "r" }),
+        )
+        .expect("archive");
+    let turns = index.other_turns_all().expect("turns");
+    let order: Vec<(String, i64)> = turns
+        .iter()
+        .map(|(chat, seq, _)| (chat.clone(), *seq))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            ("a".to_string(), 0),
+            ("a".to_string(), 1),
+            ("b".to_string(), 0)
+        ]
+    );
+    let archived = index.archive_all().expect("archive");
+    assert_eq!(archived.len(), 1);
+    assert_eq!(archived[0].0, "b");
+    assert_eq!(archived[0].1.msg_id, "m1");
+}
+
+#[test]
+fn messages_are_dictionary_compressed_once_enough_rows_exist() {
+    let mut index = ChatIndex::open_in_memory().expect("open");
+    index.save_chat(&chat("big")).expect("save");
+    let turns: Vec<NewMessage> = (0..2_100)
+        .map(|i| {
+            turn(
+                &format!("message number {i} about the same subject"),
+                None,
+                None,
+            )
+        })
+        .collect();
+    index.append("big", &turns).expect("append");
+    assert!(index.dicts.latest.is_none());
+
+    index.train_dict_if_due().expect("train");
+    assert!(index.dicts.latest.is_some());
+
+    let long = "a long reply that repeats itself ".repeat(60);
+    index
+        .append("big", &[turn(&long, None, None)])
+        .expect("append long");
+    let page = index
+        .open_page("big", None, 1)
+        .expect("open")
+        .expect("chat");
+    assert_eq!(texts(&page.messages), vec![long.as_str()]);
+    let stored: Vec<u8> = index
+        .conn
+        .query_row(
+            "SELECT blocks FROM messages WHERE chat_id = 'big' ORDER BY seq DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("blob");
+    assert_eq!(stored[0], crate::codec::DICT_ZSTD);
 }

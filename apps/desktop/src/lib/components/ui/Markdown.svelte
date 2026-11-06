@@ -890,6 +890,8 @@
 </script>
 
 <!-- eslint-disable svelte/no-at-html-tags -- every block is sanitised by DOMPurify in renderMarkdown (app/text/markdown.ts) -->
+<!-- eslint-disable svelte/no-unused-svelte-ignore -->
+<!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_no_noninteractive_element_interactions -->
 <div
     bind:this={root}
     class="md"

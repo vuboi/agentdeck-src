@@ -19,7 +19,7 @@ import {
     stripCommandImageData,
     deleteCommandImages,
 } from '../content/command-images';
-import { archivedMessages, deleteArchivedMessages } from '../content/archive';
+import { archivedMessages } from '../content/archive';
 import { samePath } from '../../files/paths';
 import { repoOfWorktreeFolder } from '../../tasks/worktree';
 import { CREDIT_PREFIX, baseModel } from '../../agents/credit-model';
@@ -78,7 +78,13 @@ import {
 } from './events.svelte';
 import { backlog } from './delegate-task.svelte';
 import { mergeTranscripts } from './transcript-merge';
-import { chatMetaOf, ledger, ledgerOn } from '../index/ledger';
+import {
+    chatMetaOf,
+    ledger,
+    ledgerOn,
+    ledgerReadOn,
+    readLedgerChat,
+} from '../index/ledger';
 import { responseText, tailStart } from './held';
 
 // ---------- real history (Claude Code and Codex, read-only) ----------
@@ -706,9 +712,42 @@ export function rememberMixed(session: SessionItem) {
  * its own agent's turns, so these are kept here and merged back in by time when the chat is read again.
  */
 export const otherTurns: Record<string, Message[]> = {};
-void getPref<Record<string, Message[]>>('chat.otherTurns').then((saved) => {
-    if (saved) Object.assign(otherTurns, saved);
-});
+// Read from the chat ledger once at start-up (plan storage-sqlite P5.4). A turn's position in its list is its seq.
+void (async () => {
+    if (!inTauri()) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    const rows = await invoke<[string, number, Message][]>(
+        'chat_other_turns_all',
+    );
+    for (const [chatId, seq, turn] of rows)
+        (otherTurns[chatId] ??= [])[seq] = turn;
+})().catch(() => {});
+
+/** Writes one of a chat's other-agent turns to the ledger, at its position in the list. */
+function putOtherTurn(chatId: string, index: number) {
+    const turn = otherTurns[chatId]?.[index];
+    if (!turn) return;
+    ledger.run(
+        'chat_put_other_turn',
+        {
+            chatId,
+            seq: index,
+            blocks: stripCommandImageData([
+                $state.snapshot(turn) as Message,
+            ])[0],
+        },
+        chatId,
+    );
+}
+
+/** Writes a chat's whole list of other-agent turns again, in order, after the list changed in the middle. */
+export function replaceOtherTurns(chatId: string) {
+    ledger.run('chat_clear_other_turns', { chatId }, chatId);
+    (otherTurns[chatId] ?? []).forEach((_, index) =>
+        putOtherTurn(chatId, index),
+    );
+}
+
 export function keepOtherTurn(session: SessionItem, reply: Message) {
     const list = messagesOf(session.id);
     const index = list.indexOf(reply);
@@ -716,20 +755,11 @@ export function keepOtherTurn(session: SessionItem, reply: Message) {
         index > 0 && list[index - 1].role === 'user' ? [list[index - 1]] : [];
     const kept = (otherTurns[session.id] ??= []);
     for (const message of [...asked, reply]) {
-        if (!kept.some((item) => item.id === message.id))
+        if (!kept.some((item) => item.id === message.id)) {
             kept.push($state.snapshot(message) as Message);
+            putOtherTurn(session.id, kept.length - 1);
+        }
     }
-    saveOtherTurns();
-}
-
-function saveOtherTurns() {
-    const saved = Object.fromEntries(
-        Object.entries(otherTurns).map(([id, list]) => [
-            id,
-            stripCommandImageData($state.snapshot(list) as Message[]),
-        ]),
-    );
-    setPref('chat.otherTurns', saved);
 }
 
 /**
@@ -751,7 +781,12 @@ export function settleKeptPermission(
         return true;
     };
     settle(transcripts.get(sessionId)?.messages);
-    if (settle(otherTurns[sessionId])) saveOtherTurns();
+    const index =
+        otherTurns[sessionId]?.findIndex(
+            (message) => message.id === messageId,
+        ) ?? -1;
+    if (index >= 0 && settle(otherTurns[sessionId]))
+        putOtherTurn(sessionId, index);
 }
 
 /**
@@ -765,13 +800,7 @@ export function keepHandout(mainId: string, asked: Message) {
     const index = kept.findIndex((item) => item.id === asked.id);
     if (index >= 0) kept[index] = copy;
     else kept.push(copy);
-    const saved = Object.fromEntries(
-        Object.entries(otherTurns).map(([id, list]) => [
-            id,
-            stripCommandImageData($state.snapshot(list) as Message[]),
-        ]),
-    );
-    setPref('chat.otherTurns', saved);
+    putOtherTurn(mainId, index >= 0 ? index : kept.length - 1);
 }
 
 /** Pictures and files a saved prompt named by path (see `splitAttachments`), as blocks; the words lose those lists. */
@@ -1319,13 +1348,25 @@ async function readTranscript(session: SessionItem | undefined) {
         // A read of the chat before may still be loading: its result is dropped, so it can no longer clear the flag.
         chat.loading = false;
         // A list the chat already holds (a turn ran in it while it was not open) is the one to show.
+        // The ledger is read (plan storage-sqlite P5.3) when IndexedDB has no copy of the chat, or when the read flag is on
+        // and the copy has turns. IndexedDB is still written either way.
+        const copy = localMessages[session.id];
+        const wantLedger =
+            ledgerOn() &&
+            !mockIds.has(session.id) &&
+            (copy === undefined || (ledgerReadOn() && copy.length > 0));
+        const fromLedger = wantLedger
+            ? await readLedgerChat(session.id).catch(() => null)
+            : null;
+        const shown =
+            ledgerReadOn() && fromLedger?.length
+                ? fromLedger
+                : (copy ??
+                  fromLedger ??
+                  (mockIds.has(session.id) ? mockMessages : []));
         const messages =
             messagesById.get(session.id) ??
-            (await restoreCommandImages(
-                session.id,
-                localMessages[session.id] ??
-                    (mockIds.has(session.id) ? mockMessages : []),
-            ));
+            (await restoreCommandImages(session.id, shown));
         if (token === transcriptToken) {
             setMessages(session.id, messages);
         }
@@ -1460,7 +1501,7 @@ export async function releaseCli(id: string) {
 }
 
 /** The list and every cache forget the removed chats at once, so the sidebar changes in one pass, not row by row. */
-async function forgetSessions(removed: SessionItem[]) {
+async function forgetSessions(removed: SessionItem[], trashed = false) {
     if (!removed.length) return;
     const gone = new Set(removed.map((item) => item.id));
     // Forks of a removed chat move up to the nearest parent that stays.
@@ -1482,8 +1523,9 @@ async function forgetSessions(removed: SessionItem[]) {
     workspace.sessions = workspace.sessions.filter(
         (item) => !gone.has(item.id),
     );
-    // The ledger drops the chat too. Its native files are moved by the caller, not by the ledger.
-    for (const id of gone) ledger.remove(id);
+    // The ledger drops the chat too (a trashed chat stays in the ledger, in its trash). Its native files are moved by the
+    // caller, not by the ledger.
+    if (!trashed) for (const id of gone) ledger.remove(id);
     for (const id of gone) {
         delete drafts[id];
         delete draftMentions[id];
@@ -1516,9 +1558,7 @@ async function forgetSessions(removed: SessionItem[]) {
         deleteCommandImages(id);
         forgetSessionPlacement(id);
     }
-    saveOtherTurns();
     void mixedReady.then(() => setPref('chat.mixed', mixed));
-    await Promise.all([...gone].map((id) => deleteArchivedMessages(id)));
     patchCache((list) => list.filter((item) => !gone.has(item.id)));
     if (activeGone) {
         const next =
@@ -1528,6 +1568,28 @@ async function forgetSessions(removed: SessionItem[]) {
         if (next) workspace.activeId = next.id;
         else newSession(activeProject);
     }
+}
+
+/** A local chat (made in AgentDeck, no history file) with no activity for this long is deleted. */
+const DELETE_IDLE_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Deletes the local chats idle for 14 days: from the list, the IndexedDB copy and the ledger, for good. Imported chats
+ * (with a history file) are never deleted here. Returns the ids deleted.
+ */
+export async function deleteIdleChats(now = Date.now()): Promise<string[]> {
+    if (!inTauri() || !ledgerOn()) return [];
+    const idle = workspace.sessions.filter(
+        (item) =>
+            !item.path &&
+            !item.source &&
+            !item.draft &&
+            item.status === 'idle' &&
+            item.id !== workspace.activeId &&
+            now - Date.parse(item.updatedAt ?? '') > DELETE_IDLE_MS,
+    );
+    await forgetSessions(idle);
+    return idle.map((item) => item.id);
 }
 
 export async function deleteSession(id: string) {

@@ -149,7 +149,7 @@ impl ChatIndex {
             tx.execute("DELETE FROM bindings", [])?;
             tx.execute("DELETE FROM chats", [])?;
         }
-        let report = import(&tx, dump)?;
+        let report = import(&tx, dump, &self.dicts)?;
         meta_set(&tx, MIGRATION_KEY, &serde_json::to_string(&report)?)?;
         tx.commit()?;
         tracing::info!(
@@ -178,7 +178,11 @@ fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn import(tx: &Transaction, dump: &LegacyDump) -> Result<MigrationReport> {
+fn import(
+    tx: &Transaction,
+    dump: &LegacyDump,
+    dicts: &crate::codec::Dicts,
+) -> Result<MigrationReport> {
     let mut ids = BTreeSet::new();
     ids.extend(dump.mixed.keys().map(String::as_str));
     ids.extend(dump.local_messages.keys().map(String::as_str));
@@ -199,7 +203,7 @@ fn import(tx: &Transaction, dump: &LegacyDump) -> Result<MigrationReport> {
 
     let mut report = MigrationReport::default();
     for chat_id in ids {
-        import_chat(tx, dump, chat_id, &paths, &mut report)?;
+        import_chat(tx, dump, chat_id, &paths, dicts, &mut report)?;
     }
     Ok(report)
 }
@@ -249,6 +253,7 @@ fn import_chat(
     dump: &LegacyDump,
     chat_id: &str,
     paths: &HashMap<(String, String), String>,
+    dicts: &crate::codec::Dicts,
     report: &mut MigrationReport,
 ) -> Result<()> {
     let state = dump.mixed.get(chat_id);
@@ -372,6 +377,7 @@ fn import_chat(
         }
         seq += 1;
         let new = NewMessage {
+            client_id: None,
             role: role.to_string(),
             agent,
             model: message
@@ -386,7 +392,7 @@ fn import_chat(
             native,
             blocks: message.clone(),
         };
-        insert_message(tx, chat_id, seq, &new)?;
+        insert_message(tx, chat_id, seq, &new, dicts)?;
         report.messages += 1;
     }
 

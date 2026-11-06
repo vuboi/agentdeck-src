@@ -8,6 +8,7 @@ import { logError } from '../../app/platform/error-log.svelte';
 import { stripCommandImageData } from '../content/command-images';
 import type { SessionItem } from '../session/state.svelte';
 import { createDualWriter, type ChatMeta } from './dual-write';
+import { loadChatFromLedger } from './ledger-read';
 
 export const LEDGER_FLAG = 'chat_index.dual_write';
 
@@ -25,6 +26,22 @@ if (inTauri()) {
 /** Whether the ledger is written at all. Callers check it before they build what a write needs. */
 export const ledgerOn = () => flagOn;
 
+export const LEDGER_READ_FLAG = 'chat_index.read_ledger';
+
+// Off by default: an open chat is drawn from IndexedDB until the ledger read is checked in the app (plan P5.3).
+let readOn = false;
+if (inTauri()) {
+    void getPref<boolean>(LEDGER_READ_FLAG).then(
+        (on) => {
+            readOn = on === true;
+        },
+        () => {},
+    );
+}
+
+/** Whether an open chat is drawn from the ledger when it has turns there. Read at start-up; a change needs a restart. */
+export const ledgerReadOn = () => readOn;
+
 export const ledger = createDualWriter({
     invoke: (command, args) => invoke(command, args),
     enabled: ledgerOn,
@@ -39,6 +56,10 @@ export const ledger = createDualWriter({
     onMismatch: (chatId, detail) =>
         logError('app', 'chat index mismatch', detail, { chat: chatId }),
 });
+
+/** Every turn of a chat as the app's messages, read from the ledger. `null` when the ledger has no such chat. */
+export const readLedgerChat = (chatId: string) =>
+    loadChatFromLedger((command, args) => invoke(command, args), chatId);
 
 /** The chat as the ledger's `ChatMeta`. `cwd` is the project folder, if the chat has one. */
 export function chatMetaOf(session: SessionItem, cwd: string | null): ChatMeta {

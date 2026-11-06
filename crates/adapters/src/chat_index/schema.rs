@@ -4,7 +4,7 @@ use rusqlite::Connection;
 
 use super::Result;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 6;
 
 const DDL: &str = "
 CREATE TABLE IF NOT EXISTS meta (
@@ -56,7 +56,75 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE UNIQUE INDEX IF NOT EXISTS messages_native
     ON messages(chat_id, native_provider, native_msg_id) WHERE native_msg_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS messages_binding ON messages(binding_id);
+
+-- Version 4 (plan storage-sqlite P5.4): another agent's turns of a chat, and the archive of a chat's replies.
+-- Both belong to their chat: deleting the chat deletes them too.
+CREATE TABLE IF NOT EXISTS other_turns (
+    chat_id  TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    seq      INTEGER NOT NULL,
+    blocks   BLOB NOT NULL,
+    PRIMARY KEY (chat_id, seq)
+);
+CREATE TABLE IF NOT EXISTS archive (
+    chat_id   TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    msg_id    TEXT NOT NULL,
+    at        TEXT NOT NULL DEFAULT '',
+    tokens    INTEGER,
+    snapshot  BLOB NOT NULL,
+    PRIMARY KEY (chat_id, msg_id)
+);
+
+-- Version 5 (plan storage-sqlite P7): which chat uses which attachment file. A file no chat uses is never removed.
+CREATE TABLE IF NOT EXISTS attachment_refs (
+    path     TEXT NOT NULL,
+    chat_id  TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    PRIMARY KEY (path, chat_id)
+);
+
+-- Version 6 (plan storage-sqlite P1.6): zstd dictionaries for the messages. Never deleted while a row uses one.
+CREATE TABLE IF NOT EXISTS codec_dicts (
+    id       INTEGER PRIMARY KEY,
+    created  TEXT NOT NULL,
+    bytes    BLOB NOT NULL
+);
 ";
+
+/// Dictionaries of the store, as the codec reads them.
+pub fn load_dicts(conn: &Connection) -> Result<crate::codec::Dicts> {
+    let mut statement = conn.prepare("SELECT id, bytes FROM codec_dicts ORDER BY id")?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut dicts = crate::codec::Dicts::default();
+    for (id, bytes) in rows {
+        let id = u16::try_from(id)
+            .map_err(|_| super::ChatIndexError::Codec("dictionary id out of range".into()))?;
+        dicts.latest = Some(id);
+        dicts.bytes.insert(id, bytes);
+    }
+    Ok(dicts)
+}
+
+/// True when the messages are enough to train the dictionary and none exists yet.
+pub fn dicts_due(conn: &Connection) -> Result<bool> {
+    let dicts: i64 = conn.query_row("SELECT COUNT(*) FROM codec_dicts", [], |row| row.get(0))?;
+    if dicts > 0 {
+        return Ok(false);
+    }
+    let messages: i64 = conn.query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))?;
+    Ok(messages >= super::DICT_MIN_ROWS)
+}
+
+/// Stores a trained dictionary. Its id is the next free one.
+pub fn save_dict(conn: &Connection, bytes: &[u8]) -> Result<()> {
+    conn.execute(
+        "INSERT INTO codec_dicts (created, bytes) VALUES (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?1)",
+        [bytes],
+    )?;
+    Ok(())
+}
 
 /// Turns the foreign keys on, creates the tables and records the schema version.
 pub fn prepare(conn: &Connection) -> Result<()> {
@@ -78,6 +146,13 @@ pub fn prepare(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "ALTER TABLE messages ADD COLUMN blocks BLOB;
              ALTER TABLE messages ADD COLUMN preview TEXT;",
+        )?;
+    }
+    if version < 3 {
+        // Version 3: the message id the screen uses, so a row can be matched back to the message it came from.
+        conn.execute_batch(
+            "ALTER TABLE messages ADD COLUMN client_id TEXT;
+             CREATE INDEX IF NOT EXISTS messages_client ON messages(chat_id, client_id);",
         )?;
     }
     conn.execute(
