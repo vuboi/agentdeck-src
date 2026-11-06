@@ -11,12 +11,16 @@ import { sessionLanes } from '../session/run.svelte';
 import { agentDisplayName } from '../../agents/provider-registry';
 import { modelLabel } from '../../agents/models.svelte';
 import type { Message } from '../mock';
+import type { HarnessState } from '../agent';
 
 export type LiveLine = { label: string; spinner: ZLoadingSpinner };
 
 /** What a running reply is doing now ("Thinking", "Running pnpm test", "Waiting for approval"), for its one live line.
  *  Reads the activity log, so call it inside a $derived. */
-export function liveLine(message: Message): LiveLine {
+export function liveLine(
+    message: Message,
+    harnessState?: HarnessState,
+): LiveLine {
     // Before the first event a task another agent handed over, or pictures read ahead, say who they went to. A message
     // the user sent to the main agent shows its normal state ("Thinking") like any other turn.
     if (
@@ -52,6 +56,15 @@ export function liveLine(message: Message): LiveLine {
     // The main run waits while a side run works for the user (plan 6.6): it says so, rather than "Thinking".
     if (state.label === 'Thinking' && sideRunWorking(workspace.activeId))
         return { label: 'Waiting for progress', spinner: LOADER.background };
+    if (state.label !== 'Thinking') return state;
+    if (harnessState === 'waiting_tool')
+        return { label: 'Running tools', spinner: LOADER.background };
+    if (harnessState === 'waiting_approval')
+        return { label: 'Waiting for approval', spinner: LOADER.thinking };
+    if (harnessState === 'starting' || harnessState === 'ready')
+        return { label: 'Starting agent', spinner: LOADER.thinking };
+    if (harnessState === 'stopping')
+        return { label: 'Stopping', spinner: LOADER.thinking };
     return state;
 }
 

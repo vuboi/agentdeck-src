@@ -15,6 +15,7 @@ use serde::Serialize;
 
 pub mod catalog;
 pub mod categories;
+pub mod dsh;
 pub mod install;
 pub mod library;
 pub mod lock;
@@ -35,6 +36,7 @@ use plugins::{check_plugin_id, run};
 pub struct StoreInstalled {
     pub skills: Vec<library::SkillItem>,
     pub plugins: Vec<plugins::PluginItem>,
+    pub dsh_plugins: Vec<dsh::PluginItem>,
     /// Why a CLI's plugin list could not be read; the rest still shows.
     pub plugin_errors: Vec<String>,
 }
@@ -69,7 +71,20 @@ pub async fn store_installed() -> Result<StoreInstalled, String> {
             Err(error) => installed.plugin_errors.push(format!("{agent}: {error}")),
         }
     }
+    if let Ok(list) = dsh::installed() {
+        installed.dsh_plugins = list;
+    }
     Ok(installed)
+}
+
+#[tauri::command]
+pub async fn store_dsh_plugin_install(spec: String) -> Result<(), String> {
+    dsh::add(spec).await
+}
+
+#[tauri::command]
+pub async fn store_dsh_plugin_remove(name: String) -> Result<(), String> {
+    dsh::remove(name).await
 }
 
 #[tauri::command]

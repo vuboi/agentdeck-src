@@ -17,6 +17,7 @@ tauri = { version = "2", features = ["unstable", "tray-icon", "protocol-asset"] 
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance.workspace = true
 ag-adapters.workspace = true
+ag-orchestrator.workspace = true
 github-copilot-sdk.workspace = true
 indexmap.workspace = true
 async-trait.workspace = true

@@ -6,9 +6,11 @@
 
 mod error;
 mod events;
+mod harness;
 mod model;
 mod state;
 
 pub use error::TransitionError;
 pub use events::WorkflowEvent;
+pub use harness::{HarnessEvent, HarnessEventKind, HarnessRuntime, HarnessSnapshot, HarnessState};
 pub use model::{Attempt, AttemptStatus, Run, RunStatus, Step, StepSpec, StepStatus};

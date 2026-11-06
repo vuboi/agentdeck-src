@@ -16,6 +16,7 @@ use ag_adapters::agent::runner::{drive_turn, resolve_binary};
 use ag_adapters::agent::warm::drive_warm_turn_with;
 use ag_adapters::agent::workbuddy::WorkBuddy;
 use ag_adapters::agent::{AgentEvent, ChatResponseCapabilities, Provider, TurnRequest};
+use ag_orchestrator::{HarnessRuntime, HarnessState};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -43,7 +44,19 @@ struct AgentEnvelope {
     turn: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     message_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_state: Option<HarnessState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harness_seq: Option<u64>,
     event: AgentEvent,
+}
+
+#[derive(Clone, Serialize)]
+struct HarnessEnvelope {
+    session: String,
+    turn: String,
+    state: HarnessState,
+    seq: u64,
 }
 
 /// The run in progress of one chat: which turn it is, so a stop meant for an older turn never ends a newer one.
@@ -152,6 +165,18 @@ fn forget(session: &str, turn: &str) {
 }
 
 fn emit(app: &AppHandle, session: &str, turn: &str, message_id: Option<&str>, event: AgentEvent) {
+    emit_with_harness(app, session, turn, message_id, event, None, None)
+}
+
+fn emit_with_harness(
+    app: &AppHandle,
+    session: &str,
+    turn: &str,
+    message_id: Option<&str>,
+    event: AgentEvent,
+    harness_state: Option<HarnessState>,
+    harness_seq: Option<u64>,
+) {
     crate::flow_log::tap(session, turn, &event);
     // Only the main window: a Preview page is a copy of this app and must not replay the chats' events.
     let _ = app.emit_to(
@@ -161,9 +186,68 @@ fn emit(app: &AppHandle, session: &str, turn: &str, message_id: Option<&str>, ev
             session: session.to_owned(),
             turn: turn.to_owned(),
             message_id: message_id.map(str::to_owned),
+            harness_state,
+            harness_seq,
             event,
         },
     );
+}
+
+fn emit_harness_status(app: &AppHandle, session: &str, turn: &str, runtime: &HarnessRuntime) {
+    let _ = app.emit_to(
+        "main",
+        "agent-harness",
+        HarnessEnvelope {
+            session: session.to_owned(),
+            turn: turn.to_owned(),
+            state: runtime.state(),
+            seq: runtime.next_seq().saturating_sub(1),
+        },
+    );
+}
+
+fn observe_harness(runtime: &mut HarnessRuntime, event: &AgentEvent) {
+    match event {
+        AgentEvent::Delta { text } | AgentEvent::Thinking { text } => {
+            let _ = runtime.assistant_delta(text);
+        }
+        AgentEvent::ToolCall { id, name, .. } => {
+            let _ = runtime.wait_for_tool(id.clone(), name.clone());
+        }
+        AgentEvent::ToolResult { id, is_error, .. } => {
+            let _ = runtime.finish_tool(id.clone(), !is_error);
+        }
+        AgentEvent::PermissionDenied { requests } => {
+            for request in requests {
+                let _ = runtime.request_approval(request.id.clone());
+            }
+        }
+        AgentEvent::Task {
+            id,
+            tool_use_id,
+            status,
+            ..
+        } => {
+            let child_id = tool_use_id.as_deref().unwrap_or(id);
+            if *status == ag_adapters::agent::TaskStatus::Started {
+                let _ = runtime.start_subagent(child_id.to_owned());
+            } else if status.is_end() {
+                let _ = runtime.finish_subagent(
+                    child_id.to_owned(),
+                    *status == ag_adapters::agent::TaskStatus::Done,
+                );
+            }
+        }
+        AgentEvent::Done { .. } => {
+            let _ = runtime.complete_turn();
+        }
+        AgentEvent::Error { message } => {
+            let _ = runtime.fail_turn(message.clone());
+        }
+        // Child work has its own event scope. Parent terminal state is owned by the parent turn.
+        AgentEvent::Scoped { .. } => {}
+        _ => {}
+    }
 }
 
 fn provider_for(agent: &str) -> Result<Box<dyn Provider>, String> {
@@ -190,6 +274,9 @@ async fn run_turn(
     keep_open: bool,
     mut stop: StopToken,
 ) {
+    let mut harness = HarnessRuntime::new(session.clone());
+    harness.start();
+    let _ = harness.begin_turn(turn.clone());
     let mut noted = crate::flow_log::TurnGuard::new(
         &session,
         &turn,
@@ -215,15 +302,41 @@ async fn run_turn(
             provider.as_ref(),
             &req,
             stop.clone(),
-            |event| emit(&app, &session, &turn, message_id.as_deref(), event),
+            |event| {
+                observe_harness(&mut harness, &event);
+                emit_with_harness(
+                    &app,
+                    &session,
+                    &turn,
+                    message_id.as_deref(),
+                    event,
+                    Some(harness.state()),
+                    Some(harness.next_seq().saturating_sub(1)),
+                );
+            },
         )
         .await;
     if !warm {
         // A per-turn process has no interrupt message: a stop drops the turn, which ends its process tree.
         tokio::select! {
-            () = drive_turn(binary, provider.as_ref(), &req, |event| emit(&app, &session, &turn, message_id.as_deref(), event)) => {}
-            () = stop.stopped() => {}
+            () = drive_turn(binary, provider.as_ref(), &req, |event| {
+                observe_harness(&mut harness, &event);
+                emit_with_harness(
+                    &app,
+                    &session,
+                    &turn,
+                    message_id.as_deref(),
+                    event,
+                    Some(harness.state()),
+                    Some(harness.next_seq().saturating_sub(1)),
+                );
+            }) => {}
+            () = stop.stopped() => {
+            }
         }
+    }
+    if stop.is_stopped() && harness.cancel() {
+        emit_harness_status(&app, &session, &turn, &harness);
     }
     noted.finish(if stop.is_stopped() {
         "stopped"
@@ -334,23 +447,46 @@ pub(crate) async fn agent_send(
             api_key,
         };
         let (stop, token) = StopHandle::new();
+        let stopped = token.clone();
+        let mut harness = HarnessRuntime::new(session.clone());
+        harness.start();
+        let _ = harness.begin_turn(turn.clone());
+        emit_harness_status(&app, &session, &turn, &harness);
         let mut noted = crate::flow_log::TurnGuard::new(
             &session,
             &turn,
             "copilot",
             req.model.as_deref().unwrap_or("-"),
         );
-        let run = crate::copilot::run_turn(
+        let run = crate::copilot::run_turn_with_sink(
             app.clone(),
             session.clone(),
             turn.clone(),
             message_id.clone(),
             req,
             token,
+            move |event| {
+                observe_harness(&mut harness, &event);
+                emit_with_harness(
+                    &app,
+                    &session,
+                    &turn,
+                    message_id.as_deref(),
+                    event,
+                    Some(harness.state()),
+                    Some(harness.next_seq().saturating_sub(1)),
+                );
+            },
         );
         let (chat, this_turn) = (session.clone(), turn.clone());
         let handle = tauri::async_runtime::spawn(async move {
             run.await;
+            if stopped.is_stopped() && harness.cancel() {
+                emit_harness_status(&app, &chat, &this_turn, &harness);
+            } else if !harness.state().is_terminal() {
+                let _ = harness.complete_turn();
+                emit_harness_status(&app, &chat, &this_turn, &harness);
+            }
             noted.finish("finished");
             forget(&chat, &this_turn);
         });
@@ -372,23 +508,46 @@ pub(crate) async fn agent_send(
             api_key,
         };
         let (stop, token) = StopHandle::new();
+        let stopped = token.clone();
+        let mut harness = HarnessRuntime::new(session.clone());
+        harness.start();
+        let _ = harness.begin_turn(turn.clone());
+        emit_harness_status(&app, &session, &turn, &harness);
         let mut noted = crate::flow_log::TurnGuard::new(
             &session,
             &turn,
             "opencode",
             req.model.as_deref().unwrap_or("-"),
         );
-        let run = crate::opencode_serve::run_turn(
+        let run = crate::opencode_serve::run_turn_with_sink(
             app.clone(),
             session.clone(),
             turn.clone(),
             message_id.clone(),
             req,
             token,
+            move |event| {
+                observe_harness(&mut harness, &event);
+                emit_with_harness(
+                    &app,
+                    &session,
+                    &turn,
+                    message_id.as_deref(),
+                    event,
+                    Some(harness.state()),
+                    Some(harness.next_seq().saturating_sub(1)),
+                );
+            },
         );
         let (chat, this_turn) = (session.clone(), turn.clone());
         let handle = tauri::async_runtime::spawn(async move {
             run.await;
+            if stopped.is_stopped() && harness.cancel() {
+                emit_harness_status(&app, &chat, &this_turn, &harness);
+            } else if !harness.state().is_terminal() {
+                let _ = harness.complete_turn();
+                emit_harness_status(&app, &chat, &this_turn, &harness);
+            }
             noted.finish("finished");
             forget(&chat, &this_turn);
         });
@@ -483,10 +642,27 @@ pub(crate) async fn custom_send(
     let (chat, this_turn) = (session.clone(), turn.clone());
     let mut noted = crate::flow_log::TurnGuard::new(&chat, &this_turn, "custom", &config.model);
     let handle = tauri::async_runtime::spawn(async move {
+        let mut harness = HarnessRuntime::new(chat.clone());
+        harness.start();
+        let _ = harness.begin_turn(this_turn.clone());
+        emit_harness_status(&app, &chat, &this_turn, &harness);
         custom_chat::run_turn(&app.clone(), config, messages, |event| {
-            emit(&app, &chat, &this_turn, message_id.as_deref(), event)
+            observe_harness(&mut harness, &event);
+            emit_with_harness(
+                &app,
+                &chat,
+                &this_turn,
+                message_id.as_deref(),
+                event,
+                Some(harness.state()),
+                Some(harness.next_seq().saturating_sub(1)),
+            )
         })
         .await;
+        if !harness.state().is_terminal() {
+            let _ = harness.complete_turn();
+            emit_harness_status(&app, &chat, &this_turn, &harness);
+        }
         noted.finish("finished");
         forget(&chat, &this_turn);
     });

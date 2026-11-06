@@ -844,6 +844,7 @@
 <div
     bind:this={root}
     class="md"
+    aria-busy={streaming}
     {onclick}
     {oncontextmenu}
     {onmousedown}

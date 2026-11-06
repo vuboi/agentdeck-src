@@ -6,6 +6,7 @@
 pub mod agent;
 pub mod chat_index;
 pub mod codec;
+pub mod dsh_protocol;
 pub mod history;
 pub mod models;
 

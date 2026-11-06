@@ -83,6 +83,24 @@ export const API_CONNECTORS = {
         keyEnv: 'MINIMAX_API_KEY',
         model: 'MiniMax-M2.5',
     },
+    'minimax-cn': {
+        name: 'MiniMax (China)',
+        baseUrl: 'https://api.minimaxi.com/v1',
+        keyEnv: 'MINIMAX_API_KEY',
+        model: 'MiniMax-M2.5',
+    },
+    'moonshot-cn': {
+        name: 'Kimi (Moonshot China)',
+        baseUrl: 'https://api.moonshot.cn/v1',
+        keyEnv: 'MOONSHOT_API_KEY',
+        model: 'kimi-k2.5',
+    },
+    'zai-cn': {
+        name: 'GLM (Z.AI China)',
+        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        keyEnv: 'ZAI_API_KEY',
+        model: 'glm-4.7',
+    },
     muse: {
         name: 'Muse (Meta Model API)',
         baseUrl: 'https://api.meta.ai/v1',
