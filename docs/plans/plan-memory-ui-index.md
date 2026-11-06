@@ -29,53 +29,53 @@ Số dòng `file:line` đọc trên nhánh `feat/spec-driven-plans` (commit `f98
 
 ### 1.1 Trí nhớ UI của Preview (page memory)
 
-| Chỗ | Đang làm gì | Vấn đề |
-| --- | --- | --- |
-| `apps/desktop/src/lib/browser/page-memory.ts:8-10` | IndexedDB `agentdeck-pages` trong webview của app, tối đa 3.000 phần tử mỗi site | **Lưu trong AgentDeck**, không theo project, không thấy được, mất khi xoá dữ liệu app |
-| `apps/desktop/src/lib/browser/page-memory-core.ts:45-51` `siteOf` | Khoá theo `hostname` | **Bỏ cổng**: mọi dev server `localhost:*` của mọi project dùng chung một "site" → trộn trí nhớ giữa các project |
-| `page-memory-core.ts:113-128` `scoreElement` | Chấm theo từ khoá, trang hiện tại, số lần thấy | Không có số lần thành công/thất bại; selector hỏng vẫn được gợi ý |
-| `apps/desktop/src/lib/browser/page-memory-bridge.ts` | Rust gửi event `page-memory`, webview trả lời qua `page_memory_reply` | Vòng qua webview chỉ để đọc/ghi một file; timeout 8s (`page_memory.rs:17`) |
-| `apps/desktop/src-tauri/src/page_memory.rs:25-48` | Tool `browser_recall`, `browser_remember` | Mô tả tốt ("Use it BEFORE taking a screenshot") |
-| `page_memory.rs:102-135` `MEMO_JS` | Sinh selector ổn định (id, data-testid, aria-label, name…) cho phần tử agent vừa thấy | Tốt, giữ nguyên |
-| `apps/desktop/src-tauri/src/mcp.rs:342-359` `remember_seen` | Lưu phần tử sau `browser_elements` / `browser_find` | Không lưu khi bấm theo `text`/`selector` thành công |
-| `mcp.rs:361-441` `memory_tool` | Recall + kiểm tra selector còn trên trang (`verify_js`) | Không ghi lại khi selector hết hiệu lực |
-| `mcp.rs:497-531` | `browser_click_element`: locate → click → chờ 400ms → `OVERLAY_NOTE_JS` | Trả lời chỉ có overlay; không nói URL đổi, thông báo/toast, lỗi console mới → agent chụp ảnh để biết kết quả |
-| `apps/desktop/src/lib/chat/session/delegate-task.svelte.ts:66, 1870` | Khởi động bridge page memory | Sẽ bỏ khi chuyển sang Rust |
+| Chỗ                                                                  | Đang làm gì                                                                           | Vấn đề                                                                                                          |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop/src/lib/browser/page-memory.ts:8-10`                   | IndexedDB `agentdeck-pages` trong webview của app, tối đa 3.000 phần tử mỗi site      | **Lưu trong AgentDeck**, không theo project, không thấy được, mất khi xoá dữ liệu app                           |
+| `apps/desktop/src/lib/browser/page-memory-core.ts:45-51` `siteOf`    | Khoá theo `hostname`                                                                  | **Bỏ cổng**: mọi dev server `localhost:*` của mọi project dùng chung một "site" → trộn trí nhớ giữa các project |
+| `page-memory-core.ts:113-128` `scoreElement`                         | Chấm theo từ khoá, trang hiện tại, số lần thấy                                        | Không có số lần thành công/thất bại; selector hỏng vẫn được gợi ý                                               |
+| `apps/desktop/src/lib/browser/page-memory-bridge.ts`                 | Rust gửi event `page-memory`, webview trả lời qua `page_memory_reply`                 | Vòng qua webview chỉ để đọc/ghi một file; timeout 8s (`page_memory.rs:17`)                                      |
+| `apps/desktop/src-tauri/src/page_memory.rs:25-48`                    | Tool `browser_recall`, `browser_remember`                                             | Mô tả tốt ("Use it BEFORE taking a screenshot")                                                                 |
+| `page_memory.rs:102-135` `MEMO_JS`                                   | Sinh selector ổn định (id, data-testid, aria-label, name…) cho phần tử agent vừa thấy | Tốt, giữ nguyên                                                                                                 |
+| `apps/desktop/src-tauri/src/mcp.rs:342-359` `remember_seen`          | Lưu phần tử sau `browser_elements` / `browser_find`                                   | Không lưu khi bấm theo `text`/`selector` thành công                                                             |
+| `mcp.rs:361-441` `memory_tool`                                       | Recall + kiểm tra selector còn trên trang (`verify_js`)                               | Không ghi lại khi selector hết hiệu lực                                                                         |
+| `mcp.rs:497-531`                                                     | `browser_click_element`: locate → click → chờ 400ms → `OVERLAY_NOTE_JS`               | Trả lời chỉ có overlay; không nói URL đổi, thông báo/toast, lỗi console mới → agent chụp ảnh để biết kết quả    |
+| `apps/desktop/src/lib/chat/session/delegate-task.svelte.ts:66, 1870` | Khởi động bridge page memory                                                          | Sẽ bỏ khi chuyển sang Rust                                                                                      |
 
 ### 1.2 Câu hướng dẫn khiến agent chụp ảnh nhiều
 
-| Chỗ | Câu hiện tại |
-| --- | --- |
-| `mcp.rs:28` mô tả `browser_screenshot` | "**Look before and after every action.**" |
-| `mcp.rs:952` `instructions` MCP | "Use these tools to see it and act on it as a user would: **screenshot, then click / type / scroll, then screenshot again**…" |
-| `mcp.rs:39` mô tả `browser_open` | "…**then screenshot and act** in the same turn." |
-| `mcp.rs:31` `browser_click` | Bấm theo toạ độ "of the screenshot" — đúng, nhưng nên ghi là cách cuối |
-| `crates/adapters/src/agent/claude.rs:25` và `codex.rs:27` (`WORK_CONTEXT`) | "Then keep going in this same turn: **screenshot, act on the page, screenshot again**." — prompt hệ thống của Claude và Codex |
-| `crates/adapters/src/agent/claude.rs:113` | "…with the agentdeck tools: **browser_screenshot to look, browser_click** / browser_fill … (coordinates are CSS pixels of th[e screenshot])" — dạy bấm theo toạ độ |
-| `apps/desktop/src-tauri/src/custom_chat.rs:615-617` | Đã đúng hướng DOM-first ("Do not guess coordinates", "After each action call browser_elements or browser_dom") — dùng làm mẫu |
+| Chỗ                                                                        | Câu hiện tại                                                                                                                                                       |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mcp.rs:28` mô tả `browser_screenshot`                                     | "**Look before and after every action.**"                                                                                                                          |
+| `mcp.rs:952` `instructions` MCP                                            | "Use these tools to see it and act on it as a user would: **screenshot, then click / type / scroll, then screenshot again**…"                                      |
+| `mcp.rs:39` mô tả `browser_open`                                           | "…**then screenshot and act** in the same turn."                                                                                                                   |
+| `mcp.rs:31` `browser_click`                                                | Bấm theo toạ độ "of the screenshot" — đúng, nhưng nên ghi là cách cuối                                                                                             |
+| `crates/adapters/src/agent/claude.rs:25` và `codex.rs:27` (`WORK_CONTEXT`) | "Then keep going in this same turn: **screenshot, act on the page, screenshot again**." — prompt hệ thống của Claude và Codex                                      |
+| `crates/adapters/src/agent/claude.rs:113`                                  | "…with the agentdeck tools: **browser_screenshot to look, browser_click** / browser_fill … (coordinates are CSS pixels of th[e screenshot])" — dạy bấm theo toạ độ |
+| `apps/desktop/src-tauri/src/custom_chat.rs:615-617`                        | Đã đúng hướng DOM-first ("Do not guess coordinates", "After each action call browser_elements or browser_dom") — dùng làm mẫu                                      |
 
 ### 1.3 Memory dự án
 
-| Chỗ | Đang làm gì | Vấn đề |
-| --- | --- | --- |
-| `apps/desktop/src/lib/chat/content/project-memory.ts:6-28` | `.agentdeck/memory.md` trong project; 3.000 ký tự đầu vào prompt; dặn agent tự thêm bullet, đề xuất vào `.agentdeck/proposals.md` | Đã **theo project, trong project** — đúng hướng |
-| `apps/desktop/src-tauri/src/project_memory.rs:10, 47-92` | Đọc/ghi, tối đa 64 KB, chỉ là lệnh Tauri | **Không có tool MCP**; agent phải tự mở file |
-| `run.svelte.ts` (khối `memoryNote`, ~`:1096-1111`) | Chỉ đưa memory vào khi `!resume && !isWorkerChat(...)` | **Worker không nhận memory** → làm lại từ đầu, lặp lỗi đã biết |
-| `project-memory.ts:19` | Cắt cứng ở 3.000 ký tự | Phần sau không có mục lục → agent không biết có gì để mở |
+| Chỗ                                                        | Đang làm gì                                                                                                                       | Vấn đề                                                         |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `apps/desktop/src/lib/chat/content/project-memory.ts:6-28` | `.agentdeck/memory.md` trong project; 3.000 ký tự đầu vào prompt; dặn agent tự thêm bullet, đề xuất vào `.agentdeck/proposals.md` | Đã **theo project, trong project** — đúng hướng                |
+| `apps/desktop/src-tauri/src/project_memory.rs:10, 47-92`   | Đọc/ghi, tối đa 64 KB, chỉ là lệnh Tauri                                                                                          | **Không có tool MCP**; agent phải tự mở file                   |
+| `run.svelte.ts` (khối `memoryNote`, ~`:1096-1111`)         | Chỉ đưa memory vào khi `!resume && !isWorkerChat(...)`                                                                            | **Worker không nhận memory** → làm lại từ đầu, lặp lỗi đã biết |
+| `project-memory.ts:19`                                     | Cắt cứng ở 3.000 ký tự                                                                                                            | Phần sau không có mục lục → agent không biết có gì để mở       |
 
 ### 1.4 Code index
 
-| Chỗ | Đang làm gì | Vấn đề |
-| --- | --- | --- |
-| `apps/desktop/src-tauri/src/index.rs:16, 150-180` | Tree-sitter cho TS/JS/Svelte/Vue/Rust/Python/Go/Java/C# | Chất lượng parse tốt |
-| `index.rs:52-76` `open` | SQLite ở `<home>/<channel>/index/<hash>.db` | Cache, giữ nguyên |
-| `index.rs:79-92` `set_root` | Ghi root của chat và **chạy index nền** | Chỉ được gọi khi agent kết nối MCP có `?root=` (`bridge.rs:405-406`) hoặc custom chat có cwd (`custom_chat.rs:741`). **Mở project trong app không index** |
-| `index.rs:576-578` `run` | Mỗi tool `code_*` gọi `refresh(&root)` **đồng bộ** | Lần đầu: quét + parse cả repo trong lượt gọi tool đầu tiên → chậm, có thể timeout |
-| `index.rs:21, 431-538` `refresh` | `RECHECK = 2s`; quá 2s là **đi lại cả cây** (stat mọi file) dưới mutex | Repo lớn: mỗi lần gọi đều chậm; background refresh và tool call tranh mutex |
-| `index.rs:402-420` `skipped` | Bỏ node_modules, target, dist, .git… + `.gitignore` (crate `ignore`) | Tốt |
-| `index.rs:530-534` | Xoá dòng của file đã bị xoá | Đúng (không phải lỗi) |
-| UI | Không có trạng thái index (đang chạy / bao nhiêu file / lỗi) | Người dùng không biết index đã sẵn sàng chưa |
-| `docs/bugs/2026-11-04-command-code-run-project.md:160` | Một số project có MCP ngoài `codegraph`, `serena` trong `.mcp.json` | Trùng chức năng với `code_*`; agent có thể gọi cả hai |
+| Chỗ                                                    | Đang làm gì                                                            | Vấn đề                                                                                                                                                    |
+| ------------------------------------------------------ | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/desktop/src-tauri/src/index.rs:16, 150-180`      | Tree-sitter cho TS/JS/Svelte/Vue/Rust/Python/Go/Java/C#                | Chất lượng parse tốt                                                                                                                                      |
+| `index.rs:52-76` `open`                                | SQLite ở `<home>/<channel>/index/<hash>.db`                            | Cache, giữ nguyên                                                                                                                                         |
+| `index.rs:79-92` `set_root`                            | Ghi root của chat và **chạy index nền**                                | Chỉ được gọi khi agent kết nối MCP có `?root=` (`bridge.rs:405-406`) hoặc custom chat có cwd (`custom_chat.rs:741`). **Mở project trong app không index** |
+| `index.rs:576-578` `run`                               | Mỗi tool `code_*` gọi `refresh(&root)` **đồng bộ**                     | Lần đầu: quét + parse cả repo trong lượt gọi tool đầu tiên → chậm, có thể timeout                                                                         |
+| `index.rs:21, 431-538` `refresh`                       | `RECHECK = 2s`; quá 2s là **đi lại cả cây** (stat mọi file) dưới mutex | Repo lớn: mỗi lần gọi đều chậm; background refresh và tool call tranh mutex                                                                               |
+| `index.rs:402-420` `skipped`                           | Bỏ node_modules, target, dist, .git… + `.gitignore` (crate `ignore`)   | Tốt                                                                                                                                                       |
+| `index.rs:530-534`                                     | Xoá dòng của file đã bị xoá                                            | Đúng (không phải lỗi)                                                                                                                                     |
+| UI                                                     | Không có trạng thái index (đang chạy / bao nhiêu file / lỗi)           | Người dùng không biết index đã sẵn sàng chưa                                                                                                              |
+| `docs/bugs/2026-11-04-command-code-run-project.md:160` | Một số project có MCP ngoài `codegraph`, `serena` trong `.mcp.json`    | Trùng chức năng với `code_*`; agent có thể gọi cả hai                                                                                                     |
 
 ### 1.5 Routing
 
@@ -90,8 +90,8 @@ Số dòng `file:line` đọc trên nhánh `feat/spec-driven-plans` (commit `f98
 1. **Thư mục trí nhớ của project:** `<project>/.agentdeck/`. Đã dùng cho `memory.md`, `proposals.md`. Thêm `ui-memory/`.
 2. **Project của một chat** lấy bằng `crate::index::root_of(chat, &json!({}))` (đăng ký qua `set_root`). Không có project → **không lưu gì** (không có chỗ dự phòng trong app data), tool trả lời rõ "no project folder for this chat".
 3. **Khoá site trong một project:**
-   - `localhost`, `127.0.0.1`, `[::1]`, `*.localhost` → `local` (cổng đổi mỗi lần chạy dev nhưng vẫn là app của project).
-   - Tên miền thật → hostname bỏ `www.` (như `siteOf` hiện tại).
+    - `localhost`, `127.0.0.1`, `[::1]`, `*.localhost` → `local` (cổng đổi mỗi lần chạy dev nhưng vẫn là app của project).
+    - Tên miền thật → hostname bỏ `www.` (như `siteOf` hiện tại).
 4. **Rust giữ toàn bộ lưu trữ UI memory.** Bỏ IndexedDB và bridge webview. Logic chấm điểm chuyển từ `page-memory-core.ts` sang Rust (giữ đúng công thức, có test).
 5. **Không migrate dữ liệu IndexedDB cũ.** Người dùng nói đó là lưu tạm. Sau khi chuyển, xoá DB `agentdeck-pages` một lần (P2.8).
 6. **Ảnh là cách cuối.** Mọi mô tả tool và hướng dẫn nói cùng một thứ tự: recall → elements/find → click_element → đọc kết quả trả về → chỉ chụp khi cần nhìn.
@@ -104,31 +104,35 @@ Số dòng `file:line` đọc trên nhánh `feat/spec-driven-plans` (commit `f98
 
 ```json
 {
-  "version": 1,
-  "site": "local",
-  "elements": [
-    {
-      "selector": "button[aria-label=\"Export\"]",
-      "name": "Export",
-      "kind": "button",
-      "pathKey": "/reports/:id",
-      "seen": 7,
-      "ok": 5,
-      "fail": 0,
-      "lastSeen": 1793886000000,
-      "lastOk": 1793886000000
-    }
-  ],
-  "recipes": [
-    {
-      "goal": "export report csv",
-      "steps": ["open /reports/:id", "click \"Export\" (button[aria-label=\"Export\"])", "click \"CSV\" (#format-csv)"],
-      "seen": 2,
-      "ok": 2,
-      "fail": 0,
-      "lastUsed": 1793886000000
-    }
-  ]
+    "version": 1,
+    "site": "local",
+    "elements": [
+        {
+            "selector": "button[aria-label=\"Export\"]",
+            "name": "Export",
+            "kind": "button",
+            "pathKey": "/reports/:id",
+            "seen": 7,
+            "ok": 5,
+            "fail": 0,
+            "lastSeen": 1793886000000,
+            "lastOk": 1793886000000
+        }
+    ],
+    "recipes": [
+        {
+            "goal": "export report csv",
+            "steps": [
+                "open /reports/:id",
+                "click \"Export\" (button[aria-label=\"Export\"])",
+                "click \"CSV\" (#format-csv)"
+            ],
+            "seen": 2,
+            "ok": 2,
+            "fail": 0,
+            "lastUsed": 1793886000000
+        }
+    ]
 }
 ```
 
@@ -176,17 +180,17 @@ Luật:
 
 1. Kiểu dữ liệu `SiteMemory { version, site, elements: Vec<Element>, recipes: Vec<Recipe> }` (serde, `rename_all = "camelCase"`).
 2. Hàm thuần (có test):
-   - `site_key(url: &str) -> Option<String>` theo quyết định 2.3.
-   - `path_key(url: &str) -> String` — port đúng `pathKeyOf` (`page-memory-core.ts:54-74`).
-   - `words(text: &str) -> Vec<String>` — port `wordsOf` (bỏ dấu, `đ`→`d`, stop words, tối đa 12).
-   - `score_element(el, query_words, path_key) -> f64` — port `scoreElement`, **thêm**: `+ min(2, ok*0.5)`, phần tử hỏng (luật mục 3) trả 0.
-   - `score_recipe(...)` — port `scoreRecipe`, recipe có `fail > ok` trả 0.
+    - `site_key(url: &str) -> Option<String>` theo quyết định 2.3.
+    - `path_key(url: &str) -> String` — port đúng `pathKeyOf` (`page-memory-core.ts:54-74`).
+    - `words(text: &str) -> Vec<String>` — port `wordsOf` (bỏ dấu, `đ`→`d`, stop words, tối đa 12).
+    - `score_element(el, query_words, path_key) -> f64` — port `scoreElement`, **thêm**: `+ min(2, ok*0.5)`, phần tử hỏng (luật mục 3) trả 0.
+    - `score_recipe(...)` — port `scoreRecipe`, recipe có `fail > ok` trả 0.
 3. Hàm lưu trữ:
-   - `file_for(root: &Path, site: &str) -> Result<PathBuf, String>`: `<root>/.agentdeck/ui-memory/<site>.json`, kiểm tra tên an toàn, canonicalize thư mục cha nằm trong root (mẫu `plans.rs::path_for`).
-   - `load(root, site) -> SiteMemory` (không có file → rỗng; JSON hỏng → đổi tên file thành `<site>.json.bad-<ts>` và bắt đầu rỗng, log `tracing::warn!`).
-   - `save(root, &SiteMemory)` nguyên tử + prune (mục 3).
-   - `remember_elements(root, url, Vec<PageElement>)`, `remember_recipe(root, url, goal, steps)`, `recall(root, url, query, limit) -> RecallResult`, `mark(root, url, selector, ok: bool)`.
-   - Cache trong RAM `HashMap<PathBuf, (mtime, SiteMemory)>`, đọc lại khi mtime đổi (agent khác hoặc người dùng sửa file).
+    - `file_for(root: &Path, site: &str) -> Result<PathBuf, String>`: `<root>/.agentdeck/ui-memory/<site>.json`, kiểm tra tên an toàn, canonicalize thư mục cha nằm trong root (mẫu `plans.rs::path_for`).
+    - `load(root, site) -> SiteMemory` (không có file → rỗng; JSON hỏng → đổi tên file thành `<site>.json.bad-<ts>` và bắt đầu rỗng, log `tracing::warn!`).
+    - `save(root, &SiteMemory)` nguyên tử + prune (mục 3).
+    - `remember_elements(root, url, Vec<PageElement>)`, `remember_recipe(root, url, goal, steps)`, `recall(root, url, query, limit) -> RecallResult`, `mark(root, url, selector, ok: bool)`.
+    - Cache trong RAM `HashMap<PathBuf, (mtime, SiteMemory)>`, đọc lại khi mtime đổi (agent khác hoặc người dùng sửa file).
 4. `page_memory.rs`: giữ tên tool và mô tả (`browser_recall`, `browser_remember`). Thay `ask()`/`store()` (event qua webview) bằng gọi thẳng `ui_memory`. Xoá `PENDING`, `page_memory_reply`, `WAIT`. Giữ `MEMO_JS`, `verify_js`, `format_recall` (đổi chữ "AgentDeck's memory of this site" → "this project's memory of this site").
 5. `mcp.rs:343-359` `remember_seen` và `mcp.rs:362-441` `memory_tool`: lấy `root` bằng `crate::index::root_of(chat, &json!({}))`. Không có root → `remember_seen` không làm gì; `memory_tool` trả lỗi "This chat has no project folder, so nothing is remembered. Use browser_elements or browser_find."
 6. `lib.rs`: bỏ `page_memory::page_memory_reply` khỏi `generate_handler!` (`lib.rs:~2996`); thêm `mod ui_memory;`. File permission `page_memory_reply.toml` sẽ thành thừa — xoá file đó (build không sinh lại vì lệnh đã bỏ); kiểm tra `build.rs` không lỗi.
@@ -221,17 +225,17 @@ Luật:
 
 1. **Ghi kết quả:** sau khi bấm thành công theo `selector` hoặc `text` hoặc `index`, lấy selector ổn định của phần tử vừa bấm (chạy phần sinh selector của `MEMO_JS` cho đúng phần tử đó — tách hàm `selector(el)` thành helper dùng chung trong `PAGE_HELPERS`) rồi `ui_memory::mark(root, url, selector, ok=true)` và `remember_elements` cho phần tử đó.
 2. **Tự sửa khi hỏng:** khi `locate_js` trả `element not found` cho một `selector`:
-   - `mark(..., ok=false)`.
-   - Nếu có `name` của selector trong memory → chạy `find_js(name)` (đã có, `mcp.rs:312`) và trả về trong cùng câu trả lời: "The remembered selector no longer matches. Elements named like it now: 1. … Use browser_click_element with one of these numbers." Kết quả find được `remember_seen` như bình thường → selector mới được lưu.
-   - Không tự bấm phần tử thay thế (tránh bấm nhầm).
+    - `mark(..., ok=false)`.
+    - Nếu có `name` của selector trong memory → chạy `find_js(name)` (đã có, `mcp.rs:312`) và trả về trong cùng câu trả lời: "The remembered selector no longer matches. Elements named like it now: 1. … Use browser_click_element with one of these numbers." Kết quả find được `remember_seen` như bình thường → selector mới được lưu.
+    - Không tự bấm phần tử thay thế (tránh bấm nhầm).
 3. **Câu trả lời sau khi bấm** (thay `OVERLAY_NOTE_JS` bằng `AFTER_ACTION_JS` mới, giữ phần overlay):
-   - `location.href` trước và sau (Rust đọc trước khi bấm) → "Address changed to …" nếu đổi.
-   - `document.title` nếu đổi.
-   - Overlay đang mở (giữ logic cũ).
-   - Thông báo mới: text của `[role=alert]`, `[role=status]`, `[aria-live]`, `.toast`, `.Toastify__toast`, `[data-sonner-toast]` xuất hiện sau khi bấm (so với danh sách trước khi bấm), tối đa 3, mỗi cái ≤ 120 ký tự.
-   - Phần tử đang focus (tag + name) nếu là ô nhập.
-   - Số lỗi console mới từ lúc bấm (dùng route `/console` có sẵn, lấy `level=error`, đếm theo thời điểm).
-   - Tổng câu trả lời ≤ 600 ký tự.
+    - `location.href` trước và sau (Rust đọc trước khi bấm) → "Address changed to …" nếu đổi.
+    - `document.title` nếu đổi.
+    - Overlay đang mở (giữ logic cũ).
+    - Thông báo mới: text của `[role=alert]`, `[role=status]`, `[aria-live]`, `.toast`, `.Toastify__toast`, `[data-sonner-toast]` xuất hiện sau khi bấm (so với danh sách trước khi bấm), tối đa 3, mỗi cái ≤ 120 ký tự.
+    - Phần tử đang focus (tag + name) nếu là ô nhập.
+    - Số lỗi console mới từ lúc bấm (dùng route `/console` có sẵn, lấy `level=error`, đếm theo thời điểm).
+    - Tổng câu trả lời ≤ 600 ký tự.
 4. Làm tương tự (mục 3, rút gọn: address + messages + errors) cho `browser_fill`, `browser_key` (Enter), `browser_type`.
 
 **Test:** tách phần định dạng câu trả lời thành hàm thuần `after_action_text(before: &AfterState, after: &AfterState) -> String` và test: không đổi gì → "No visible change."; đổi URL; có toast; có lỗi console; cắt 600 ký tự.
@@ -256,10 +260,10 @@ Luật:
 **Việc làm — Rust (`project_memory.rs`) + MCP:**
 
 1. Tool mới (thêm `TOOLS`, `tool_defs`, `call` theo mẫu `devtools.rs`, route trong `mcp.rs` cạnh `plans`):
-   - `memory_read { section?: string }` → cả file (≤ 64 KB) hoặc chỉ một mục `## <section>` (so tên không phân biệt hoa thường, cho phép một phần tên).
-   - `memory_add { section: string, text: string }` → thêm một bullet `- <text>` vào cuối mục (tạo mục nếu chưa có). Từ chối nếu: text > 300 ký tự, có dạng bí mật (khớp regex token/key: `sk-`, `ghp_`, `AKIA`, `-----BEGIN`, chuỗi hex/base64 ≥ 32 ký tự), file sẽ > 64 KB, hoặc bullet trùng (so sau khi chuẩn hoá) đã có.
-   - `memory_propose { text }` → thêm bullet vào `proposals.md` (người dùng duyệt ở Settings như hiện nay).
-   - Root lấy bằng `index::write_root_of(chat, args)` (giống plans/artifacts — chỉ ghi vào project của chat).
+    - `memory_read { section?: string }` → cả file (≤ 64 KB) hoặc chỉ một mục `## <section>` (so tên không phân biệt hoa thường, cho phép một phần tên).
+    - `memory_add { section: string, text: string }` → thêm một bullet `- <text>` vào cuối mục (tạo mục nếu chưa có). Từ chối nếu: text > 300 ký tự, có dạng bí mật (khớp regex token/key: `sk-`, `ghp_`, `AKIA`, `-----BEGIN`, chuỗi hex/base64 ≥ 32 ký tự), file sẽ > 64 KB, hoặc bullet trùng (so sau khi chuẩn hoá) đã có.
+    - `memory_propose { text }` → thêm bullet vào `proposals.md` (người dùng duyệt ở Settings như hiện nay).
+    - Root lấy bằng `index::write_root_of(chat, args)` (giống plans/artifacts — chỉ ghi vào project của chat).
 2. **Mục lục trong prompt** (`project-memory.ts` `memoryHint`): nếu file > 3.000 ký tự, thay vì chỉ cắt, đưa: phần đầu file đến hết mục đầu tiên (≤ 1.500 ký tự) + danh sách tên các mục `## …` + "Read a section with memory_read". File nhỏ giữ như cũ.
 3. Câu hướng dẫn trong `memoryHint`: thay "add one short bullet to that file" bằng "add it with memory_add (or edit the file if the tool is not available)".
 4. **Worker nhận memory:** trong khối `memoryNote` của `run.svelte.ts`, bỏ điều kiện `!isWorkerChat(session.id)`; với worker dùng bản ngắn: chỉ mục lục + "Read the project memory with memory_read before you start". Không đổi cho side chat (`/btw`).
@@ -280,10 +284,10 @@ Luật:
 1. **Index khi mở project:** lệnh Tauri mới `index_warm(root)` gọi `set_root("", root)` (chỉ chạy refresh nền, không gắn chat). Frontend gọi khi project được mở/chọn trong app (tìm chỗ đổi project đang mở, ví dụ effect theo `workspace.activeId` → `projectOf(session).path`), mỗi root một lần mỗi lần chạy app.
 2. **Không chặn tool call lần đầu:** trong `run()` (`index.rs:576-578`): nếu index của root chưa từng xong (`checked == None`) và đang có refresh nền chạy → chờ tối đa 3 giây; quá thì trả lời ngay với kết quả đang có + dòng "Index is still building (<n> files so far); results may be incomplete." Không gọi `refresh` đồng bộ nếu đã có refresh nền đang chạy (thêm cờ `building: AtomicBool` trong `Index`).
 3. **Bỏ quét lại cả cây mỗi 2 giây:** dùng watcher (crate `notify` — **chưa có** trong workspace `Cargo.toml`, đã kiểm 2026-11-05; **hỏi người dùng** trước khi thêm dependency):
-   - Watch root (recursive), bỏ qua đường dẫn `skipped()` và `.gitignore`.
-   - Sự kiện tạo/sửa/xoá file nguồn → đưa vào hàng đợi; một thread gom 500 ms rồi re-parse đúng những file đó.
-   - `refresh` toàn cây chỉ chạy khi mở index lần đầu và khi watcher báo lỗi/tràn.
-   - `RECHECK` đổi thành 60 s cho trường hợp watcher không chạy được (fallback).
+    - Watch root (recursive), bỏ qua đường dẫn `skipped()` và `.gitignore`.
+    - Sự kiện tạo/sửa/xoá file nguồn → đưa vào hàng đợi; một thread gom 500 ms rồi re-parse đúng những file đó.
+    - `refresh` toàn cây chỉ chạy khi mở index lần đầu và khi watcher báo lỗi/tràn.
+    - `RECHECK` đổi thành 60 s cho trường hợp watcher không chạy được (fallback).
 4. **Trạng thái:** `code_index_status` thêm `building`, `last full refresh`, `watching: yes/no`, `files`, `symbols`. Lệnh Tauri `index_status(root)` trả cùng dữ liệu; hiển thị một dòng trong Settings hoặc tooltip (chọn chỗ có sẵn, ví dụ phần project context; **hỏi người dùng** nơi đặt nếu không có chỗ rõ ràng).
 5. **`codegraph` / `serena` MCP ngoài:** không tích hợp. Trong `project_context` (`devtools.rs`), nếu `.mcp.json` của project có server tên `codegraph` hoặc `serena`, thêm dòng: "This project also has <name> MCP; prefer AgentDeck's code_* tools for symbol search (they share the index with every agent)." — **hỏi người dùng** trước khi làm mục này: có muốn ưu tiên code_* hay ưu tiên codegraph.
 
@@ -342,21 +346,21 @@ P7                      hỏi trước
 
 ## 8. Danh sách file dự kiến đổi
 
-| File | Phase | Đổi gì |
-| --- | --- | --- |
-| `apps/desktop/src-tauri/src/mcp.rs` | 1, 2, 3, 4, 5 | Mô tả tool, instructions, `remember_seen`/`memory_tool` dùng root, kết quả sau khi bấm, route tool memory |
-| `apps/desktop/src-tauri/src/custom_chat.rs` | 1 | Câu hướng dẫn browser |
-| `crates/adapters/src/agent/claude.rs` (`:25`, `:113`), `codex.rs` (`:27`) | 1 | Bỏ "screenshot, act, screenshot again"; DOM-first |
-| `apps/desktop/src-tauri/src/ui_memory.rs` (mới) | 2, 3, 4 | Lưu trữ, chấm điểm, prune, mark |
-| `apps/desktop/src-tauri/src/page_memory.rs` | 2 | Gọi `ui_memory` thay vì webview |
-| `apps/desktop/src-tauri/src/lib.rs` | 2, 5, 6 | `mod ui_memory`, bỏ `page_memory_reply`, lệnh `index_warm`, `index_status` |
-| `apps/desktop/src-tauri/permissions/autogenerated/page_memory_reply.toml` | 2 | Xoá |
-| `apps/desktop/src/lib/browser/page-memory*.ts` | 2 | Xoá (sau khi grep không còn chỗ dùng) |
-| `apps/desktop/src/lib/chat/session/delegate-task.svelte.ts` | 2 | Bỏ bridge, thêm dọn IndexedDB một lần |
-| `apps/desktop/src-tauri/src/project_memory.rs` | 5 | `memory_read`, `memory_add`, `memory_propose` |
-| `apps/desktop/src/lib/chat/content/project-memory.ts` (+ test) | 5 | Mục lục, câu hướng dẫn, bản cho worker |
-| `apps/desktop/src/lib/chat/session/run.svelte.ts` | 5 | Worker nhận memory |
-| `apps/desktop/src-tauri/src/index.rs` | 6 | Warm, `building`, watcher, trạng thái |
-| `apps/desktop/src-tauri/src/devtools.rs` | 6 | Dòng về codegraph/serena (nếu được đồng ý) |
-| Frontend chỗ mở project | 6 | Gọi `index_warm` |
-| `docs/user-guides/…`, `docs/release-notes/vX.Y.Z.md` | cuối | Hướng dẫn + "What's new" và "Fixes" |
+| File                                                                      | Phase         | Đổi gì                                                                                                    |
+| ------------------------------------------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------- |
+| `apps/desktop/src-tauri/src/mcp.rs`                                       | 1, 2, 3, 4, 5 | Mô tả tool, instructions, `remember_seen`/`memory_tool` dùng root, kết quả sau khi bấm, route tool memory |
+| `apps/desktop/src-tauri/src/custom_chat.rs`                               | 1             | Câu hướng dẫn browser                                                                                     |
+| `crates/adapters/src/agent/claude.rs` (`:25`, `:113`), `codex.rs` (`:27`) | 1             | Bỏ "screenshot, act, screenshot again"; DOM-first                                                         |
+| `apps/desktop/src-tauri/src/ui_memory.rs` (mới)                           | 2, 3, 4       | Lưu trữ, chấm điểm, prune, mark                                                                           |
+| `apps/desktop/src-tauri/src/page_memory.rs`                               | 2             | Gọi `ui_memory` thay vì webview                                                                           |
+| `apps/desktop/src-tauri/src/lib.rs`                                       | 2, 5, 6       | `mod ui_memory`, bỏ `page_memory_reply`, lệnh `index_warm`, `index_status`                                |
+| `apps/desktop/src-tauri/permissions/autogenerated/page_memory_reply.toml` | 2             | Xoá                                                                                                       |
+| `apps/desktop/src/lib/browser/page-memory*.ts`                            | 2             | Xoá (sau khi grep không còn chỗ dùng)                                                                     |
+| `apps/desktop/src/lib/chat/session/delegate-task.svelte.ts`               | 2             | Bỏ bridge, thêm dọn IndexedDB một lần                                                                     |
+| `apps/desktop/src-tauri/src/project_memory.rs`                            | 5             | `memory_read`, `memory_add`, `memory_propose`                                                             |
+| `apps/desktop/src/lib/chat/content/project-memory.ts` (+ test)            | 5             | Mục lục, câu hướng dẫn, bản cho worker                                                                    |
+| `apps/desktop/src/lib/chat/session/run.svelte.ts`                         | 5             | Worker nhận memory                                                                                        |
+| `apps/desktop/src-tauri/src/index.rs`                                     | 6             | Warm, `building`, watcher, trạng thái                                                                     |
+| `apps/desktop/src-tauri/src/devtools.rs`                                  | 6             | Dòng về codegraph/serena (nếu được đồng ý)                                                                |
+| Frontend chỗ mở project                                                   | 6             | Gọi `index_warm`                                                                                          |
+| `docs/user-guides/…`, `docs/release-notes/vX.Y.Z.md`                      | cuối          | Hướng dẫn + "What's new" và "Fixes"                                                                       |
