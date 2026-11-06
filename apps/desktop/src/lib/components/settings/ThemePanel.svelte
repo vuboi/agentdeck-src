@@ -1,6 +1,12 @@
 <script lang="ts">
     import { tick } from 'svelte';
-    import { ZIcon, ZPopover, ZSlider, ZTabs } from '@shival99/z-ui-svelte';
+    import {
+        ZIcon,
+        ZPopover,
+        ZSelect,
+        ZSlider,
+        ZTabs,
+    } from '@shival99/z-ui-svelte';
     import type { ZIconName } from '@shival99/z-ui-svelte';
     import { layout } from '../../app/ui/layout.svelte';
     import {
@@ -8,6 +14,8 @@
         SANS_FONTS,
         theme,
         UI_FONT_SIZE,
+        type MonoFont,
+        type SansFont,
     } from '../../app/ui/theme.svelte';
     import SectionTitle from '../ui/SectionTitle.svelte';
     import {
@@ -177,50 +185,32 @@
 
         <div>
             <SectionTitle label="UI FONT" />
-            <div
-                class="grid grid-cols-2 gap-1"
-                role="radiogroup"
-                aria-label="UI font"
-            >
-                {#each SANS_FONTS as font (font.value)}
-                    <button
-                        type="button"
-                        role="radio"
-                        aria-checked={theme.uiFont === font.value}
-                        class="h-7 truncate rounded px-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring {theme.uiFont ===
-                        font.value
-                            ? 'bg-primary/15 text-primary'
-                            : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}"
-                        style:font-family={font.stack ?? 'inherit'}
-                        onclick={() => (theme.uiFont = font.value)}
-                        >{font.label}</button
-                    >
-                {/each}
-            </div>
+            <ZSelect
+                class="w-full"
+                zSize="sm"
+                zOptions={SANS_FONTS.map((font) => ({
+                    label: font.label,
+                    value: font.value,
+                }))}
+                value={theme.uiFont}
+                onValueChange={(value) =>
+                    (theme.uiFont = String(value) as SansFont)}
+            />
         </div>
 
         <div>
             <SectionTitle label="CODE FONT" />
-            <div
-                class="grid grid-cols-2 gap-1"
-                role="radiogroup"
-                aria-label="Code font"
-            >
-                {#each MONO_FONTS as font (font.value)}
-                    <button
-                        type="button"
-                        role="radio"
-                        aria-checked={theme.codeFont === font.value}
-                        class="h-7 truncate rounded px-2 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring {theme.codeFont ===
-                        font.value
-                            ? 'bg-primary/15 text-primary'
-                            : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}"
-                        style:font-family={font.stack ?? 'inherit'}
-                        onclick={() => (theme.codeFont = font.value)}
-                        >{font.label}</button
-                    >
-                {/each}
-            </div>
+            <ZSelect
+                class="w-full"
+                zSize="sm"
+                zOptions={MONO_FONTS.map((font) => ({
+                    label: font.label,
+                    value: font.value,
+                }))}
+                value={theme.codeFont}
+                onValueChange={(value) =>
+                    (theme.codeFont = String(value) as MonoFont)}
+            />
         </div>
 
         <div>
