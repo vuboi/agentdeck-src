@@ -13,6 +13,41 @@ const KEY = 'agentdeck.theme';
 export type ChatLayout = 'split' | 'single';
 /** The text size of the whole app, in px: the root size every rem (Tailwind's text sizes) follows. */
 export const UI_FONT_SIZE = { min: 11, max: 20, step: 1, default: 16 } as const;
+/** Fonts of the app's text. `stack` null: the system default (no override). */
+export const SANS_FONTS = [
+    { value: 'system', label: 'System', stack: null },
+    {
+        value: 'google-sans',
+        label: 'Google Sans',
+        stack: "'Google Sans', ui-sans-serif, system-ui, sans-serif",
+    },
+    {
+        value: 'inter',
+        label: 'Inter',
+        stack: "'Inter Variable', ui-sans-serif, system-ui, sans-serif",
+    },
+    {
+        value: 'be-vietnam-pro',
+        label: 'Be Vietnam Pro',
+        stack: "'Be Vietnam Pro', ui-sans-serif, system-ui, sans-serif",
+    },
+] as const;
+/** Fonts of code and monospace text. `stack` null: the system default (no override). */
+export const MONO_FONTS = [
+    { value: 'system', label: 'System', stack: null },
+    {
+        value: 'jetbrains-mono',
+        label: 'JetBrains Mono',
+        stack: "'JetBrains Mono Variable', ui-monospace, monospace",
+    },
+    {
+        value: 'cascadia-code',
+        label: 'Cascadia Code',
+        stack: "'Cascadia Code Variable', ui-monospace, monospace",
+    },
+] as const;
+export type SansFont = (typeof SANS_FONTS)[number]['value'];
+export type MonoFont = (typeof MONO_FONTS)[number]['value'];
 type Saved = {
     primary: Primary;
     neutral: Neutral;
@@ -20,6 +55,8 @@ type Saved = {
     chatLayout: ChatLayout;
     turnDividers: boolean;
     fontSize: number;
+    uiFont: SansFont;
+    codeFont: MonoFont;
 };
 const DEFAULTS: Saved = {
     primary: 'violet',
@@ -28,6 +65,8 @@ const DEFAULTS: Saved = {
     chatLayout: 'split',
     turnDividers: true,
     fontSize: UI_FONT_SIZE.default,
+    uiFont: 'system',
+    codeFont: 'system',
 };
 // The corner radii live in app.css (--radius-small / --radius-large). `--radius` itself is what z-ui falls back to when
 // something reads it directly: the large size.
@@ -103,6 +142,9 @@ class Theme {
             Math.max(UI_FONT_SIZE.min, initial.fontSize),
         ),
     );
+    /** The font of the app's text and of the code text (see SANS_FONTS / MONO_FONTS). */
+    uiFont = $state<SansFont>(initial.uiFont);
+    codeFont = $state<MonoFont>(initial.codeFont);
     private systemDark = $state(media.matches);
 
     readonly dark = $derived(
@@ -164,6 +206,16 @@ class Theme {
                         this.dark ? '#0a0a0a' : '#ffffff',
                     );
                 root.style.fontSize = `${this.uiFontSize}px`;
+                const sans = SANS_FONTS.find(
+                    (f) => f.value === this.uiFont,
+                )?.stack;
+                const mono = MONO_FONTS.find(
+                    (f) => f.value === this.codeFont,
+                )?.stack;
+                if (sans) root.style.setProperty('--font-sans', sans);
+                else root.style.removeProperty('--font-sans');
+                if (mono) root.style.setProperty('--font-mono', mono);
+                else root.style.removeProperty('--font-mono');
                 for (const [name, value] of Object.entries(this.tokens))
                     root.style.setProperty(name, value, 'important');
                 if (changed) {
@@ -190,6 +242,8 @@ class Theme {
                         chatLayout: this.chatLayout,
                         turnDividers: this.turnDividers,
                         fontSize: this.uiFontSize,
+                        uiFont: this.uiFont,
+                        codeFont: this.codeFont,
                     };
                     localStorage.setItem(KEY, JSON.stringify(saved));
                 } catch {

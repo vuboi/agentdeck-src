@@ -6,6 +6,12 @@
 @import 'tailwindcss/preflight.css' layer(base);
 @import 'tailwindcss/utilities.css' layer(utilities);
 @import '@shival99/z-ui-svelte/styles.css';
+/* Bundled fonts for the theme's font choice (theme.svelte.ts): served from 'self', as the CSP allows. */
+@import '@fontsource/google-sans/index.css';
+@import '@fontsource/be-vietnam-pro/index.css';
+@import '@fontsource-variable/inter/index.css';
+@import '@fontsource-variable/jetbrains-mono/index.css';
+@import '@fontsource-variable/cascadia-code/index.css';
 
 html,
 body {
