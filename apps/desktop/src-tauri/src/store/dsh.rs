@@ -46,7 +46,7 @@ fn dependency_items(package: &Value) -> impl Iterator<Item = (&str, &Value)> {
     ["dependencies", "devDependencies", "optionalDependencies"]
         .into_iter()
         .filter_map(|key| package.get(key).and_then(Value::as_object))
-        .flat_map(|deps| deps.iter())
+        .flat_map(|deps| deps.iter().map(|(name, value)| (name.as_str(), value)))
 }
 
 pub fn installed() -> Result<Vec<PluginItem>, String> {
