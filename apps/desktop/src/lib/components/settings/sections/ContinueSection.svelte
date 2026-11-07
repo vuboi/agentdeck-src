@@ -230,6 +230,76 @@
                     </select>
                 </label>
             </div>
+            <div class="grid gap-2 sm:grid-cols-3">
+                <label
+                    class="flex flex-col gap-1 text-[0.75rem] text-muted-foreground"
+                >
+                    <span>Minimum quota remaining (%)</span>
+                    <input
+                        class="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="1"
+                        value={connectors.routingProfile.quotaThreshold}
+                        onchange={(event) =>
+                            setRoutingProfile({
+                                quotaThreshold: Math.min(
+                                    100,
+                                    Math.max(
+                                        0,
+                                        Number(
+                                            (
+                                                event.currentTarget as HTMLInputElement
+                                            ).value,
+                                        ) || 0,
+                                    ),
+                                ),
+                            })}
+                    />
+                </label>
+                <label
+                    class="flex flex-col gap-1 text-[0.75rem] text-muted-foreground"
+                >
+                    <span>Allowed providers</span>
+                    <input
+                        class="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        placeholder="Blank = all"
+                        value={connectors.routingProfile.allowedProviders.join(
+                            ', ',
+                        )}
+                        onchange={(event) =>
+                            setRoutingProfile({
+                                allowedProviders: (
+                                    event.currentTarget as HTMLInputElement
+                                ).value
+                                    .split(',')
+                                    .map((item) => item.trim())
+                                    .filter(Boolean),
+                            })}
+                    />
+                </label>
+                <label
+                    class="flex flex-col gap-1 text-[0.75rem] text-muted-foreground"
+                >
+                    <span>Required capabilities</span>
+                    <input
+                        class="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        value={connectors.routingProfile.requiredCapabilities.join(
+                            ', ',
+                        )}
+                        onchange={(event) =>
+                            setRoutingProfile({
+                                requiredCapabilities: (
+                                    event.currentTarget as HTMLInputElement
+                                ).value
+                                    .split(',')
+                                    .map((item) => item.trim())
+                                    .filter(Boolean),
+                            })}
+                    />
+                </label>
+            </div>
             <div class="text-[0.75rem] text-muted-foreground">
                 Agents to carry on with, in order. Drag the handle to reorder;
                 each row takes one model.
