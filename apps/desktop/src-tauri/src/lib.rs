@@ -2802,6 +2802,7 @@ pub fn run() {
             agent_runs::agent_stop_all,
             agent_runs::agent_inject,
             agent_runs::agent_notify,
+            agent_runs::harness_replay,
             agent_runs::agent_send_while_waiting,
             caller::worker_descendant_activity,
             background_stop::stop_background_command,

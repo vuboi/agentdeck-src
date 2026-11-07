@@ -16,7 +16,10 @@ use ag_adapters::agent::runner::{drive_turn, resolve_binary};
 use ag_adapters::agent::warm::drive_warm_turn_with;
 use ag_adapters::agent::workbuddy::WorkBuddy;
 use ag_adapters::agent::{AgentEvent, ChatResponseCapabilities, Provider, TurnRequest};
-use ag_orchestrator::{AsyncHarnessEventLog, HarnessEventKind, HarnessRuntime, HarnessState};
+use ag_orchestrator::{
+    AsyncHarnessEventLog, HarnessEventKind, HarnessEventLog, HarnessRuntime, HarnessSnapshot,
+    HarnessState,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -57,6 +60,12 @@ struct HarnessEnvelope {
     turn: String,
     state: HarnessState,
     seq: u64,
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct HarnessReplay {
+    snapshot: HarnessSnapshot,
+    interrupted: bool,
 }
 
 /// The run in progress of one chat: which turn it is, so a stop meant for an older turn never ends a newer one.
@@ -206,7 +215,7 @@ fn emit_harness_status(app: &AppHandle, session: &str, turn: &str, runtime: &Har
     );
 }
 
-fn harness_log(app: &AppHandle, session: &str) -> Option<AsyncHarnessEventLog> {
+fn harness_log_path(app: &AppHandle, session: &str) -> Option<PathBuf> {
     let name: String = session
         .chars()
         .map(|ch| {
@@ -217,14 +226,34 @@ fn harness_log(app: &AppHandle, session: &str) -> Option<AsyncHarnessEventLog> {
             }
         })
         .collect();
-    let path = app
-        .path()
-        .app_data_dir()
-        .ok()?
-        .join("logs")
-        .join("harness")
-        .join(format!("{name}.jsonl"));
-    Some(AsyncHarnessEventLog::new(path, 256))
+    Some(
+        app.path()
+            .app_data_dir()
+            .ok()?
+            .join("logs")
+            .join("harness")
+            .join(format!("{name}.jsonl")),
+    )
+}
+
+fn harness_log(app: &AppHandle, session: &str) -> Option<AsyncHarnessEventLog> {
+    Some(AsyncHarnessEventLog::new(
+        harness_log_path(app, session)?,
+        256,
+    ))
+}
+
+/// Replays the last durable Harness state for a chat after app reload. Recovery decides separately whether to resume.
+#[tauri::command]
+pub(crate) fn harness_replay(app: AppHandle, session: String) -> Result<HarnessReplay, String> {
+    let path = harness_log_path(&app, &session).ok_or("app data directory is unavailable")?;
+    let outcome = HarnessEventLog::new(path)
+        .replay(session)
+        .map_err(|error| error.to_string())?;
+    Ok(HarnessReplay {
+        snapshot: outcome.runtime.snapshot(),
+        interrupted: outcome.interrupted,
+    })
 }
 
 fn persist_harness_events(
