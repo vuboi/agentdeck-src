@@ -3,7 +3,11 @@
     import { ZIcon, ZSelect, ZSwitch, zSortable } from '@shival99/z-ui-svelte';
     import type { ZIconName } from '@shival99/z-ui-svelte';
     import AgentLogo from '../../ui/AgentLogo.svelte';
-    import { connectors } from '../../../agents/connectors.svelte';
+    import {
+        connectors,
+        setRoutingProfile,
+        type RoutingStrategy,
+    } from '../../../agents/connectors.svelte';
     import {
         customModelId,
         effortLabel,
@@ -182,6 +186,50 @@
                 ? ''
                 : 'pointer-events-none opacity-50'}"
         >
+            <div class="grid gap-2 sm:grid-cols-2">
+                <label
+                    class="flex flex-col gap-1 text-[0.75rem] text-muted-foreground"
+                >
+                    <span>Routing strategy</span>
+                    <select
+                        class="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        value={connectors.routingProfile.strategy}
+                        onchange={(event) =>
+                            setRoutingProfile({
+                                strategy: (
+                                    event.currentTarget as HTMLSelectElement
+                                ).value as RoutingStrategy,
+                            })}
+                    >
+                        <option value="auto">Auto</option>
+                        <option value="coding">Coding</option>
+                        <option value="fast">Fast</option>
+                        <option value="subscription">Subscription</option>
+                        <option value="thrifty">Thrifty</option>
+                        <option value="offline">Offline / local only</option>
+                        <option value="lkgp">Last known good</option>
+                    </select>
+                </label>
+                <label
+                    class="flex flex-col gap-1 text-[0.75rem] text-muted-foreground"
+                >
+                    <span>When route fails</span>
+                    <select
+                        class="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        value={connectors.routingProfile.fallback}
+                        onchange={(event) =>
+                            setRoutingProfile({
+                                fallback: (
+                                    event.currentTarget as HTMLSelectElement
+                                ).value as 'next' | 'stop' | 'local',
+                            })}
+                    >
+                        <option value="next">Try next configured agent</option>
+                        <option value="local">Use local provider only</option>
+                        <option value="stop">Stop and ask me</option>
+                    </select>
+                </label>
+            </div>
             <div class="text-[0.75rem] text-muted-foreground">
                 Agents to carry on with, in order. Drag the handle to reorder;
                 each row takes one model.
