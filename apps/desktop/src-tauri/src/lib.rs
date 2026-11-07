@@ -2789,6 +2789,7 @@ pub fn run() {
             run_file_read,
             file_read_bytes,
             agent_runs::agent_send,
+            agent_runs::dsh_approval_answer,
             copilot::copilot_permission_answer,
             agent_runs::agent_warm_reset,
             agent_runs::agent_warm_reset_session,

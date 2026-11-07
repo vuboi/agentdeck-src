@@ -19,6 +19,7 @@ import {
     sendAgentTurn,
     stopAgentTurn,
     answerCopilotPermission,
+    answerDshPermission,
 } from '../agent';
 import {
     activeProviderKey,
@@ -1259,7 +1260,8 @@ export function answerPermission(
     const block = chat.messages.find((message) => message.id === messageId)
         ?.blocks[blockIndex];
     // A Copilot turn is still running while its card waits: the answer goes to the SDK request, not to a new turn.
-    const waiting = session?.agent === 'copilot';
+    const waiting =
+        session?.agent === 'copilot' || (session?.agent as string) === 'dsh';
     if (!session || block?.kind !== 'permission') return;
     if (answer === 'retry' && block.state === 'expired') {
         block.state = 'pending';
@@ -1290,9 +1292,13 @@ export function answerPermission(
         block.state = answer === 'deny' ? 'denied' : 'allowed';
         settleKeptPermission(session.id, messageId, blockIndex, block.state);
         persistLocal();
+        const answerLivePermission =
+            (session.agent as string) === 'dsh'
+                ? answerDshPermission
+                : answerCopilotPermission;
         void Promise.all(
             block.requests.map((request) =>
-                answerCopilotPermission(request.id, answer !== 'deny'),
+                answerLivePermission(request.id, answer !== 'deny'),
             ),
         ).catch(() => {
             block.state = 'expired';

@@ -26,6 +26,7 @@ use ag_orchestrator::{
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::oneshot;
 
 use crate::{custom_chat, mcp_manage};
 
@@ -108,6 +109,10 @@ fn stop_run(run: Run) {
 
 /// The active runs, per visible chat and turn. A foreground listener and a background waiter can coexist in one chat.
 static RUNNING: LazyLock<Mutex<HashMap<(String, String), Run>>> = LazyLock::new(Default::default);
+
+static DSH_APPROVALS: LazyLock<
+    Mutex<HashMap<String, oneshot::Sender<ag_adapters::dsh_supervisor::DshApprovalResponse>>>,
+> = LazyLock::new(Default::default);
 
 /// Runs that ended before `track` listed them (a turn that finishes at once): `track` must not list those, nothing would
 /// ever remove them. Keyed like `RUNNING`; turn ids are never reused, so an entry only ever meets its own run.
@@ -499,6 +504,22 @@ async fn run_dsh_sdk_turn(
     let mut config = DshSupervisorConfig::new(PathBuf::from(binary), DshTransportProfile::Sdk);
     config.args = vec!["--profile".into(), "sdk".into()];
     config.cwd = req.cwd.clone();
+    config.approval_callback = Some(std::sync::Arc::new(|request| {
+        let (sender, receiver) = oneshot::channel();
+        DSH_APPROVALS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(request.id, sender);
+        Box::pin(async move {
+            receiver
+                .await
+                .unwrap_or(ag_adapters::dsh_supervisor::DshApprovalResponse::Error {
+                    code: -32800,
+                    message: "approval cancelled".into(),
+                    data: None,
+                })
+        })
+    }));
     let mut supervisor = match DshSupervisor::spawn(config).await {
         Ok(supervisor) => supervisor,
         Err(error) => {
@@ -788,6 +809,29 @@ fn emit_dsh_event(
         Some(harness.state()),
         Some(harness.next_seq().saturating_sub(1)),
     );
+}
+
+/// Answers a permission request held by the live DSH SDK/ACP supervisor.
+#[tauri::command]
+pub(crate) fn dsh_approval_answer(request_id: String, allow: bool) -> Result<(), String> {
+    let sender = DSH_APPROVALS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&request_id)
+        .ok_or_else(|| "that dsh approval request is no longer waiting".to_string())?;
+    sender
+        .send(if allow {
+            ag_adapters::dsh_supervisor::DshApprovalResponse::Result(serde_json::json!({
+                "approved": true
+            }))
+        } else {
+            ag_adapters::dsh_supervisor::DshApprovalResponse::Error {
+                code: -32001,
+                message: "denied by user".into(),
+                data: None,
+            }
+        })
+        .map_err(|_| "dsh supervisor is no longer waiting".to_string())
 }
 
 /// Ends the CLIs kept open between turns, for one agent or all (`agent: None`). Called after an account switch: a CLI

@@ -202,6 +202,15 @@ export async function answerCopilotPermission(
     await invoke('copilot_permission_answer', { requestId, allow });
 }
 
+/** The user's answer to a live DSH SDK/ACP permission request. */
+export async function answerDshPermission(
+    requestId: string,
+    allow: boolean,
+): Promise<void> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('dsh_approval_answer', { requestId, allow });
+}
+
 /** Starts the chat's CLI ahead of its next turn (the user is typing it), with the settings that turn will have. */
 export async function prewarmAgent(args: AgentTurnSettings): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
