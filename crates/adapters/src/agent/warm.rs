@@ -329,6 +329,7 @@ pub(super) fn start(
     key: &str,
 ) -> Result<Warm, String> {
     let mut command = command_for(binary, args);
+    super::runner::apply_inherited_environment_policy(&mut command);
     for key in provider.environment_remove(req) {
         command.env_remove(key);
     }

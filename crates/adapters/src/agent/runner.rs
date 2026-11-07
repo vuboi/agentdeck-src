@@ -12,6 +12,65 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 
+/// Environment inherited by provider processes. Provider credentials and runtime settings are passed explicitly by
+/// [`Provider::environment`]; desktop-only variables stay in the desktop process and never cross this boundary.
+const INHERITED_ENV: &[&str] = &[
+    "APPDATA",
+    "COLORTERM",
+    "COMSPEC",
+    "DEEPSEEK_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "HOME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOCALAPPDATA",
+    "LOGNAME",
+    "MINIMAX_API_KEY",
+    "MOONSHOT_API_KEY",
+    "NO_COLOR",
+    "OPENAI_API_KEY",
+    "PATH",
+    "PATHEXT",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "SHELL",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "TMPDIR",
+    "USER",
+    "USERPROFILE",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "ZAI_API_KEY",
+];
+
+/// Whether an inherited variable is safe and useful for a provider process. Matching is case-insensitive on purpose:
+/// Windows environment names are case-insensitive while Unix names are not, and providers should see one policy.
+pub fn inherited_env_allowed(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    INHERITED_ENV
+        .iter()
+        .any(|allowed| name.eq_ignore_ascii_case(allowed))
+}
+
+/// Starts a provider with a small, cross-platform environment baseline. Provider-specific additions are applied after
+/// this function, so a connector can still pass its API key, bridge address or SDK setting deliberately.
+pub fn apply_inherited_environment_policy(command: &mut Command) {
+    command.env_clear();
+    for (key, value) in std::env::vars_os().filter(|(key, _)| inherited_env_allowed(key)) {
+        command.env(key, value);
+    }
+}
+
 pub use super::resolve::{
     augmented_path, augmented_path_env, common_dirs_here, resolve_binary, without_verbatim,
 };
@@ -200,6 +259,7 @@ pub async fn drive_turn(
     }
     let args = provider.args(req);
     let mut command = command_for(binary, &args);
+    apply_inherited_environment_policy(&mut command);
     for key in provider.environment_remove(req) {
         command.env_remove(key);
     }
@@ -458,6 +518,43 @@ pub async fn drive_turn(
                 message
             },
         });
+    }
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::inherited_env_allowed;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn keeps_runtime_and_provider_credentials() {
+        for name in [
+            "PATH",
+            "HOME",
+            "SystemRoot",
+            "OPENAI_API_KEY",
+            "ZAI_API_KEY",
+        ] {
+            assert!(inherited_env_allowed(OsStr::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn drops_desktop_internals_and_unrelated_values() {
+        for name in [
+            "AGENTDECK_BRIDGE",
+            "AGENTDECK_REAL_GIT_BASH",
+            "AWS_SECRET_ACCESS_KEY",
+            "RANDOM_DESKTOP_SETTING",
+        ] {
+            assert!(!inherited_env_allowed(OsStr::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn policy_is_case_insensitive_for_windows_names() {
+        assert!(inherited_env_allowed(OsStr::new("systemroot")));
+        assert!(inherited_env_allowed(OsStr::new("openai_api_key")));
     }
 }
 
