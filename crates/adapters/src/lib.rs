@@ -8,6 +8,7 @@ pub mod chat_index;
 pub mod codec;
 pub mod dsh_adapter;
 pub mod dsh_protocol;
+pub mod dsh_supervisor;
 pub mod history;
 pub mod models;
 

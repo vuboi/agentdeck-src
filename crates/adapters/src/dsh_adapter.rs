@@ -64,6 +64,11 @@ pub enum DshAdapterEvent {
         result: Value,
     },
     Notification(DshNotification),
+    ServerRequest {
+        id: String,
+        method: String,
+        params: Value,
+    },
     Error {
         stage: &'static str,
         error: Value,
@@ -234,6 +239,9 @@ impl DshRpcAdapter {
 
     pub fn on_frame(&mut self, frame: Value) -> Result<DshAdapterEvent, DshAdapterError> {
         match self.client.transport_mut().ingest(frame)? {
+            IncomingFrame::ServerRequest { id, method, params } => {
+                Ok(DshAdapterEvent::ServerRequest { id, method, params })
+            }
             IncomingFrame::Notification { method, params } => Ok(DshAdapterEvent::Notification(
                 DshNotification::parse(method, params),
             )),

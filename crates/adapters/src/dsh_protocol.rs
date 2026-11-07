@@ -245,6 +245,11 @@ pub enum TransportError {
 
 #[derive(Debug, PartialEq)]
 pub enum IncomingFrame {
+    ServerRequest {
+        id: String,
+        method: String,
+        params: Value,
+    },
     Response {
         id: String,
         result: Result<Value, Value>,
@@ -308,6 +313,13 @@ impl JsonRpcTransport {
 
     pub fn ingest(&mut self, frame: Value) -> Result<IncomingFrame, TransportError> {
         if let Some(method) = frame.get("method").and_then(Value::as_str) {
+            if let Some(id) = frame.get("id").and_then(Value::as_str) {
+                return Ok(IncomingFrame::ServerRequest {
+                    id: id.to_owned(),
+                    method: method.to_owned(),
+                    params: frame.get("params").cloned().unwrap_or(Value::Null),
+                });
+            }
             return Ok(IncomingFrame::Notification {
                 method: method.to_owned(),
                 params: frame.get("params").cloned().unwrap_or(Value::Null),
@@ -331,6 +343,40 @@ impl JsonRpcTransport {
         Err(TransportError::InvalidFrame)
     }
 
+    pub fn response(&self, id: &str, result: Value) -> Result<Vec<u8>, TransportError> {
+        if self.state() == TransportState::Closed {
+            return Err(TransportError::NotOpen(TransportState::Closed));
+        }
+        Ok(encode_json_line(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        }))
+        .expect("JSON values are serializable"))
+    }
+
+    pub fn error_response(
+        &self,
+        id: &str,
+        code: i64,
+        message: &str,
+        data: Option<Value>,
+    ) -> Result<Vec<u8>, TransportError> {
+        if self.state() == TransportState::Closed {
+            return Err(TransportError::NotOpen(TransportState::Closed));
+        }
+        let mut error = json!({ "code": code, "message": message });
+        if let Some(data) = data {
+            error["data"] = data;
+        }
+        Ok(encode_json_line(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": error,
+        }))
+        .expect("JSON values are serializable"))
+    }
+
     pub fn begin_shutdown(&mut self) -> Result<(String, Vec<u8>), TransportError> {
         if self.state() != TransportState::Open {
             return Err(TransportError::NotOpen(self.state()));
@@ -351,7 +397,7 @@ impl JsonRpcTransport {
 mod tests {
     use super::{
         encode_json_line, DshMethod, DshNotification, DshSessionClient, DshTransportProfile,
-        JsonLineDecoder,
+        IncomingFrame, JsonLineDecoder,
     };
     use serde_json::json;
 
@@ -412,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn treats_server_request_with_id_as_notification() {
+    fn treats_server_request_with_id_as_server_request() {
         let mut transport = super::JsonRpcTransport::new();
         let (pending, _) = transport.request("session/prompt", json!({})).unwrap();
         assert_eq!(
@@ -424,7 +470,8 @@ mod tests {
                     "params": {"tool": "shell"}
                 }))
                 .unwrap(),
-            super::IncomingFrame::Notification {
+            IncomingFrame::ServerRequest {
+                id: "approval-1".into(),
                 method: "approval/request".into(),
                 params: json!({"tool": "shell"})
             }
