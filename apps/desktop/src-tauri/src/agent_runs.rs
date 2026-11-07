@@ -675,6 +675,92 @@ fn dsh_notification_event(notification: DshNotification) -> Option<AgentEvent> {
     match kind {
         "assistant/message" | "assistant/delta" | "text" => Some(AgentEvent::Delta { text }),
         "thinking" | "assistant/thinking" => Some(AgentEvent::Thinking { text }),
+        "tool_call" | "tool/start" => Some(AgentEvent::ToolCall {
+            id: params
+                .get("callId")
+                .or_else(|| params.get("toolUseId"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            name: params
+                .get("tool")
+                .or_else(|| params.get("name"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("dsh tool")
+                .to_owned(),
+            input: params
+                .get("input")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
+                .to_string(),
+            change: None,
+            background: false,
+            child_kind: None,
+        }),
+        "tool_result" | "tool/finish" => Some(AgentEvent::ToolResult {
+            id: params
+                .get("callId")
+                .or_else(|| params.get("toolUseId"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            output: params
+                .get("result")
+                .or_else(|| params.get("output"))
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| value.to_string())
+                })
+                .unwrap_or_default(),
+            is_error: params
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|status| matches!(status, "error" | "failed")),
+            image: None,
+            change: None,
+        }),
+        "subagent/started" => Some(AgentEvent::Task {
+            id: params
+                .get("id")
+                .or_else(|| params.get("taskId"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            tool_use_id: None,
+            status: ag_adapters::agent::TaskStatus::Started,
+            label: params
+                .get("label")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            summary: None,
+            tools: None,
+        }),
+        "subagent/finished" => Some(AgentEvent::Task {
+            id: params
+                .get("id")
+                .or_else(|| params.get("taskId"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            tool_use_id: None,
+            status: if params
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|status| matches!(status, "error" | "failed"))
+            {
+                ag_adapters::agent::TaskStatus::Failed
+            } else {
+                ag_adapters::agent::TaskStatus::Done
+            },
+            label: None,
+            summary: params
+                .get("result")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+            tools: None,
+        }),
         _ => Some(AgentEvent::Notice {
             text: format!("dsh: {kind}"),
         }),
