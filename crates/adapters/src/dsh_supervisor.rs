@@ -140,6 +140,15 @@ impl DshSupervisor {
         self.send(|adapter| adapter.new_session(cwd, model)).await
     }
 
+    pub async fn restore_session(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<(), DshSupervisorError> {
+        let mut adapter = self.adapter.lock().await;
+        adapter.restore_session(session_id)?;
+        Ok(())
+    }
+
     pub async fn prompt(&self, text: &str) -> Result<DshRequest, DshSupervisorError> {
         self.send(|adapter| adapter.prompt(text)).await
     }

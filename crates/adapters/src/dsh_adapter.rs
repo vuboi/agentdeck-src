@@ -124,6 +124,17 @@ impl DshRpcAdapter {
         self.client.session_id()
     }
 
+    /// Restores a persisted session after the initialize handshake so a fresh supervisor
+    /// process can continue it with `session/resume`.
+    pub fn restore_session(
+        &mut self,
+        session_id: impl Into<String>,
+    ) -> Result<(), DshAdapterError> {
+        self.require("restore session", DshAdapterState::Initialized)?;
+        self.client.set_session_id(session_id);
+        Ok(())
+    }
+
     pub fn initialize(
         &mut self,
         client_name: &str,
