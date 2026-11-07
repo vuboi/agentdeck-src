@@ -3,6 +3,11 @@ import { activity, audit, type Activity } from '../chat/runs/activity.svelte';
 import { inTauri } from '../app/platform/history';
 import { getPref, setPref } from '../app/platform/prefs';
 import { toast } from '../app/platform/toast';
+export {
+    MCP_CONNECTOR_PRESETS,
+    mcpConnectorPreset,
+    type McpConnectorPreset,
+} from './mcp-connectors';
 
 // The MCP tab: the servers the agent CLIs know (read by Rust, `mcp_manage.rs`), whether each one answers, and how
 // much the agents used them. Usage is counted from the Tasks log (every tool call is in it), so it covers every

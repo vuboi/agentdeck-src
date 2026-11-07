@@ -33,6 +33,7 @@
         healthOf,
         linkAgy,
         loadMcp,
+        MCP_CONNECTOR_PRESETS,
         mcp,
         removeMcp,
         testMcp,
@@ -157,6 +158,17 @@
         ) as Record<McpAgent, boolean>,
     });
     let form = $state(blank());
+
+    function usePreset(id: string) {
+        const preset = MCP_CONNECTOR_PRESETS.find((item) => item.id === id);
+        if (!preset) return;
+        form.name = preset.name.toLowerCase().replaceAll(' ', '-');
+        form.transport = preset.transport;
+        form.target = preset.target;
+        form.args = preset.args.join(' ');
+        form.env = '';
+        form.headers = '';
+    }
 
     const lines = (text: string) =>
         text
@@ -790,6 +802,27 @@
     onOk={() => void save()}
 >
     <div class="flex flex-col gap-3">
+        <div class="rounded-md border border-border bg-muted/30 p-2.5">
+            <div
+                class="mb-1 text-[0.6875rem] font-semibold tracking-wide text-muted-foreground uppercase"
+            >
+                Connector blueprints
+            </div>
+            {#each MCP_CONNECTOR_PRESETS as preset (preset.id)}
+                <div class="flex items-center gap-2">
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm font-medium">{preset.name}</div>
+                        <div class="text-[0.6875rem] text-muted-foreground">
+                            OAuth client spec pending · scopes are recorded in
+                            the contract
+                        </div>
+                    </div>
+                    <ZButton zSize="sm" onclick={() => usePreset(preset.id)}
+                        >Use blueprint</ZButton
+                    >
+                </div>
+            {/each}
+        </div>
         <div class="flex items-center gap-2">
             <ZTabs
                 zTabs={[
