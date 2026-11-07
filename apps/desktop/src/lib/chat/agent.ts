@@ -1,6 +1,7 @@
 import { connectors } from '../agents/connectors.svelte';
 import { creditModel } from '../agents/credit-model';
-import { convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { inTauri } from '../app/platform/history';
 
 export const IMAGE_NOT_FOUND_SRC = '/assets/image-not-found.png';
 
@@ -127,6 +128,30 @@ export type HarnessEnvelope = {
     state: HarnessState;
     seq: number;
 };
+
+export type HarnessReplay = {
+    snapshot: {
+        session_id: string;
+        state: HarnessState;
+        next_seq: number;
+        active_turn_id: string | null;
+        active_tool_ids: string[];
+        active_approval_ids: string[];
+    };
+    interrupted: boolean;
+};
+
+export async function replayHarness(
+    session: string,
+): Promise<HarnessReplay | null> {
+    if (!inTauri() || !session) return null;
+    try {
+        return await invoke<HarnessReplay>('harness_replay', { session });
+    } catch {
+        // Older desktop builds do not expose the command yet; live events remain the source of truth.
+        return null;
+    }
+}
 
 /** What a turn is started with, apart from its message. */
 export type AgentTurnSettings = {

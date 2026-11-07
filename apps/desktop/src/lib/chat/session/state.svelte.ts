@@ -18,7 +18,11 @@ import {
 } from '../../app/platform/prefs';
 import { applyAgentEvent, closeRestoredTasks } from '../agent-reply';
 import { sendSystemNotification } from '../../app/platform/system-notifications';
-import { answerCopilotPermission, type HarnessState } from '../agent';
+import {
+    answerCopilotPermission,
+    type HarnessReplay,
+    type HarnessState,
+} from '../agent';
 import { samePath } from '../../files/paths';
 import { listen } from '../../app/platform/tauri-event';
 import { lastChat } from './turns.svelte';
@@ -354,6 +358,7 @@ export type HarnessView = {
 
 /** Latest provider-neutral lifecycle fact. Kept beside runStates until both reducers share the same counters. */
 export const harnessStates = $state<Record<string, HarnessView>>({});
+export const harnessInterrupted = $state<Record<string, boolean>>({});
 export const harnessOf = (sessionId: string): HarnessView | undefined =>
     harnessStates[sessionId];
 
@@ -366,6 +371,20 @@ export function applyHarnessState(
     const current = harnessStates[sessionId];
     if (current?.turn === turn && seq <= current.seq) return;
     harnessStates[sessionId] = { turn, state, seq };
+}
+
+export function applyHarnessReplay(sessionId: string, replay: HarnessReplay) {
+    applyHarnessState(
+        sessionId,
+        replay.snapshot.active_turn_id ?? 'replayed',
+        replay.snapshot.state,
+        Math.max(0, replay.snapshot.next_seq - 1),
+    );
+    harnessInterrupted[sessionId] = replay.interrupted;
+}
+
+export function clearHarnessInterrupted(sessionId: string) {
+    delete harnessInterrupted[sessionId];
 }
 
 /** What was typed but not sent, per session: switch away and back and it is still there. */

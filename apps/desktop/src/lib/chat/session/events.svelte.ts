@@ -435,6 +435,19 @@ export function resumeStoppedTurn(sessionId: string) {
     });
 }
 
+/** Continues a turn recovered from the durable Harness log without adding a visible user message. */
+export function resumeInterruptedTurn(sessionId: string) {
+    if (isRunning(sessionId)) return;
+    send(sessionId, '', [], [], [], {
+        prompt: continuePrompt(
+            'the app was reloaded during the previous turn',
+            true,
+            lastRequest(sessionId),
+        ),
+        silent: NO_HANDOUT,
+    });
+}
+
 // ---------- keeping work going when a turn fails ----------
 // A turn that ends in an error is not the end of the work: a passing fault is tried again, and otherwise (a usage
 // limit, a sign-out, a crash) the next agent of the user's chain, another provider, takes over the chat (it is told

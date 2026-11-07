@@ -35,6 +35,13 @@
         transcriptSettled,
         workspace,
     } from '../../chat/sessions.svelte';
+    import { replayHarness } from '../../chat/agent';
+    import {
+        applyHarnessReplay,
+        clearHarnessInterrupted,
+        harnessInterrupted,
+    } from '../../chat/session/state.svelte';
+    import { resumeInterruptedTurn } from '../../chat/session/events.svelte';
     import { ticker } from '../../app/platform/clock.svelte';
     import { theme } from '../../app/ui/theme.svelte';
     import {
@@ -77,6 +84,15 @@
         void activeSession()?.model;
         const timer = setTimeout(() => prewarmChat(id), 1200);
         return () => clearTimeout(timer);
+    });
+
+    $effect(() => {
+        const id = workspace.activeId;
+        if (!id) return;
+        void replayHarness(id).then((replay) => {
+            if (replay && workspace.activeId === id)
+                applyHarnessReplay(id, replay);
+        });
     });
 
     onMount(() => {
@@ -1123,6 +1139,27 @@
                 <!-- Writes that undid a newer request of the user, with a way back (plan 6.5). -->
                 <LedgerConflicts />
                 <!-- A pending approval sits right above the input, where the eye already is. -->
+                {#if harnessInterrupted[workspace.activeId]}
+                    <section
+                        class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/5 px-3.5 py-2.5 text-sm"
+                        aria-label="Interrupted turn recovered"
+                    >
+                        <span class="min-w-0 text-muted-foreground"
+                            >Previous turn was interrupted. Continue from the
+                            durable Harness state?</span
+                        >
+                        <button
+                            type="button"
+                            class="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+                            onclick={() => {
+                                clearHarnessInterrupted(workspace.activeId);
+                                resumeInterruptedTurn(workspace.activeId);
+                            }}
+                        >
+                            Resume
+                        </button>
+                    </section>
+                {/if}
                 <ComposerDock
                     {pendingApproval}
                     {pendingQuestion}

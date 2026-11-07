@@ -262,16 +262,17 @@ fn persist_harness_events(
     next_seq: &mut u64,
 ) {
     let Some(log) = log else { return };
-    for event in runtime
-        .events()
-        .iter()
-        .filter(|event| event.seq >= *next_seq)
-    {
+    let mut cursor = *next_seq;
+    for event in runtime.events() {
+        if event.seq < cursor {
+            continue;
+        }
         if log.append(event).is_err() {
             return;
         }
-        *next_seq = event.seq + 1;
+        cursor = event.seq + 1;
     }
+    *next_seq = cursor;
 }
 
 fn observe_harness(runtime: &mut HarnessRuntime, event: &AgentEvent) {
