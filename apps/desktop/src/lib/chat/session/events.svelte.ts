@@ -495,10 +495,16 @@ type RecoveryRoute = {
 function availableRecoveryRoutes(): RecoveryRoute[] {
     const result: RecoveryRoute[] = [];
     const seen = new SvelteSet<string>();
+    const routing = connectors.routingProfile;
     for (const saved of connectors.recovery.chain) {
         const ref = parseModelRef(saved);
         if (!ref) continue;
         const { provider, model: pickedModel, effort } = ref;
+        if (
+            routing.allowedProviders.length > 0 &&
+            !routing.allowedProviders.includes(provider)
+        )
+            continue;
         let agent: Agent;
         let model: string | undefined;
         let restricted = false;
@@ -526,6 +532,13 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
                     item.id === provider && item.enabled && item.baseUrl.trim(),
             );
             if (!connector) continue;
+            if (
+                routing.requiredCapabilities.length > 0 &&
+                !routing.requiredCapabilities.every((capability) =>
+                    (connector.capabilities ?? ['chat']).includes(capability),
+                )
+            )
+                continue;
             const models = connector.models.length
                 ? connector.models
                 : connector.defaultModel
