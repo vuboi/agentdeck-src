@@ -4,6 +4,8 @@ use std::{
     fs::{File, OpenOptions},
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
+    sync::mpsc::{self, SyncSender},
+    thread::{self, JoinHandle},
 };
 use thiserror::Error;
 
@@ -17,6 +19,8 @@ pub enum EventLogError {
     Sequence { expected: u64, actual: u64 },
     #[error("event belongs to session {actual}, expected {expected}")]
     Session { expected: String, actual: String },
+    #[error("event log writer is closed")]
+    Closed,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +32,69 @@ pub struct ReplayOutcome {
 #[derive(Debug, Clone)]
 pub struct HarnessEventLog {
     path: PathBuf,
+}
+
+enum AsyncMessage {
+    Event(HarnessEvent),
+    Flush(mpsc::Sender<Result<(), EventLogError>>),
+}
+
+/// Non-blocking event-log facade. The bounded queue applies backpressure without blocking the agent process on disk I/O.
+pub struct AsyncHarnessEventLog {
+    sender: Option<SyncSender<AsyncMessage>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl AsyncHarnessEventLog {
+    pub fn new(path: impl Into<PathBuf>, capacity: usize) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(capacity.max(1));
+        let path = path.into();
+        let worker = thread::spawn(move || {
+            let log = HarnessEventLog::new(path);
+            while let Ok(message) = receiver.recv() {
+                match message {
+                    AsyncMessage::Event(event) => {
+                        let _ = log.append(&event);
+                    }
+                    AsyncMessage::Flush(reply) => {
+                        let result = log.flush();
+                        let _ = reply.send(result);
+                    }
+                }
+            }
+        });
+        Self {
+            sender: Some(sender),
+            worker: Some(worker),
+        }
+    }
+
+    pub fn append(&self, event: &HarnessEvent) -> Result<(), EventLogError> {
+        self.sender
+            .as_ref()
+            .ok_or(EventLogError::Closed)?
+            .send(AsyncMessage::Event(event.clone()))
+            .map_err(|_| EventLogError::Closed)
+    }
+
+    pub fn flush(&self) -> Result<(), EventLogError> {
+        let (reply, result) = mpsc::channel();
+        self.sender
+            .as_ref()
+            .ok_or(EventLogError::Closed)?
+            .send(AsyncMessage::Flush(reply))
+            .map_err(|_| EventLogError::Closed)?;
+        result.recv().map_err(|_| EventLogError::Closed)?
+    }
+}
+
+impl Drop for AsyncHarnessEventLog {
+    fn drop(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            self.sender.take();
+            let _ = worker.join();
+        }
+    }
 }
 
 impl HarnessEventLog {
@@ -49,6 +116,17 @@ impl HarnessEventLog {
         serde_json::to_writer(&mut file, event)?;
         file.write_all(b"\n")?;
         file.sync_data()?;
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), EventLogError> {
+        if !self.path.exists() {
+            return Ok(());
+        }
+        OpenOptions::new()
+            .append(true)
+            .open(&self.path)?
+            .sync_data()?;
         Ok(())
     }
 
@@ -178,6 +256,29 @@ mod tests {
         assert!(replay.interrupted);
         assert_eq!(replay.runtime.next_seq(), runtime.next_seq());
         assert_eq!(replay.runtime.state(), HarnessState::Running);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn async_log_flushes_events_without_synthetic_records() {
+        let path = std::env::temp_dir().join(format!(
+            "agentdeck-harness-async-events-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let log = AsyncHarnessEventLog::new(&path, 2);
+        let event = HarnessEvent {
+            seq: 0,
+            session_id: "s".into(),
+            turn_id: None,
+            step_id: None,
+            kind: HarnessEventKind::SessionStarted,
+        };
+        log.append(&event).unwrap();
+        log.flush().unwrap();
+        drop(log);
+        let events = HarnessEventLog::new(&path).read().unwrap();
+        assert_eq!(events, vec![event]);
         let _ = std::fs::remove_file(path);
     }
 }

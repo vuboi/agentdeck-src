@@ -16,7 +16,7 @@ mod supervisor;
 
 pub use approval::{ApprovalBroker, ApprovalError, ApprovalRecord, ApprovalStatus};
 pub use error::TransitionError;
-pub use event_log::{EventLogError, HarnessEventLog, ReplayOutcome};
+pub use event_log::{AsyncHarnessEventLog, EventLogError, HarnessEventLog, ReplayOutcome};
 pub use events::WorkflowEvent;
 pub use harness::{HarnessEvent, HarnessEventKind, HarnessRuntime, HarnessSnapshot, HarnessState};
 pub use model::{Attempt, AttemptStatus, Run, RunStatus, Step, StepSpec, StepStatus};
