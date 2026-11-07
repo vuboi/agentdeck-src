@@ -8,6 +8,7 @@ pub mod claude;
 pub mod codex;
 mod codex_server;
 pub mod commandcode;
+pub mod dsh;
 pub mod guard;
 pub mod interrupt;
 pub mod opencode;

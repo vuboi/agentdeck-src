@@ -10,6 +10,7 @@ use ag_adapters::agent::antigravity::Antigravity;
 use ag_adapters::agent::claude::Claude;
 use ag_adapters::agent::codex::Codex;
 use ag_adapters::agent::commandcode::CommandCode;
+use ag_adapters::agent::dsh::Dsh;
 use ag_adapters::agent::interrupt::{StopHandle, StopToken, INTERRUPT_DEADLINE};
 use ag_adapters::agent::opencode::OpenCode;
 use ag_adapters::agent::runner::{drive_turn, resolve_binary};
@@ -349,6 +350,7 @@ fn provider_for(agent: &str) -> Result<Box<dyn Provider>, String> {
         "opencode" => Ok(Box::new(OpenCode::default())),
         "workbuddy" => Ok(Box::new(WorkBuddy)),
         "command-code" => Ok(Box::new(CommandCode::default())),
+        "dsh" => Ok(Box::new(Dsh)),
         other => Err(format!("no agent provider for `{other}` yet")),
     }
 }
