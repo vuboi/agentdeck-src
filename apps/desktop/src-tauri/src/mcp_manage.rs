@@ -39,6 +39,8 @@ pub(crate) struct Raw {
     pub(crate) scope: String,
     pub(crate) source: String,
     pub(crate) disabled: bool,
+    /// Explicit opt-in for refusing this server unless AgentDeck can enforce OS isolation.
+    pub(crate) require_os_sandbox: bool,
 }
 
 impl Raw {
@@ -148,6 +150,7 @@ pub(crate) fn servers_in(map: &Value, agent: &'static str, scope: &str, source: 
                 source: source.to_owned(),
                 disabled: item["disabled"].as_bool().unwrap_or(false)
                     || item["enabled"].as_bool() == Some(false),
+                require_os_sandbox: item["agentdeckRequireOsSandbox"].as_bool().unwrap_or(false),
             }
         })
         .collect()
@@ -497,8 +500,12 @@ async fn test_stdio(raw: &Raw) -> Result<(Option<String>, Vec<String>), String> 
     let program = which(&name).unwrap_or_else(|| PathBuf::from(&name));
     let mut process = command(&program);
     process.args(&raw.args).stdin(Stdio::piped());
-    for (key, value) in &raw.env {
+    process.env_clear();
+    for (key, value) in crate::mcp_client::mcp_child_environment(std::env::vars_os(), &raw.env) {
         process.env(key, value);
+    }
+    if let Some((key, path)) = ag_adapters::agent::runner::augmented_path_env() {
+        process.env(key, path);
     }
     let mut child = process
         .spawn()
@@ -571,19 +578,22 @@ pub async fn mcp_test(id: String) -> TestResult {
     };
     let outcome = match found {
         None => Err("this server is no longer in any config".to_string()),
-        Some(raw) => {
-            let work = async {
-                if raw.url.is_some() {
-                    test_http(&raw).await
-                } else {
-                    test_stdio(&raw).await
-                }
-            };
-            // `npx` may have to download the server first.
-            tokio::time::timeout(Duration::from_secs(40), work)
-                .await
-                .unwrap_or_else(|_| Err("no answer in 40 seconds".to_string()))
-        }
+        Some(raw) => match crate::mcp_client::ensure_os_sandbox_policy(&raw) {
+            Err(error) => Err(error),
+            Ok(()) => {
+                let work = async {
+                    if raw.url.is_some() {
+                        test_http(&raw).await
+                    } else {
+                        test_stdio(&raw).await
+                    }
+                };
+                // `npx` may have to download the server first.
+                tokio::time::timeout(Duration::from_secs(40), work)
+                    .await
+                    .unwrap_or_else(|_| Err("no answer in 40 seconds".to_string()))
+            }
+        },
     };
     let ms = started.elapsed().as_millis() as u64;
     match outcome {
@@ -1454,11 +1464,12 @@ mod tests {
     #[test]
     fn servers_are_read_from_each_config_shape() {
         let claude = json!({ "a": { "type": "http", "url": "https://x.dev/mcp", "headers": { "Authorization": "Bearer secret" } },
-                              "b": { "command": "npx", "args": ["-y", "m"], "env": { "KEY": "secret" } } });
+                              "b": { "command": "npx", "args": ["-y", "m"], "env": { "KEY": "secret" }, "agentdeckRequireOsSandbox": true } });
         let raws = servers_in(&claude, "claude", "user", "f");
         assert_eq!(raws[0].transport, "http");
         assert_eq!(raws[1].transport, "stdio");
         assert_eq!(raws[1].target(), "npx -y m");
+        assert!(raws[1].require_os_sandbox);
         let agy = servers_in(
             &json!({ "z": { "disabled": true, "serverUrl": "http://h/mcp" } }),
             "antigravity",

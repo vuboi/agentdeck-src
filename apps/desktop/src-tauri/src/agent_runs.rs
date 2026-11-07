@@ -446,6 +446,10 @@ fn harness_log(
 #[tauri::command]
 pub(crate) fn harness_replay(app: AppHandle, session: String) -> Result<HarnessReplay, String> {
     let path = harness_log_path(&app, &session).ok_or("app data directory is unavailable")?;
+    replay_harness_log(path, session)
+}
+
+fn replay_harness_log(path: impl Into<PathBuf>, session: String) -> Result<HarnessReplay, String> {
     let outcome = HarnessEventLog::new(path)
         .replay(session)
         .map_err(|error| error.to_string())?;
@@ -453,6 +457,40 @@ pub(crate) fn harness_replay(app: AppHandle, session: String) -> Result<HarnessR
         snapshot: outcome.runtime.snapshot(),
         interrupted: outcome.interrupted,
     })
+}
+
+#[cfg(test)]
+mod harness_replay_tests {
+    use super::{replay_harness_log, HarnessEventLog, HarnessRuntime};
+
+    #[test]
+    fn replay_returns_interrupted_snapshot_after_process_restart() {
+        let path = std::env::temp_dir().join(format!(
+            "agentdeck-harness-replay-{}-{}.jsonl",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let log = HarnessEventLog::new(&path);
+        let mut runtime = HarnessRuntime::new("session-replay-test");
+        runtime.start();
+        assert!(runtime.begin_turn("turn-interrupted"));
+        assert!(runtime.assistant_delta("partial response"));
+        for event in runtime.events() {
+            log.append(event).expect("persist harness event");
+        }
+
+        let replay = replay_harness_log(&path, "session-replay-test".into())
+            .expect("replay persisted harness events");
+
+        assert!(replay.interrupted);
+        assert_eq!(
+            replay.snapshot.active_turn_id.as_deref(),
+            Some("turn-interrupted")
+        );
+        assert_eq!(replay.snapshot.state, runtime.state());
+
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 fn persist_harness_events(

@@ -171,6 +171,7 @@ if (mode !== 'build') {
     );
     config = {
         ...defaults,
+        identifier: env.AGENTDECK_DEV_IDENTIFIER ?? defaults.identifier,
         build: { ...defaults.build, devUrl: env.AGENTDECK_DEV_ORIGIN },
         app: {
             security: {

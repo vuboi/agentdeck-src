@@ -19,20 +19,30 @@ fn identifier() -> &'static str {
 
 /// The folder under the home folder for this build's data.
 pub fn home_folder_name() -> &'static str {
-    match identifier() {
+    home_folder_for(identifier())
+}
+
+fn home_folder_for(identifier: &str) -> &'static str {
+    match identifier {
         "dev.agentdeck.desktop" => ".agentdeck",
         "dev.agentdeck.desktop.dev" => ".agentdeck-dev",
         "dev.agentdeck.desktop.local" => ".agentdeck-local",
+        "dev.agentdeck.desktop.harnessproof" => ".agentdeck-harnessproof",
         _ => ".agentdeck-other",
     }
 }
 
 /// The name this build registers its AgentDeck browser server under in agent configs.
 pub fn server_name() -> &'static str {
-    match identifier() {
+    server_name_for(identifier())
+}
+
+fn server_name_for(identifier: &str) -> &'static str {
+    match identifier {
         "dev.agentdeck.desktop" => "agentdeck",
         "dev.agentdeck.desktop.dev" => "agentdeck-dev",
         "dev.agentdeck.desktop.local" => "agentdeck-local",
+        "dev.agentdeck.desktop.harnessproof" => "agentdeck-harnessproof",
         _ => "agentdeck-other",
     }
 }
@@ -41,6 +51,23 @@ pub fn server_name() -> &'static str {
 pub fn is_bridge_name(name: &str) -> bool {
     matches!(
         name,
-        "agentdeck" | "agentdeck-dev" | "agentdeck-local" | "agentdeck-other"
+        "agentdeck"
+            | "agentdeck-dev"
+            | "agentdeck-local"
+            | "agentdeck-harnessproof"
+            | "agentdeck-other"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{home_folder_for, is_bridge_name, server_name_for};
+
+    #[test]
+    fn harness_proof_channel_has_private_data_and_bridge_names() {
+        let identifier = "dev.agentdeck.desktop.harnessproof";
+        assert_eq!(home_folder_for(identifier), ".agentdeck-harnessproof");
+        assert_eq!(server_name_for(identifier), "agentdeck-harnessproof");
+        assert!(is_bridge_name("agentdeck-harnessproof"));
+    }
 }

@@ -252,6 +252,7 @@ fn preferred_port(identifier: &str) -> u16 {
     match identifier {
         "dev.agentdeck.desktop.dev" => PREFERRED_PORT + 1,
         "dev.agentdeck.desktop.local" => PREFERRED_PORT + 2,
+        "dev.agentdeck.desktop.harnessproof" => PREFERRED_PORT + 3,
         _ => PREFERRED_PORT,
     }
 }
@@ -1365,5 +1366,6 @@ mod channel_tests {
         assert_eq!(preferred_port("dev.agentdeck.desktop"), 47821);
         assert_eq!(preferred_port("dev.agentdeck.desktop.dev"), 47822);
         assert_eq!(preferred_port("dev.agentdeck.desktop.local"), 47823);
+        assert_eq!(preferred_port("dev.agentdeck.desktop.harnessproof"), 47824);
     }
 }

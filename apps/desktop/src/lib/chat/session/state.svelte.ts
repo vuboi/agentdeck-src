@@ -33,6 +33,7 @@ import {
     restoreCommandImages,
     stripCommandImageData,
 } from '../content/command-images';
+import { replayIds } from './harness-replay';
 
 // Mock workspace. Real data arrives from agentd (M2); the shapes follow crates/protocol.
 export type Agent = ProviderId;
@@ -386,9 +387,9 @@ export function applyHarnessReplay(sessionId: string, replay: HarnessReplay) {
         turn,
         state: replay.snapshot.state,
         seq,
-        activeToolIds: [...replay.snapshot.active_tool_ids],
-        activeApprovalIds: [...replay.snapshot.active_approval_ids],
-        activeSubagentIds: [...replay.snapshot.active_subagent_ids],
+        activeToolIds: replayIds(replay.snapshot.active_tool_ids),
+        activeApprovalIds: replayIds(replay.snapshot.active_approval_ids),
+        activeSubagentIds: replayIds(replay.snapshot.active_subagent_ids),
     };
     harnessInterrupted[sessionId] = replay.interrupted;
 }

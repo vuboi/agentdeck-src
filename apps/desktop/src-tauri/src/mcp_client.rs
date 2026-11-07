@@ -170,6 +170,7 @@ impl Server {
 
     /// Starts or reaches the server and reads its tools.
     pub async fn start(raw: &Raw) -> Result<Server, String> {
+        ensure_os_sandbox_policy(raw)?;
         let link = if let Some(url) = &raw.url {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(120))
@@ -284,6 +285,21 @@ impl Server {
     }
 }
 
+pub(crate) fn ensure_os_sandbox_policy(raw: &Raw) -> Result<(), String> {
+    if !raw.require_os_sandbox {
+        return Ok(());
+    }
+    let transport = if raw.url.is_some() {
+        "remote HTTP MCP"
+    } else {
+        "stdio MCP"
+    };
+    Err(format!(
+        "MCP server '{}' requires OS sandboxing, but AgentDeck has no enforced OS sandbox backend for {transport} on this platform",
+        raw.name
+    ))
+}
+
 /// Keeps MCP child processes from inheriting AgentDeck credentials and unrelated settings.
 fn filtered_parent_environment(
     vars: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
@@ -317,7 +333,7 @@ fn filtered_parent_environment(
         .collect()
 }
 
-fn mcp_child_environment(
+pub(crate) fn mcp_child_environment(
     vars: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
     configured: &BTreeMap<String, String>,
 ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
@@ -340,6 +356,35 @@ fn mcp_child_environment(
 
 #[cfg(test)]
 mod environment_tests {
+    use super::{ensure_os_sandbox_policy, Raw};
+
+    #[test]
+    fn required_os_sandbox_fails_closed_for_stdio_and_remote_mcp() {
+        let stdio = Raw {
+            name: "local-tools".into(),
+            command: Some("node".into()),
+            require_os_sandbox: true,
+            ..Raw::default()
+        };
+        let error = ensure_os_sandbox_policy(&stdio).unwrap_err();
+        assert!(error.contains("local-tools"));
+        assert!(error.contains("no enforced OS sandbox backend"));
+
+        let remote = Raw {
+            name: "remote-tools".into(),
+            url: Some("https://example.invalid/mcp".into()),
+            require_os_sandbox: true,
+            ..Raw::default()
+        };
+        let error = ensure_os_sandbox_policy(&remote).unwrap_err();
+        assert!(error.contains("remote HTTP MCP"));
+    }
+
+    #[test]
+    fn os_sandbox_requirement_is_opt_in_for_legacy_configs() {
+        assert!(ensure_os_sandbox_policy(&Raw::default()).is_ok());
+    }
+
     use super::mcp_child_environment;
     use std::collections::BTreeMap;
     use std::ffi::OsString;
