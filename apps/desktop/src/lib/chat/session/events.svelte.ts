@@ -496,6 +496,9 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
     const result: RecoveryRoute[] = [];
     const seen = new SvelteSet<string>();
     const routing = connectors.routingProfile;
+    if (routing.fallback === 'stop') return result;
+    const localOnly =
+        routing.strategy === 'offline' || routing.fallback === 'local';
     for (const saved of connectors.recovery.chain) {
         const ref = parseModelRef(saved);
         if (!ref) continue;
@@ -509,6 +512,7 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
         let model: string | undefined;
         let restricted = false;
         if (cliOf(provider)) {
+            if (localOnly) continue;
             const installed = Boolean(
                 connectors.detected?.tools.find(
                     (item) => item.id === cliOf(provider),
@@ -532,6 +536,14 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
                     item.id === provider && item.enabled && item.baseUrl.trim(),
             );
             if (!connector) continue;
+            if (
+                localOnly &&
+                connector.kind !== 'ollama' &&
+                !/^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|\/)/i.test(
+                    connector.baseUrl.trim(),
+                )
+            )
+                continue;
             if (
                 routing.requiredCapabilities.length > 0 &&
                 !routing.requiredCapabilities.every((capability) =>
@@ -678,6 +690,7 @@ function recoveryFor(
         chain,
         current,
         tried: state.tried,
+        fallback: connectors.routingProfile.fallback,
     });
     return { kind, plan };
 }

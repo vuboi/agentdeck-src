@@ -11,7 +11,9 @@
         agent,
     }: {
         block: Extract<Block, { kind: 'permission' }>;
-        onanswer?: (answer: 'once' | 'always' | 'deny') => void;
+        onanswer?: (
+            answer: 'once' | 'always' | 'deny' | 'expire' | 'retry',
+        ) => void;
         /** The agent that asks (its own name is shown). */ agent?: Agent;
     } = $props();
     const who = $derived(
@@ -36,11 +38,19 @@
     );
     onMount(() => {
         if (block.state !== 'pending') return;
+        remaining = Math.max(
+            0,
+            Math.ceil(
+                ((block.expiresAt ?? Date.now() + EXPIRY_SECONDS * 1000) -
+                    Date.now()) /
+                    1000,
+            ),
+        );
         const timer = window.setInterval(() => {
             remaining -= 1;
             if (remaining <= 0) {
                 window.clearInterval(timer);
-                onanswer?.('deny');
+                onanswer?.('expire');
             }
         }, 1000);
         return () => window.clearInterval(timer);
@@ -113,6 +123,18 @@
                 zSize="sm"
                 class="ml-auto h-7 px-3 text-sm"
                 onclick={() => onanswer?.('deny')}>Deny</ZButton
+            >
+        </div>
+    {:else if block.state === 'expired'}
+        <div
+            class="flex items-center justify-end border-t border-border px-3 py-2"
+        >
+            <ZButton
+                zWave={false}
+                zType="outline"
+                zSize="sm"
+                class="h-7 px-3 text-sm"
+                onclick={() => onanswer?.('retry')}>Retry approval</ZButton
             >
         </div>
     {/if}

@@ -1253,23 +1253,32 @@ export function startTurn(
 export function answerPermission(
     messageId: string,
     blockIndex: number,
-    answer: 'once' | 'always' | 'deny',
+    answer: 'once' | 'always' | 'deny' | 'expire' | 'retry',
 ) {
     const session = activeSession();
     const block = chat.messages.find((message) => message.id === messageId)
         ?.blocks[blockIndex];
     // A Copilot turn is still running while its card waits: the answer goes to the SDK request, not to a new turn.
     const waiting = session?.agent === 'copilot';
-    if (
-        !session ||
-        block?.kind !== 'permission' ||
-        block.state !== 'pending' ||
-        (!waiting && replies[session.id])
-    )
-        return;
+    if (!session || block?.kind !== 'permission') return;
+    if (answer === 'retry' && block.state === 'expired') {
+        block.state = 'pending';
+        block.expiresAt = Date.now() + 120_000;
+        persistLocal();
+        return answerPermission(messageId, blockIndex, 'once');
+    }
+    if (block.state !== 'pending' || (!waiting && replies[session.id])) return;
     for (let index = 0; index < block.requests.length; index++)
         advanceRun(session.id, { type: 'waitEnd', kind: 'approval' });
     const entries = block.requests.map((request) => request.allow);
+    if (answer === 'expire') {
+        block.state = 'expired';
+        settleKeptPermission(session.id, messageId, blockIndex, 'expired');
+        persistLocal();
+        answerWorkerApproval(session.id, false);
+        sendNextQueued(session.id);
+        return;
+    }
     if (answer === 'always') {
         approved[session.id] = [
             ...new SvelteSet([...(approved[session.id] ?? []), ...entries]),

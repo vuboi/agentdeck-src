@@ -36,7 +36,9 @@
         block: Block;
         fade?: string;
         agent?: import('../../chat/sessions.svelte').Agent;
-        onanswer?: (answer: 'once' | 'always' | 'deny') => void;
+        onanswer?: (
+            answer: 'once' | 'always' | 'deny' | 'expire' | 'retry',
+        ) => void;
         /** Sends the answers to questions the agent asked in this block. */ onquestions?: (
             text: string,
         ) => void;

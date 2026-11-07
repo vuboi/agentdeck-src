@@ -58,6 +58,7 @@ export type RecoveryInput = {
     current: string;
     /** Agents this piece of work already ran on. */
     tried: string[];
+    fallback?: 'next' | 'stop' | 'local';
 };
 
 /** Waits before each retry of a passing fault: a few seconds, then longer. */
@@ -68,6 +69,11 @@ export const MAX_HOPS = 3;
 /** What to do now. Pure: the caller acts on it and counts the attempts. */
 export function planRecovery(input: RecoveryInput): Recovery {
     const { kind } = input;
+    if (input.fallback === 'stop')
+        return {
+            action: 'stop',
+            reason: 'routing policy stops after a failed turn',
+        };
     if (kind === 'stopped')
         return { action: 'stop', reason: 'stopped by the user' };
     if (kind === 'transient' && input.retries < RETRY_DELAYS.length)

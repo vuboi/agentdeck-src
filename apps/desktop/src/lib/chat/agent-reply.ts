@@ -361,6 +361,7 @@ export function applyAgentEvent(
                 kind: 'permission',
                 requests: event.requests,
                 state: 'pending',
+                expiresAt: Date.now() + 120_000,
             });
             return { blocks, finished: false };
         case 'session':

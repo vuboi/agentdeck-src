@@ -105,6 +105,7 @@ export type Block =
               allow: string;
           }[];
           state: 'pending' | 'allowed' | 'denied' | 'expired';
+          expiresAt?: number;
       };
 
 export type Message = {
