@@ -16,9 +16,9 @@ use ag_adapters::agent::runner::{drive_turn, resolve_binary};
 use ag_adapters::agent::warm::drive_warm_turn_with;
 use ag_adapters::agent::workbuddy::WorkBuddy;
 use ag_adapters::agent::{AgentEvent, ChatResponseCapabilities, Provider, TurnRequest};
-use ag_orchestrator::{HarnessEventKind, HarnessRuntime, HarnessState};
+use ag_orchestrator::{AsyncHarnessEventLog, HarnessEventKind, HarnessRuntime, HarnessState};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{custom_chat, mcp_manage};
 
@@ -206,6 +206,45 @@ fn emit_harness_status(app: &AppHandle, session: &str, turn: &str, runtime: &Har
     );
 }
 
+fn harness_log(app: &AppHandle, session: &str) -> Option<AsyncHarnessEventLog> {
+    let name: String = session
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let path = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join("logs")
+        .join("harness")
+        .join(format!("{name}.jsonl"));
+    Some(AsyncHarnessEventLog::new(path, 256))
+}
+
+fn persist_harness_events(
+    log: Option<&AsyncHarnessEventLog>,
+    runtime: &HarnessRuntime,
+    next_seq: &mut u64,
+) {
+    let Some(log) = log else { return };
+    for event in runtime
+        .events()
+        .iter()
+        .filter(|event| event.seq >= *next_seq)
+    {
+        if log.append(event).is_err() {
+            return;
+        }
+        *next_seq = event.seq + 1;
+    }
+}
+
 fn observe_harness(runtime: &mut HarnessRuntime, event: &AgentEvent) {
     match event {
         AgentEvent::Delta { text } | AgentEvent::Thinking { text } => {
@@ -299,6 +338,9 @@ async fn run_turn(
     let mut harness = HarnessRuntime::new(session.clone());
     harness.start();
     let _ = harness.begin_turn(turn.clone());
+    let harness_log = harness_log(&app, &session);
+    let mut harness_log_seq = 0;
+    persist_harness_events(harness_log.as_ref(), &harness, &mut harness_log_seq);
     let mut noted = crate::flow_log::TurnGuard::new(
         &session,
         &turn,
@@ -326,6 +368,7 @@ async fn run_turn(
             stop.clone(),
             |event| {
                 observe_harness(&mut harness, &event);
+                persist_harness_events(harness_log.as_ref(), &harness, &mut harness_log_seq);
                 emit_with_harness(
                     &app,
                     &session,
@@ -343,6 +386,11 @@ async fn run_turn(
         tokio::select! {
             () = drive_turn(binary, provider.as_ref(), &req, |event| {
                 observe_harness(&mut harness, &event);
+                persist_harness_events(
+                    harness_log.as_ref(),
+                    &harness,
+                    &mut harness_log_seq,
+                );
                 emit_with_harness(
                     &app,
                     &session,
@@ -358,7 +406,11 @@ async fn run_turn(
         }
     }
     if stop.is_stopped() && harness.cancel() {
+        persist_harness_events(harness_log.as_ref(), &harness, &mut harness_log_seq);
         emit_harness_status(&app, &session, &turn, &harness);
+    }
+    if let Some(log) = harness_log.as_ref() {
+        let _ = log.flush();
     }
     noted.finish(if stop.is_stopped() {
         "stopped"
