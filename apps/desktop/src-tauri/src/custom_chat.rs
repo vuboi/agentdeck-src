@@ -1787,6 +1787,36 @@ mod tests {
     }
 
     #[test]
+    fn write_operations_reject_paths_outside_the_project() {
+        let dir = std::env::temp_dir().join(format!("agentdeck-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cwd = Some(dir.as_path());
+        assert!(
+            write_file(
+                &json!({ "file_path": "../escaped.txt", "content": "blocked" }),
+                cwd
+            )
+            .is_error
+        );
+        assert!(make_dir(&json!({ "path": "../escaped-dir" }), cwd).is_error);
+        assert!(
+            edit_file(
+                &json!({
+                    "file_path": "../escaped.txt",
+                    "old_string": "a",
+                    "new_string": "b"
+                }),
+                cwd
+            )
+            .is_error
+        );
+        assert!(transfer(&json!({ "from": "..", "to": "inside" }), cwd, true).is_error);
+        assert!(!dir.join("escaped.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn edit_needs_one_exact_match() {
         let dir = std::env::temp_dir().join(format!("agentdeck-custom-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

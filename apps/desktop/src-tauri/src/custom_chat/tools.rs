@@ -66,8 +66,10 @@ pub(crate) async fn run_bash(command: &str, cwd: Option<&Path>) -> Outcome {
     };
     #[cfg(not(windows))]
     let mut process = {
+        use std::os::unix::process::CommandExt;
         let mut process = Command::new("sh");
         process.args(["-c", command]);
+        process.process_group(0);
         process
     };
     process
@@ -426,11 +428,43 @@ pub(crate) fn list_dir(args: &Value, cwd: Option<&Path>) -> Outcome {
     })
 }
 
+/// Resolves a write target and rejects paths whose existing ancestor escapes the project folder.
+fn workspace_target(cwd: Option<&Path>, path: &str) -> Result<PathBuf, &'static str> {
+    let Some(cwd) = cwd else {
+        return Ok(resolve(cwd, path));
+    };
+    let root = cwd
+        .canonicalize()
+        .map_err(|_| "the project folder is not available")?;
+    let target = resolve(Some(cwd), path);
+    let mut probe = target.clone();
+    while !probe.exists() {
+        let Some(parent) = probe.parent() else {
+            return Err("the target is outside the project folder");
+        };
+        if parent == probe {
+            return Err("the target is outside the project folder");
+        }
+        probe = parent.to_path_buf();
+    }
+    let real = probe
+        .canonicalize()
+        .map_err(|_| "could not resolve the target")?;
+    if real != root && !real.starts_with(&root) {
+        return Err("writes are limited to the project folder");
+    }
+    Ok(target)
+}
+
 pub(crate) fn make_dir(args: &Value, cwd: Option<&Path>) -> Outcome {
     let Some(path) = args["path"].as_str() else {
         return failed("path is required");
     };
-    match std::fs::create_dir_all(resolve(cwd, path)) {
+    let target = match workspace_target(cwd, path) {
+        Ok(target) => target,
+        Err(reason) => return failed(reason),
+    };
+    match std::fs::create_dir_all(target) {
         Ok(()) => ok(format!("Folder ready: {path}")),
         Err(error) => failed(format!("could not create {path}: {error}")),
     }
@@ -441,7 +475,14 @@ pub(crate) fn transfer(args: &Value, cwd: Option<&Path>, moving: bool) -> Outcom
     let (Some(from), Some(to)) = (args["from"].as_str(), args["to"].as_str()) else {
         return failed("from and to are required");
     };
-    let (source, target) = (resolve(cwd, from), resolve(cwd, to));
+    let source = match workspace_target(cwd, from) {
+        Ok(path) => path,
+        Err(reason) => return failed(reason),
+    };
+    let target = match workspace_target(cwd, to) {
+        Ok(path) => path,
+        Err(reason) => return failed(reason),
+    };
     if !source.exists() {
         return failed(format!("{from} does not exist"));
     }
@@ -487,7 +528,10 @@ pub(crate) fn delete_path(args: &Value, cwd: Option<&Path>) -> Outcome {
     let Some(path) = args["path"].as_str() else {
         return failed("path is required");
     };
-    let target = resolve(cwd, path);
+    let target = match workspace_target(cwd, path) {
+        Ok(target) => target,
+        Err(reason) => return failed(reason),
+    };
     let (Ok(real), Some(Ok(root))) = (target.canonicalize(), cwd.map(Path::canonicalize)) else {
         return failed(format!(
             "{path} does not exist, or there is no project folder"
@@ -816,7 +860,10 @@ pub(crate) fn write_file(args: &Value, cwd: Option<&Path>) -> Outcome {
     let (Some(path), Some(content)) = (args["file_path"].as_str(), args["content"].as_str()) else {
         return failed("file_path and content are required");
     };
-    let target = resolve(cwd, path);
+    let target = match workspace_target(cwd, path) {
+        Ok(target) => target,
+        Err(reason) => return failed(reason),
+    };
     if let Some(parent) = target.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1088,7 +1135,10 @@ pub(crate) fn edit_file(args: &Value, cwd: Option<&Path>) -> Outcome {
     ) else {
         return failed("file_path, old_string and new_string are required");
     };
-    let target = resolve(cwd, path);
+    let target = match workspace_target(cwd, path) {
+        Ok(target) => target,
+        Err(reason) => return failed(reason),
+    };
     let text = match std::fs::read_to_string(&target) {
         Ok(text) => text,
         Err(error) => return failed(format!("could not read {path}: {error}")),

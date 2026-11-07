@@ -423,20 +423,38 @@ async fn run_checks(root: &Path, kind: &str) -> Result<String, String> {
             .env("CI", "1");
         #[cfg(windows)]
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        #[cfg(unix)]
+        command.process_group(0);
         let started = std::time::Instant::now();
-        let output = match tokio::time::timeout(Duration::from_secs(600), command.output()).await {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => {
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
                 failed += 1;
                 report.push(format!("## {label}: could not start ({error})"));
                 continue;
             }
-            Err(_) => {
-                failed += 1;
-                report.push(format!("## {label}: stopped after 10 minutes"));
-                continue;
-            }
         };
+        let pid = child.id();
+        if let Some(pid) = pid {
+            crate::process_guard::adopt_pid(pid);
+        }
+        let output =
+            match tokio::time::timeout(Duration::from_secs(600), child.wait_with_output()).await {
+                Ok(Ok(output)) => output,
+                Ok(Err(error)) => {
+                    failed += 1;
+                    report.push(format!("## {label}: could not start ({error})"));
+                    continue;
+                }
+                Err(_) => {
+                    failed += 1;
+                    if let Some(pid) = pid {
+                        crate::process_guard::kill_tree(pid);
+                    }
+                    report.push(format!("## {label}: stopped after 10 minutes"));
+                    continue;
+                }
+            };
         let text = format!(
             "{}\n{}",
             String::from_utf8_lossy(&output.stdout),
