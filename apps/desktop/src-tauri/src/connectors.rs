@@ -292,6 +292,9 @@ async fn run_logged_with_idle_timeout(
         .args(args)
         .spawn()
         .map_err(|error| format!("could not start {}: {error}", program.display()))?;
+    if let Some(pid) = child.id() {
+        crate::process_guard::adopt_pid(pid);
+    }
     let (activity_tx, mut activity_rx) = tokio::sync::mpsc::unbounded_channel();
     let out = child.stdout.take().map(|stream| {
         tauri::async_runtime::spawn(pump(

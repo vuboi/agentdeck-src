@@ -63,6 +63,8 @@ pub(crate) fn command(program: &Path) -> Command {
     }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
+    #[cfg(unix)]
+    command.process_group(0);
     command
 }
 
@@ -84,8 +86,10 @@ impl Drop for KillTree {
             kill.creation_flags(0x0800_0000);
             let _ = kill.spawn();
         }
-        #[cfg(not(windows))]
-        let _ = self.0;
+        #[cfg(unix)]
+        if let Some(pid) = self.0 {
+            ag_adapters::agent::runner::kill_tree(pid);
+        }
     }
 }
 
@@ -124,6 +128,9 @@ pub(crate) async fn capture(
         .args(args)
         .spawn()
         .map_err(|error| format!("could not start {}: {error}", program.display()))?;
+    if let Some(pid) = child.id() {
+        crate::process_guard::adopt_pid(pid);
+    }
     let stdout = Arc::new(Mutex::new(Vec::new()));
     let stderr = Arc::new(Mutex::new(Vec::new()));
     let mut readers = [
