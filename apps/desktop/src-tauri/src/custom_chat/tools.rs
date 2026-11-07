@@ -1176,9 +1176,46 @@ pub(crate) enum Decision {
     Ask,
 }
 
+/// Whether an external MCP tool belongs to the server set mounted for this turn.
+/// AgentDeck's own MCP tools are exposed by their native names and never enter this check.
+fn mcp_session_allows(turn: &Turn, name: &str, external: bool) -> bool {
+    if !external {
+        return !name.starts_with("mcp__");
+    }
+    let Some(server) = name
+        .strip_prefix("mcp__")
+        .and_then(|name| name.split_once("__"))
+        .map(|(server, _)| server)
+    else {
+        return false;
+    };
+    if server == "agentdeck" {
+        return false;
+    }
+    turn.mcp.as_deref().is_none_or(|allowed| {
+        allowed.iter().any(|entry| {
+            entry == server
+                || entry
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                            c
+                        } else {
+                            '_'
+                        }
+                    })
+                    .collect::<String>()
+                    == server
+        })
+    })
+}
+
 /// Whether a tool call may run now, under the permission mode and what the user approved before.
 /// `external`: the tool comes from an MCP server the user set up (AgentDeck's own browser tools are not external).
 pub(crate) fn decide(turn: &Turn, name: &str, args: &Value, external: bool) -> Decision {
+    if !mcp_session_allows(turn, name, external) {
+        return Decision::Deny("this MCP server is not enabled for the current session.");
+    }
     // Whatever the model asks for, a restricted provider runs nothing that touches this machine.
     if turn.restricted && (external || !RESTRICTED_TOOLS.contains(&name)) {
         return Decision::Deny("this provider has no access to the project or the machine: say what is needed and another agent will do it.");

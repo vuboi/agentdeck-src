@@ -1292,6 +1292,38 @@ mod tests {
     }
 
     #[test]
+    fn an_mcp_tool_must_belong_to_the_session_mounts() {
+        let mut selected = turn(Some("bypassPermissions"), &[]);
+        selected.mcp = Some(vec!["github".into(), "my server".into()]);
+        assert!(matches!(
+            decide(&selected, "mcp__github__create_issue", &json!({}), true),
+            Decision::Allow
+        ));
+        assert!(matches!(
+            decide(&selected, "mcp__my_server__search", &json!({}), true),
+            Decision::Allow
+        ));
+        assert!(matches!(
+            decide(&selected, "mcp__slack__send_message", &json!({}), true),
+            Decision::Deny(_)
+        ));
+
+        let all = turn(Some("bypassPermissions"), &[]);
+        assert!(matches!(
+            decide(&all, "mcp__slack__send_message", &json!({}), true),
+            Decision::Allow
+        ));
+        assert!(matches!(
+            decide(&all, "mcp__agentdeck__browser_open", &json!({}), true),
+            Decision::Deny(_)
+        ));
+        assert!(matches!(
+            decide(&all, "mcp__unknown__tool", &json!({}), false),
+            Decision::Deny(_)
+        ));
+    }
+
+    #[test]
     fn edit_matches_text_across_line_ends_and_says_where_a_miss_is_close() {
         let dir = std::env::temp_dir().join(format!("agentdeck-edit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
