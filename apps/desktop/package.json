@@ -12,7 +12,7 @@
     "test": "pnpm run test:voice",
     "test:account-switch": "node --experimental-strip-types --experimental-vm-modules --test src/lib/agents/credential-switch.test.ts src/lib/agents/account-rotation.test.mjs",
     "test:voice": "node --experimental-strip-types --test src/lib/chat/voice-state.test.ts",
-    "test:connectors": "node --experimental-strip-types --test src/lib/agents/vendor-rows.test.ts src/lib/agents/check-runs.test.ts",
+    "test:connectors": "node --experimental-strip-types --test src/lib/agents/vendor-rows.test.ts src/lib/agents/check-runs.test.ts src/lib/agents/mcp-connectors.test.ts",
     "tauri": "tauri"
   },
   "dependencies": {
