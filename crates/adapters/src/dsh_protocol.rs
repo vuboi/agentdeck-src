@@ -307,6 +307,12 @@ impl JsonRpcTransport {
     }
 
     pub fn ingest(&mut self, frame: Value) -> Result<IncomingFrame, TransportError> {
+        if let Some(method) = frame.get("method").and_then(Value::as_str) {
+            return Ok(IncomingFrame::Notification {
+                method: method.to_owned(),
+                params: frame.get("params").cloned().unwrap_or(Value::Null),
+            });
+        }
         if let Some(id) = frame.get("id").and_then(Value::as_str) {
             if !self.pending.remove(id) {
                 return Err(TransportError::UnknownResponse(id.to_owned()));
@@ -320,12 +326,6 @@ impl JsonRpcTransport {
             return Ok(IncomingFrame::Response {
                 id: id.to_owned(),
                 result: Ok(frame.get("result").cloned().unwrap_or(Value::Null)),
-            });
-        }
-        if let Some(method) = frame.get("method").and_then(Value::as_str) {
-            return Ok(IncomingFrame::Notification {
-                method: method.to_owned(),
-                params: frame.get("params").cloned().unwrap_or(Value::Null),
             });
         }
         Err(TransportError::InvalidFrame)
@@ -409,6 +409,30 @@ mod tests {
             Ok(super::IncomingFrame::Response { .. })
         ));
         assert_eq!(transport.pending_count(), 0);
+    }
+
+    #[test]
+    fn treats_server_request_with_id_as_notification() {
+        let mut transport = super::JsonRpcTransport::new();
+        let (pending, _) = transport.request("session/prompt", json!({})).unwrap();
+        assert_eq!(
+            transport
+                .ingest(json!({
+                    "jsonrpc": "2.0",
+                    "id": "approval-1",
+                    "method": "approval/request",
+                    "params": {"tool": "shell"}
+                }))
+                .unwrap(),
+            super::IncomingFrame::Notification {
+                method: "approval/request".into(),
+                params: json!({"tool": "shell"})
+            }
+        );
+        assert_eq!(transport.pending_count(), 1);
+        assert!(transport
+            .ingest(json!({"id": pending, "result": {}}))
+            .is_ok());
     }
 
     #[test]
