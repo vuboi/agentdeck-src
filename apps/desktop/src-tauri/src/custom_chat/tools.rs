@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use ag_adapters::agent::permission::{verdict, Action, Mode, Verdict};
+use ag_adapters::agent::permission::{is_shell_tool, verdict, Action, Mode, Verdict};
 use ag_adapters::agent::{allow_entry, file_change, line_diff};
 use serde_json::{json, Value};
 use tauri::AppHandle;
@@ -1223,6 +1223,10 @@ pub(crate) fn decide(turn: &Turn, name: &str, args: &Value, external: bool) -> D
         "Bash" | "Delete" => (
             Action::Shell,
             "plan mode: commands may not run. Describe the plan instead.",
+        ),
+        name if is_shell_tool(name) => (
+            Action::Shell,
+            "plan mode: process-backed tools may not run. Describe the plan instead.",
         ),
         // External tools from the user's MCP servers.
         _ if external => (Action::Other, "plan mode: external tools may not run."),

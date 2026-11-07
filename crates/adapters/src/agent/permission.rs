@@ -101,6 +101,12 @@ pub fn plan_action(name: &str) -> Option<Action> {
     .then_some(Action::PlanWrite)
 }
 
+/// AgentDeck MCP tools that start or execute project processes and therefore follow shell permissions.
+pub fn is_shell_tool(name: &str) -> bool {
+    let name = name.strip_prefix("mcp__agentdeck__").unwrap_or(name);
+    matches!(name, "browser_serve" | "run_checks")
+}
+
 /// What a mode does with one call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {
@@ -184,6 +190,20 @@ mod tests {
         assert_eq!(verdict(Mode::Plan, Action::Write), Verdict::Refuse);
         assert_eq!(verdict(Mode::Plan, Action::Other), Verdict::Refuse);
         assert_eq!(Mode::Plan.codex_sandbox(), Some("read-only"));
+    }
+
+    #[test]
+    fn process_backed_agentdeck_tools_follow_shell_permissions() {
+        for name in [
+            "browser_serve",
+            "run_checks",
+            "mcp__agentdeck__browser_serve",
+            "mcp__agentdeck__run_checks",
+        ] {
+            assert!(is_shell_tool(name), "{name}");
+        }
+        assert!(!is_shell_tool("browser_open"));
+        assert!(!is_shell_tool("mcp__other__run_checks"));
     }
 
     #[test]
