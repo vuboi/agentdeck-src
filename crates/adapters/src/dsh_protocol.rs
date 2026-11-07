@@ -90,6 +90,118 @@ pub enum DshNotification {
     Unknown { method: String, params: Value },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DshTransportProfile {
+    Sdk,
+    Acp,
+}
+
+/// Request builder for one persistent dsh JSON-RPC session.
+/// It owns protocol ordering and leaves child-process I/O to the desktop supervisor.
+#[derive(Debug)]
+pub struct DshSessionClient {
+    profile: DshTransportProfile,
+    session_id: Option<String>,
+    transport: JsonRpcTransport,
+}
+
+impl DshSessionClient {
+    pub fn new(profile: DshTransportProfile) -> Self {
+        Self {
+            profile,
+            session_id: None,
+            transport: JsonRpcTransport::new(),
+        }
+    }
+
+    pub fn profile(&self) -> DshTransportProfile {
+        self.profile
+    }
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+    pub fn transport(&self) -> &JsonRpcTransport {
+        &self.transport
+    }
+    pub fn transport_mut(&mut self) -> &mut JsonRpcTransport {
+        &mut self.transport
+    }
+
+    pub fn initialize(
+        &mut self,
+        client_name: &str,
+        client_version: &str,
+    ) -> Result<(String, Vec<u8>), TransportError> {
+        self.transport.request(
+            "initialize",
+            json!({
+                "protocolVersion": "1",
+                "clientInfo": { "name": client_name, "version": client_version },
+            }),
+        )
+    }
+
+    pub fn new_session(
+        &mut self,
+        cwd: &str,
+        model: Option<&str>,
+    ) -> Result<(String, Vec<u8>), TransportError> {
+        let method = match self.profile {
+            DshTransportProfile::Sdk => "session/new",
+            DshTransportProfile::Acp => "session/new",
+        };
+        let mut params = json!({ "cwd": cwd });
+        if let Some(model) = model {
+            params["model"] = json!(model);
+        }
+        self.transport.request(method, params)
+    }
+
+    pub fn set_session_id(&mut self, session_id: impl Into<String>) {
+        self.session_id = Some(session_id.into());
+    }
+
+    pub fn prompt(&mut self, text: &str) -> Result<(String, Vec<u8>), TransportError> {
+        let session_id = self.session_id.clone().unwrap_or_default();
+        let params = match self.profile {
+            DshTransportProfile::Sdk => json!({ "sessionId": session_id, "text": text }),
+            DshTransportProfile::Acp => {
+                json!({ "sessionId": session_id, "prompt": [{ "type": "text", "text": text }] })
+            }
+        };
+        self.transport.request("session/prompt", params)
+    }
+
+    pub fn resume(&mut self) -> Result<(String, Vec<u8>), TransportError> {
+        self.transport.request(
+            "session/resume",
+            json!({ "sessionId": self.session_id.clone().unwrap_or_default() }),
+        )
+    }
+
+    pub fn wait(&mut self) -> Result<(String, Vec<u8>), TransportError> {
+        self.transport.request(
+            "session/wait",
+            json!({ "sessionId": self.session_id.clone().unwrap_or_default() }),
+        )
+    }
+
+    pub fn cancel(&mut self) -> Result<Vec<u8>, TransportError> {
+        match self.profile {
+            DshTransportProfile::Acp => self.transport.notification(
+                "session/cancel",
+                json!({ "sessionId": self.session_id.clone().unwrap_or_default() }),
+            ),
+            // SDK currently has no wire-level session/cancel. Caller must shutdown, await exit, then resume.
+            DshTransportProfile::Sdk => Err(TransportError::NotOpen(TransportState::ShuttingDown)),
+        }
+    }
+
+    pub fn shutdown(&mut self) -> Result<(String, Vec<u8>), TransportError> {
+        self.transport.begin_shutdown()
+    }
+}
+
 impl DshNotification {
     pub fn parse(method: String, params: Value) -> Self {
         match method.as_str() {
@@ -227,7 +339,10 @@ impl JsonRpcTransport {
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_json_line, DshMethod, DshNotification, JsonLineDecoder};
+    use super::{
+        encode_json_line, DshMethod, DshNotification, DshSessionClient, DshTransportProfile,
+        JsonLineDecoder,
+    };
     use serde_json::json;
 
     #[test]
@@ -310,5 +425,19 @@ mod tests {
             DshNotification::parse("future/event".into(), json!({})),
             DshNotification::Unknown { .. }
         ));
+    }
+
+    #[test]
+    fn session_client_builds_sdk_prompt_and_preserves_cancel_boundary() {
+        let mut client = DshSessionClient::new(DshTransportProfile::Sdk);
+        let (_, init) = client.initialize("agentdeck", "0.1.82").unwrap();
+        assert!(String::from_utf8(init).unwrap().contains("initialize"));
+        client.set_session_id("s1");
+        let (_, prompt) = client.prompt("hello").unwrap();
+        let prompt = String::from_utf8(prompt).unwrap();
+        assert!(prompt.contains("session/prompt") && prompt.contains("s1"));
+        assert!(client.cancel().is_err());
+        let (_, shutdown) = client.shutdown().unwrap();
+        assert!(String::from_utf8(shutdown).unwrap().contains("shutdown"));
     }
 }
