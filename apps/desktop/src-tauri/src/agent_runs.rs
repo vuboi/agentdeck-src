@@ -17,6 +17,9 @@ use ag_adapters::agent::runner::{drive_turn, resolve_binary};
 use ag_adapters::agent::warm::drive_warm_turn_with;
 use ag_adapters::agent::workbuddy::WorkBuddy;
 use ag_adapters::agent::{AgentEvent, ChatResponseCapabilities, Provider, TurnRequest};
+use ag_adapters::dsh_adapter::DshAdapterEvent;
+use ag_adapters::dsh_protocol::{DshNotification, DshTransportProfile};
+use ag_adapters::dsh_supervisor::{DshSupervisor, DshSupervisorConfig, DshSupervisorEvent};
 use ag_orchestrator::{
     AsyncHarnessEventLog, HarnessEventKind, HarnessEventLog, HarnessRuntime, HarnessSnapshot,
     HarnessState,
@@ -388,6 +391,35 @@ async fn run_turn(
         emit(&tail_app, chat, turn, None, event)
     }));
     let binary = resolve_binary(provider.as_ref());
+    if provider.id() == "dsh" {
+        run_dsh_sdk_turn(
+            app.clone(),
+            session.clone(),
+            turn.clone(),
+            binary,
+            req.clone(),
+            message_id.clone(),
+            &mut harness,
+            harness_log.as_ref(),
+            &mut harness_log_seq,
+            stop.clone(),
+        )
+        .await;
+        if stop.is_stopped() && harness.cancel() {
+            persist_harness_events(harness_log.as_ref(), &harness, &mut harness_log_seq);
+            emit_harness_status(&app, &session, &turn, &harness);
+        }
+        if let Some(log) = harness_log.as_ref() {
+            let _ = log.flush();
+        }
+        noted.finish(if stop.is_stopped() {
+            "stopped"
+        } else {
+            "finished"
+        });
+        forget(&session, &turn);
+        return;
+    }
     // Claude and Codex keep their CLI open between the chat's turns (see `warm.rs`), OpenCode its server
     // (`opencode_server.rs`); Antigravity starts one per turn.
     // A turn that runs for another one (a side answer, a delegated worker, a step of a flow) is run once, not kept: it
@@ -450,6 +482,226 @@ async fn run_turn(
         "finished"
     });
     forget(&session, &turn);
+}
+
+async fn run_dsh_sdk_turn(
+    app: AppHandle,
+    session: String,
+    turn: String,
+    binary: std::ffi::OsString,
+    req: TurnRequest,
+    message_id: Option<String>,
+    harness: &mut HarnessRuntime,
+    harness_log: Option<&AsyncHarnessEventLog>,
+    harness_log_seq: &mut u64,
+    mut stop: StopToken,
+) {
+    let mut config = DshSupervisorConfig::new(PathBuf::from(binary), DshTransportProfile::Sdk);
+    config.args = vec!["--profile".into(), "sdk".into()];
+    config.cwd = req.cwd.clone();
+    let mut supervisor = match DshSupervisor::spawn(config).await {
+        Ok(supervisor) => supervisor,
+        Err(error) => {
+            emit_dsh_event(
+                &app,
+                &session,
+                &turn,
+                message_id.as_deref(),
+                harness,
+                harness_log,
+                harness_log_seq,
+                AgentEvent::Error {
+                    message: format!("could not start dsh SDK: {error}"),
+                },
+            );
+            return;
+        }
+    };
+
+    if supervisor
+        .initialize("agentdeck", env!("CARGO_PKG_VERSION"))
+        .await
+        .is_err()
+        || !wait_dsh_initialized(&mut supervisor).await
+    {
+        emit_dsh_event(
+            &app,
+            &session,
+            &turn,
+            message_id.as_deref(),
+            harness,
+            harness_log,
+            harness_log_seq,
+            AgentEvent::Error {
+                message: "dsh SDK initialize failed".into(),
+            },
+        );
+        return;
+    }
+
+    if let Some(session_id) = req.session_id.as_deref().filter(|_| req.resume) {
+        if supervisor
+            .restore_session(session_id.to_owned())
+            .await
+            .is_err()
+        {
+            emit_dsh_event(
+                &app,
+                &session,
+                &turn,
+                message_id.as_deref(),
+                harness,
+                harness_log,
+                harness_log_seq,
+                AgentEvent::Error {
+                    message: "dsh SDK could not restore session".into(),
+                },
+            );
+            return;
+        }
+    } else {
+        let cwd = req
+            .cwd
+            .as_deref()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if supervisor
+            .new_session(&cwd, req.model.as_deref())
+            .await
+            .is_err()
+        {
+            return;
+        }
+        if let Some(DshSupervisorEvent::Adapter(DshAdapterEvent::SessionReady {
+            session_id, ..
+        })) = supervisor.next_event().await
+        {
+            emit_dsh_event(
+                &app,
+                &session,
+                &turn,
+                message_id.as_deref(),
+                harness,
+                harness_log,
+                harness_log_seq,
+                AgentEvent::Session { session_id },
+            );
+        }
+    }
+
+    if supervisor.prompt(&req.prompt).await.is_err() {
+        return;
+    }
+    loop {
+        tokio::select! {
+            () = stop.stopped() => {
+                let _ = supervisor.shutdown().await;
+                let _ = supervisor.wait_for_exit().await;
+                break;
+            }
+            event = supervisor.next_event() => {
+                let Some(event) = event else { break };
+                match event {
+                    DshSupervisorEvent::Adapter(DshAdapterEvent::PromptAccepted { .. }) => {
+                        let _ = supervisor.wait().await;
+                    }
+                    DshSupervisorEvent::Adapter(DshAdapterEvent::WaitCompleted { .. }) => {
+                        emit_dsh_event(&app, &session, &turn, message_id.as_deref(), harness, harness_log, harness_log_seq, AgentEvent::Done {
+                            session_id: supervisor.session_id().await,
+                            text: String::new(),
+                            cost_usd: None,
+                        });
+                        break;
+                    }
+                    DshSupervisorEvent::Adapter(DshAdapterEvent::Error { stage, error }) => {
+                        emit_dsh_event(&app, &session, &turn, message_id.as_deref(), harness, harness_log, harness_log_seq, AgentEvent::Error { message: format!("dsh {stage}: {error}") });
+                        break;
+                    }
+                    DshSupervisorEvent::Adapter(DshAdapterEvent::Notification(notification)) => {
+                        if let Some(event) = dsh_notification_event(notification) {
+                            emit_dsh_event(&app, &session, &turn, message_id.as_deref(), harness, harness_log, harness_log_seq, event);
+                        }
+                    }
+                    DshSupervisorEvent::ApprovalRequested(request) => {
+                        emit_dsh_event(&app, &session, &turn, message_id.as_deref(), harness, harness_log, harness_log_seq, AgentEvent::PermissionDenied {
+                            requests: vec![ag_adapters::agent::PermissionRequest { id: request.id, tool: request.method, summary: request.params.to_string(), allow: "dsh".into() }],
+                        });
+                    }
+                    DshSupervisorEvent::ProtocolError(error) => {
+                        emit_dsh_event(&app, &session, &turn, message_id.as_deref(), harness, harness_log, harness_log_seq, AgentEvent::Error { message: error });
+                        break;
+                    }
+                    DshSupervisorEvent::ProcessExited(_) | DshSupervisorEvent::StdoutClosed => break,
+                    DshSupervisorEvent::ApprovalResponded { .. } => {}
+                    DshSupervisorEvent::Adapter(DshAdapterEvent::Initialized { .. })
+                    | DshSupervisorEvent::Adapter(DshAdapterEvent::SessionReady { .. })
+                    | DshSupervisorEvent::Adapter(DshAdapterEvent::Resumed { .. })
+                    | DshSupervisorEvent::Adapter(DshAdapterEvent::ShutdownAcknowledged { .. }) => {}
+                }
+            }
+        }
+    }
+}
+
+async fn wait_dsh_initialized(supervisor: &mut DshSupervisor) -> bool {
+    while let Some(event) = supervisor.next_event().await {
+        match event {
+            DshSupervisorEvent::Adapter(DshAdapterEvent::Initialized { .. }) => return true,
+            DshSupervisorEvent::ProtocolError(_) | DshSupervisorEvent::StdoutClosed => {
+                return false
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn dsh_notification_event(notification: DshNotification) -> Option<AgentEvent> {
+    let params = match notification {
+        DshNotification::SessionEvent(params) | DshNotification::SessionStatus(params) => params,
+        _ => return None,
+    };
+    let kind = params
+        .get("kind")
+        .or_else(|| params.get("type"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let text = params
+        .get("text")
+        .or_else(|| params.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    match kind {
+        "assistant/message" | "assistant/delta" | "text" => Some(AgentEvent::Delta { text }),
+        "thinking" | "assistant/thinking" => Some(AgentEvent::Thinking { text }),
+        _ => Some(AgentEvent::Notice {
+            text: format!("dsh: {kind}"),
+        }),
+    }
+}
+
+fn emit_dsh_event(
+    app: &AppHandle,
+    session: &str,
+    turn: &str,
+    message_id: Option<&str>,
+    harness: &mut HarnessRuntime,
+    harness_log: Option<&AsyncHarnessEventLog>,
+    harness_log_seq: &mut u64,
+    event: AgentEvent,
+) {
+    observe_harness(harness, &event);
+    persist_harness_events(harness_log, harness, harness_log_seq);
+    emit_with_harness(
+        app,
+        session,
+        turn,
+        message_id,
+        event,
+        Some(harness.state()),
+        Some(harness.next_seq().saturating_sub(1)),
+    );
 }
 
 /// Ends the CLIs kept open between turns, for one agent or all (`agent: None`). Called after an account switch: a CLI
