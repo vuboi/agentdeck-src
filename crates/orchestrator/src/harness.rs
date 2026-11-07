@@ -38,18 +38,47 @@ pub enum HarnessEventKind {
     SessionStarted,
     TurnStarted,
     StepStarted,
-    AssistantDelta { text: String },
-    ToolStarted { call_id: String, name: String },
-    ToolFinished { call_id: String, ok: bool },
-    ApprovalRequested { request_id: String },
-    ApprovalResolved { request_id: String, approved: bool },
-    SubagentStarted { child_session_id: String },
-    SubagentFinished { child_session_id: String, ok: bool },
-    FileChanged { path: String },
+    AssistantDelta {
+        text: String,
+    },
+    ToolStarted {
+        call_id: String,
+        name: String,
+    },
+    ToolFinished {
+        call_id: String,
+        ok: bool,
+    },
+    ApprovalRequested {
+        request_id: String,
+    },
+    ApprovalResolved {
+        request_id: String,
+        approved: bool,
+    },
+    SubagentStarted {
+        child_session_id: String,
+    },
+    SubagentFinished {
+        child_session_id: String,
+        ok: bool,
+    },
+    /// An event observed inside a child session. It is durable for replay/UI audit, but does not mutate parent state.
+    ChildEvent {
+        child_session_id: String,
+        event: Box<HarnessEventKind>,
+    },
+    FileChanged {
+        path: String,
+    },
     TurnCompleted,
-    TurnFailed { reason: String },
+    TurnFailed {
+        reason: String,
+    },
     TurnCancelled,
-    SessionStatus { state: HarnessState },
+    SessionStatus {
+        state: HarnessState,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,6 +266,22 @@ impl HarnessRuntime {
         true
     }
 
+    /// Records child work without applying its tool, approval, or terminal transitions to the parent.
+    pub fn record_child_event(
+        &mut self,
+        child_session_id: impl Into<String>,
+        event: HarnessEventKind,
+    ) -> bool {
+        if self.state.is_terminal() {
+            return false;
+        }
+        self.record(HarnessEventKind::ChildEvent {
+            child_session_id: child_session_id.into(),
+            event: Box::new(event),
+        });
+        true
+    }
+
     pub fn complete_turn(&mut self) -> bool {
         if !matches!(
             self.state,
@@ -382,6 +427,28 @@ mod tests {
             .iter()
             .filter(|event| event.turn_id.is_some())
             .all(|event| event.turn_id.as_deref() == Some("turn-1")));
+    }
+
+    #[test]
+    fn child_event_is_recorded_without_blocking_or_finishing_parent() {
+        let mut runtime = HarnessRuntime::new("session-1");
+        runtime.start();
+        runtime.begin_turn("turn-1");
+        assert!(runtime.record_child_event(
+            "child-1",
+            HarnessEventKind::AssistantDelta {
+                text: "child output".into(),
+            },
+        ));
+        assert_eq!(runtime.state(), HarnessState::Running);
+        assert!(matches!(
+            runtime.events().last().map(|event| &event.kind),
+            Some(HarnessEventKind::ChildEvent {
+                child_session_id,
+                event
+            }) if child_session_id == "child-1"
+                && matches!(**event, HarnessEventKind::AssistantDelta { .. })
+        ));
     }
 
     #[test]

@@ -16,7 +16,7 @@ use ag_adapters::agent::runner::{drive_turn, resolve_binary};
 use ag_adapters::agent::warm::drive_warm_turn_with;
 use ag_adapters::agent::workbuddy::WorkBuddy;
 use ag_adapters::agent::{AgentEvent, ChatResponseCapabilities, Provider, TurnRequest};
-use ag_orchestrator::{HarnessRuntime, HarnessState};
+use ag_orchestrator::{HarnessEventKind, HarnessRuntime, HarnessState};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -244,10 +244,32 @@ fn observe_harness(runtime: &mut HarnessRuntime, event: &AgentEvent) {
         AgentEvent::Error { message } => {
             let _ = runtime.fail_turn(message.clone());
         }
-        // Child work has its own event scope. Parent terminal state is owned by the parent turn.
-        AgentEvent::Scoped { .. } => {}
+        // Child work has its own event scope. Keep its audit trail without applying child state to the parent turn.
+        AgentEvent::Scoped { parent, event } => observe_child_harness(runtime, parent, event),
         _ => {}
     }
+}
+
+fn observe_child_harness(runtime: &mut HarnessRuntime, child_id: &str, event: &AgentEvent) {
+    let kind = match event {
+        AgentEvent::Delta { text } | AgentEvent::Thinking { text } => {
+            HarnessEventKind::AssistantDelta { text: text.clone() }
+        }
+        AgentEvent::ToolCall { id, name, .. } => HarnessEventKind::ToolStarted {
+            call_id: id.clone(),
+            name: name.clone(),
+        },
+        AgentEvent::ToolResult { id, is_error, .. } => HarnessEventKind::ToolFinished {
+            call_id: id.clone(),
+            ok: !is_error,
+        },
+        AgentEvent::Done { .. } => HarnessEventKind::TurnCompleted,
+        AgentEvent::Error { message } => HarnessEventKind::TurnFailed {
+            reason: message.clone(),
+        },
+        _ => return,
+    };
+    let _ = runtime.record_child_event(child_id.to_owned(), kind);
 }
 
 fn provider_for(agent: &str) -> Result<Box<dyn Provider>, String> {
