@@ -50,11 +50,6 @@ mod job {
         (raw != 0).then_some(HANDLE(raw as *mut _))
     }
 
-    /// Puts a started server (and, from now on, everything it starts) under the app's job.
-    pub fn adopt(child: &std::process::Child) {
-        adopt_handle(child.as_raw_handle());
-    }
-
     /// The same for an agent CLI (a tokio child, see `ag_adapters::agent::runner::on_spawn`): killing the app ends it too.
     pub fn adopt_agent(child: &tokio::process::Child) {
         if let Some(raw) = child.raw_handle() {
@@ -402,8 +397,10 @@ pub fn start_with_identity(
         .spawn()
         .map_err(|error| format!("could not start `{command}` in {cwd}: {error}"))?;
     let keyboard = child.stdin.take();
-    #[cfg(windows)]
-    job::adopt(&child);
+    let pid = child.id();
+    // Servers follow the same lifetime boundary as agents and terminals: the registry covers crash recovery,
+    // Windows uses the process Job Object, and Unix starts the detached app-liveness watchdog.
+    crate::process_guard::adopt_pid(pid);
     let mut running = RUNNING.lock().map_err(|_| "busy".to_string())?;
     // Starting again on a port replaces what held it: the old server is stopped, so a port is on the list once.
     running.retain_mut(|server| {
@@ -413,7 +410,6 @@ pub fn start_with_identity(
         kill_tree(&mut server.child);
         false
     });
-    let pid = child.id();
     running.push(Server {
         key: port,
         child,
@@ -461,23 +457,7 @@ pub fn read_log(port: u16) -> String {
 /// Stops a server with the processes it started (a dev server is a shell, a package manager and a node process:
 /// killing only the first would leave the others listening).
 fn kill_tree(child: &mut Child) {
-    let id = child.id().to_string();
-    if cfg!(windows) {
-        let mut kill = Command::new("taskkill");
-        kill.args(["/PID", &id, "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            kill.creation_flags(0x0800_0000);
-        }
-        let _ = kill.status();
-    } else {
-        let _ = Command::new("kill")
-            .args(["-TERM", &format!("-{id}")])
-            .status();
-    }
+    crate::process_guard::kill_tree(child.id());
     let _ = child.kill();
 }
 
