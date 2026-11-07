@@ -25,6 +25,7 @@ export type ChildAgent = {
 
 /** Maps background work to child agents. Work with no transcript to show is dropped. */
 export function toChildAgent(work: ChatWork): ChildAgent | null {
+    if (work.kind !== 'agent') return null;
     const source: ChildAgentSource | null = work.childId
         ? { type: 'session', sessionId: work.childId }
         : work.sourceMessageId && work.callId

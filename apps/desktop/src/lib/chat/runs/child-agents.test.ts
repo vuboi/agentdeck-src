@@ -45,6 +45,18 @@ test('work with no transcript to show is dropped', () => {
     assert.equal(toChildAgent({ ...base, sourceMessageId: 'm1' }), null);
 });
 
+test('a command stays out of the sub-agent views', () => {
+    assert.equal(
+        toChildAgent({
+            ...base,
+            kind: 'command',
+            callId: 'c1',
+            sourceMessageId: 'm1',
+        }),
+        null,
+    );
+});
+
 test('state and stop flag carry over', () => {
     const agent = toChildAgent({
         ...base,

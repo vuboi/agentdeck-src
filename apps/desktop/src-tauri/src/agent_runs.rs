@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::time::Duration;
 
 use ag_adapters::agent::antigravity::Antigravity;
@@ -110,9 +110,170 @@ fn stop_run(run: Run) {
 /// The active runs, per visible chat and turn. A foreground listener and a background waiter can coexist in one chat.
 static RUNNING: LazyLock<Mutex<HashMap<(String, String), Run>>> = LazyLock::new(Default::default);
 
-static DSH_APPROVALS: LazyLock<
-    Mutex<HashMap<String, oneshot::Sender<ag_adapters::dsh_supervisor::DshApprovalResponse>>>,
-> = LazyLock::new(Default::default);
+struct PendingDshApproval {
+    session: String,
+    turn: String,
+    sender: oneshot::Sender<ag_adapters::dsh_supervisor::DshApprovalResponse>,
+}
+
+static DSH_APPROVALS: LazyLock<Mutex<HashMap<String, PendingDshApproval>>> =
+    LazyLock::new(Default::default);
+
+struct SessionHarnessLog {
+    writer: AsyncHarnessEventLog,
+    next_seq: Mutex<u64>,
+}
+
+static HARNESS_LOGS: LazyLock<Mutex<HashMap<String, Weak<SessionHarnessLog>>>> =
+    LazyLock::new(Default::default);
+
+struct DshApprovalTurnGuard {
+    session: String,
+    turn: String,
+}
+
+impl Drop for DshApprovalTurnGuard {
+    fn drop(&mut self) {
+        DSH_APPROVALS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|_, approval| approval.session != self.session || approval.turn != self.turn);
+    }
+}
+
+fn dsh_approval_key(session: &str, turn: &str, request_id: &str) -> String {
+    format!(
+        "{}:{session}{}:{turn}{}:{request_id}",
+        session.len(),
+        turn.len(),
+        request_id.len()
+    )
+}
+
+fn cancel_pending_dsh_approvals(session: &str, turn: &str) {
+    let mut approvals = DSH_APPROVALS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let keys = approvals
+        .iter()
+        .filter(|(_, approval)| approval.session == session && approval.turn == turn)
+        .map(|(key, _)| key.clone())
+        .collect::<Vec<_>>();
+    let senders = keys
+        .into_iter()
+        .filter_map(|key| approvals.remove(&key).map(|approval| approval.sender))
+        .collect::<Vec<_>>();
+    drop(approvals);
+    for sender in senders {
+        let _ = sender.send(ag_adapters::dsh_supervisor::DshApprovalResponse::Error {
+            code: -32800,
+            message: "approval cancelled because the turn is shutting down".into(),
+            data: None,
+        });
+    }
+}
+
+#[cfg(test)]
+mod dsh_approval_tests {
+    use super::*;
+
+    #[test]
+    fn approval_key_is_unambiguous_and_stable() {
+        assert_eq!(
+            dsh_approval_key("chat", "turn", "request"),
+            dsh_approval_key("chat", "turn", "request")
+        );
+        assert_ne!(
+            dsh_approval_key("chat", "turn:next", "request"),
+            dsh_approval_key("chat:turn", "next", "request")
+        );
+    }
+
+    #[test]
+    fn shutdown_cancels_only_approvals_owned_by_its_turn() {
+        let session = format!("approval-test-{}", std::process::id());
+        let turn = "turn-a";
+        let (cancelled_sender, mut cancelled_receiver) = oneshot::channel();
+        let (other_sender, mut other_receiver) = oneshot::channel();
+        {
+            let mut approvals = DSH_APPROVALS
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            approvals.insert(
+                dsh_approval_key(&session, turn, "a"),
+                PendingDshApproval {
+                    session: session.clone(),
+                    turn: turn.into(),
+                    sender: cancelled_sender,
+                },
+            );
+            approvals.insert(
+                dsh_approval_key(&session, "turn-b", "b"),
+                PendingDshApproval {
+                    session: session.clone(),
+                    turn: "turn-b".into(),
+                    sender: other_sender,
+                },
+            );
+        }
+
+        cancel_pending_dsh_approvals(&session, turn);
+
+        assert!(matches!(
+            cancelled_receiver.try_recv(),
+            Ok(ag_adapters::dsh_supervisor::DshApprovalResponse::Error { code: -32800, .. })
+        ));
+        assert!(other_receiver.try_recv().is_err());
+        DSH_APPROVALS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&dsh_approval_key(&session, "turn-b", "b"));
+    }
+}
+
+type SharedHarness = Arc<Mutex<(HarnessRuntime, u64)>>;
+type HarnessLogHandle = Arc<SessionHarnessLog>;
+
+fn start_logged_harness(
+    app: &AppHandle,
+    session: &str,
+    turn: &str,
+) -> (SharedHarness, Option<HarnessLogHandle>) {
+    let (mut runtime, log) = match harness_log(app, session) {
+        Ok((runtime, log)) => (runtime, Some(log)),
+        Err(error) => {
+            eprintln!("harness persistence disabled for session {session}: {error}");
+            crate::flow_log::note("harness", session, "persistence_disabled", &error);
+            (HarnessRuntime::new(session), None)
+        }
+    };
+    let mut seq = runtime.next_seq();
+    runtime.start();
+    let _ = runtime.begin_turn(turn.to_owned());
+    persist_harness_events(log.as_deref(), &runtime, &mut seq);
+    (Arc::new(Mutex::new((runtime, seq))), log)
+}
+
+fn finish_logged_harness(
+    shared: &SharedHarness,
+    log: Option<&SessionHarnessLog>,
+    app: &AppHandle,
+    session: &str,
+    turn: &str,
+    stopped: bool,
+) {
+    let mut shared = shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (runtime, seq) = &mut *shared;
+    if stopped {
+        let _ = runtime.cancel();
+    } else if !runtime.state().is_terminal() {
+        let _ = runtime.complete_turn();
+    }
+    persist_harness_events(log, runtime, seq);
+    emit_harness_status(app, session, turn, runtime);
+}
 
 /// Runs that ended before `track` listed them (a turn that finishes at once): `track` must not list those, nothing would
 /// ever remove them. Keyed like `RUNNING`; turn ids are never reused, so an entry only ever meets its own run.
@@ -164,6 +325,11 @@ fn track(
 /// Whether a chat turn is running on this agent's CLI right now.
 pub(crate) fn agent_busy(agent: &str) -> bool {
     running().values().any(|run| run.agent == agent)
+}
+
+/// Whether any turn for a visible chat is still active, including its background waiters.
+pub(crate) fn chat_busy(chat: &str) -> bool {
+    !chat.is_empty() && running().keys().any(|(session, _)| session == chat)
 }
 
 /// A run that ended on its own leaves the table, unless a newer turn of the chat already took its place.
@@ -245,11 +411,35 @@ fn harness_log_path(app: &AppHandle, session: &str) -> Option<PathBuf> {
     )
 }
 
-fn harness_log(app: &AppHandle, session: &str) -> Option<AsyncHarnessEventLog> {
-    Some(AsyncHarnessEventLog::new(
-        harness_log_path(app, session)?,
-        256,
-    ))
+fn harness_log(
+    app: &AppHandle,
+    session: &str,
+) -> Result<(HarnessRuntime, HarnessLogHandle), String> {
+    let path = harness_log_path(app, session).ok_or("app data directory is unavailable")?;
+    let mut logs = HARNESS_LOGS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let log = if let Some(log) = logs.get(session).and_then(Weak::upgrade) {
+        log
+    } else {
+        let next_seq = HarnessEventLog::new(&path)
+            .replay(session)
+            .map_err(|error| error.to_string())?
+            .runtime
+            .next_seq();
+        let log = Arc::new(SessionHarnessLog {
+            writer: AsyncHarnessEventLog::new(path, 256),
+            next_seq: Mutex::new(next_seq),
+        });
+        logs.insert(session.to_owned(), Arc::downgrade(&log));
+        logs.retain(|_, log| log.strong_count() > 0);
+        log
+    };
+    let next_seq = *log
+        .next_seq
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Ok((HarnessRuntime::with_next_seq(session, next_seq), log))
 }
 
 /// Replays the last durable Harness state for a chat after app reload. Recovery decides separately whether to resume.
@@ -266,19 +456,36 @@ pub(crate) fn harness_replay(app: AppHandle, session: String) -> Result<HarnessR
 }
 
 fn persist_harness_events(
-    log: Option<&AsyncHarnessEventLog>,
+    log: Option<&SessionHarnessLog>,
     runtime: &HarnessRuntime,
     next_seq: &mut u64,
 ) {
     let Some(log) = log else { return };
     let mut cursor = *next_seq;
+    let mut session_seq = log
+        .next_seq
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for event in runtime.events() {
         if event.seq < cursor {
             continue;
         }
-        if log.append(event).is_err() {
+        let mut persisted = event.clone();
+        persisted.seq = *session_seq;
+        if let Err(error) = log.writer.append(&persisted) {
+            eprintln!(
+                "harness persistence failed for session {}: {error}",
+                event.session_id
+            );
+            crate::flow_log::note(
+                "harness",
+                &event.session_id,
+                "persistence_error",
+                &error.to_string(),
+            );
             return;
         }
+        *session_seq = session_seq.saturating_add(1);
         cursor = event.seq + 1;
     }
     *next_seq = cursor;
@@ -375,12 +582,19 @@ async fn run_turn(
     keep_open: bool,
     mut stop: StopToken,
 ) {
-    let mut harness = HarnessRuntime::new(session.clone());
+    let (mut harness, harness_log) = match harness_log(&app, &session) {
+        Ok((runtime, log)) => (runtime, Some(log)),
+        Err(error) => {
+            // Keep the model turn usable, but never append behind an unreadable session log.
+            eprintln!("harness persistence disabled for session {session}: {error}");
+            crate::flow_log::note("harness", &session, "persistence_disabled", &error);
+            (HarnessRuntime::new(session.clone()), None)
+        }
+    };
+    let mut harness_log_seq = harness.next_seq();
     harness.start();
     let _ = harness.begin_turn(turn.clone());
-    let harness_log = harness_log(&app, &session);
-    let mut harness_log_seq = 0;
-    persist_harness_events(harness_log.as_ref(), &harness, &mut harness_log_seq);
+    persist_harness_events(harness_log.as_deref(), &harness, &mut harness_log_seq);
     let mut noted = crate::flow_log::TurnGuard::new(
         &session,
         &turn,
@@ -405,17 +619,20 @@ async fn run_turn(
             req.clone(),
             message_id.clone(),
             &mut harness,
-            harness_log.as_ref(),
+            harness_log.as_deref(),
             &mut harness_log_seq,
             stop.clone(),
         )
         .await;
         if stop.is_stopped() && harness.cancel() {
-            persist_harness_events(harness_log.as_ref(), &harness, &mut harness_log_seq);
+            persist_harness_events(harness_log.as_deref(), &harness, &mut harness_log_seq);
             emit_harness_status(&app, &session, &turn, &harness);
         }
         if let Some(log) = harness_log.as_ref() {
-            let _ = log.flush();
+            if let Err(error) = log.writer.flush() {
+                eprintln!("harness persistence failed for session {session}: {error}");
+                crate::flow_log::note("harness", &session, "persistence_error", &error.to_string());
+            }
         }
         noted.finish(if stop.is_stopped() {
             "stopped"
@@ -437,7 +654,7 @@ async fn run_turn(
             stop.clone(),
             |event| {
                 observe_harness(&mut harness, &event);
-                persist_harness_events(harness_log.as_ref(), &harness, &mut harness_log_seq);
+                persist_harness_events(harness_log.as_deref(), &harness, &mut harness_log_seq);
                 emit_with_harness(
                     &app,
                     &session,
@@ -456,7 +673,7 @@ async fn run_turn(
             () = drive_turn(binary, provider.as_ref(), &req, |event| {
                 observe_harness(&mut harness, &event);
                 persist_harness_events(
-                    harness_log.as_ref(),
+                    harness_log.as_deref(),
                     &harness,
                     &mut harness_log_seq,
                 );
@@ -475,11 +692,14 @@ async fn run_turn(
         }
     }
     if stop.is_stopped() && harness.cancel() {
-        persist_harness_events(harness_log.as_ref(), &harness, &mut harness_log_seq);
+        persist_harness_events(harness_log.as_deref(), &harness, &mut harness_log_seq);
         emit_harness_status(&app, &session, &turn, &harness);
     }
     if let Some(log) = harness_log.as_ref() {
-        let _ = log.flush();
+        if let Err(error) = log.writer.flush() {
+            eprintln!("harness persistence failed for session {session}: {error}");
+            crate::flow_log::note("harness", &session, "persistence_error", &error.to_string());
+        }
     }
     noted.finish(if stop.is_stopped() {
         "stopped"
@@ -497,19 +717,29 @@ async fn run_dsh_sdk_turn(
     req: TurnRequest,
     message_id: Option<String>,
     harness: &mut HarnessRuntime,
-    harness_log: Option<&AsyncHarnessEventLog>,
+    harness_log: Option<&SessionHarnessLog>,
     harness_log_seq: &mut u64,
     mut stop: StopToken,
 ) {
     let mut config = DshSupervisorConfig::new(PathBuf::from(binary), DshTransportProfile::Sdk);
     config.args = vec!["--profile".into(), "sdk".into()];
     config.cwd = req.cwd.clone();
-    config.approval_callback = Some(std::sync::Arc::new(|request| {
+    let approval_session = session.clone();
+    let approval_turn = turn.clone();
+    config.approval_callback = Some(std::sync::Arc::new(move |request| {
         let (sender, receiver) = oneshot::channel();
+        let registry_id = dsh_approval_key(&approval_session, &approval_turn, &request.id);
         DSH_APPROVALS
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(request.id, sender);
+            .insert(
+                registry_id,
+                PendingDshApproval {
+                    session: approval_session.clone(),
+                    turn: approval_turn.clone(),
+                    sender,
+                },
+            );
         Box::pin(async move {
             receiver
                 .await
@@ -538,6 +768,10 @@ async fn run_dsh_sdk_turn(
             return;
         }
     };
+    let _approval_guard = DshApprovalTurnGuard {
+        session: session.clone(),
+        turn: turn.clone(),
+    };
 
     if supervisor
         .initialize("agentdeck", env!("CARGO_PKG_VERSION"))
@@ -560,6 +794,7 @@ async fn run_dsh_sdk_turn(
         return;
     }
 
+    let mut resume_pending_turn = false;
     if let Some(session_id) = req.session_id.as_deref().filter(|_| req.resume) {
         if supervisor
             .restore_session(session_id.to_owned())
@@ -580,6 +815,58 @@ async fn run_dsh_sdk_turn(
             );
             return;
         }
+        if supervisor.resume().await.is_err() {
+            emit_dsh_event(
+                &app,
+                &session,
+                &turn,
+                message_id.as_deref(),
+                harness,
+                harness_log,
+                harness_log_seq,
+                AgentEvent::Error {
+                    message: "dsh SDK could not request session resume".into(),
+                },
+            );
+            cancel_pending_dsh_approvals(&session, &turn);
+            let _ = shutdown_dsh_supervisor(&mut supervisor).await;
+            return;
+        }
+        if let Err(error) = wait_dsh_session_transition(&mut supervisor, true).await {
+            emit_dsh_event(
+                &app,
+                &session,
+                &turn,
+                message_id.as_deref(),
+                harness,
+                harness_log,
+                harness_log_seq,
+                AgentEvent::Error {
+                    message: format!("dsh SDK resume failed: {error}"),
+                },
+            );
+            cancel_pending_dsh_approvals(&session, &turn);
+            let _ = shutdown_dsh_supervisor(&mut supervisor).await;
+            return;
+        }
+        if supervisor.wait().await.is_err() {
+            emit_dsh_event(
+                &app,
+                &session,
+                &turn,
+                message_id.as_deref(),
+                harness,
+                harness_log,
+                harness_log_seq,
+                AgentEvent::Error {
+                    message: "dsh SDK could not wait for resumed work".into(),
+                },
+            );
+            cancel_pending_dsh_approvals(&session, &turn);
+            let _ = shutdown_dsh_supervisor(&mut supervisor).await;
+            return;
+        }
+        resume_pending_turn = true;
     } else {
         let cwd = req
             .cwd
@@ -591,33 +878,52 @@ async fn run_dsh_sdk_turn(
             .await
             .is_err()
         {
+            cancel_pending_dsh_approvals(&session, &turn);
+            let _ = shutdown_dsh_supervisor(&mut supervisor).await;
             return;
         }
-        if let Some(DshSupervisorEvent::Adapter(DshAdapterEvent::SessionReady {
-            session_id, ..
-        })) = supervisor.next_event().await
-        {
-            emit_dsh_event(
-                &app,
-                &session,
-                &turn,
-                message_id.as_deref(),
-                harness,
-                harness_log,
-                harness_log_seq,
-                AgentEvent::Session { session_id },
-            );
+        match wait_dsh_session_transition(&mut supervisor, false).await {
+            Ok(Some(session_id)) => {
+                emit_dsh_event(
+                    &app,
+                    &session,
+                    &turn,
+                    message_id.as_deref(),
+                    harness,
+                    harness_log,
+                    harness_log_seq,
+                    AgentEvent::Session { session_id },
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                emit_dsh_event(
+                    &app,
+                    &session,
+                    &turn,
+                    message_id.as_deref(),
+                    harness,
+                    harness_log,
+                    harness_log_seq,
+                    AgentEvent::Error {
+                        message: format!("dsh SDK session creation failed: {error}"),
+                    },
+                );
+                cancel_pending_dsh_approvals(&session, &turn);
+                let _ = shutdown_dsh_supervisor(&mut supervisor).await;
+                return;
+            }
         }
     }
 
-    if supervisor.prompt(&req.prompt).await.is_err() {
+    if !resume_pending_turn && supervisor.prompt(&req.prompt).await.is_err() {
+        cancel_pending_dsh_approvals(&session, &turn);
+        let _ = shutdown_dsh_supervisor(&mut supervisor).await;
         return;
     }
     loop {
         tokio::select! {
             () = stop.stopped() => {
-                let _ = supervisor.shutdown().await;
-                let _ = supervisor.wait_for_exit().await;
                 break;
             }
             event = supervisor.next_event() => {
@@ -627,6 +933,16 @@ async fn run_dsh_sdk_turn(
                         let _ = supervisor.wait().await;
                     }
                     DshSupervisorEvent::Adapter(DshAdapterEvent::WaitCompleted { .. }) => {
+                        if resume_pending_turn {
+                            resume_pending_turn = false;
+                            if supervisor.prompt(&req.prompt).await.is_err() {
+                                emit_dsh_event(&app, &session, &turn, message_id.as_deref(), harness, harness_log, harness_log_seq, AgentEvent::Error {
+                                    message: "dsh SDK rejected prompt after resume".into(),
+                                });
+                                break;
+                            }
+                            continue;
+                        }
                         emit_dsh_event(&app, &session, &turn, message_id.as_deref(), harness, harness_log, harness_log_seq, AgentEvent::Done {
                             session_id: supervisor.session_id().await,
                             text: String::new(),
@@ -645,7 +961,7 @@ async fn run_dsh_sdk_turn(
                     }
                     DshSupervisorEvent::ApprovalRequested(request) => {
                         emit_dsh_event(&app, &session, &turn, message_id.as_deref(), harness, harness_log, harness_log_seq, AgentEvent::PermissionDenied {
-                            requests: vec![ag_adapters::agent::PermissionRequest { id: request.id, tool: request.method, summary: request.params.to_string(), allow: "dsh".into() }],
+                            requests: vec![ag_adapters::agent::PermissionRequest { id: dsh_approval_key(&session, &turn, &request.id), tool: request.method, summary: request.params.to_string(), allow: "dsh".into() }],
                         });
                     }
                     DshSupervisorEvent::ProtocolError(error) => {
@@ -653,15 +969,23 @@ async fn run_dsh_sdk_turn(
                         break;
                     }
                     DshSupervisorEvent::ProcessExited(_) | DshSupervisorEvent::StdoutClosed => break,
-                    DshSupervisorEvent::ApprovalResponded { .. } => {}
+                    DshSupervisorEvent::ApprovalResponded { id, allowed } => {
+                        let request_id = dsh_approval_key(&session, &turn, &id);
+                        let _ = harness.resolve_approval(request_id, allowed);
+                        persist_harness_events(harness_log, harness, harness_log_seq);
+                        emit_harness_status(&app, &session, &turn, harness);
+                    }
                     DshSupervisorEvent::Adapter(DshAdapterEvent::Initialized { .. })
                     | DshSupervisorEvent::Adapter(DshAdapterEvent::SessionReady { .. })
                     | DshSupervisorEvent::Adapter(DshAdapterEvent::Resumed { .. })
+                    | DshSupervisorEvent::Adapter(DshAdapterEvent::ServerRequest { .. })
                     | DshSupervisorEvent::Adapter(DshAdapterEvent::ShutdownAcknowledged { .. }) => {}
                 }
             }
         }
     }
+    cancel_pending_dsh_approvals(&session, &turn);
+    let _ = shutdown_dsh_supervisor(&mut supervisor).await;
 }
 
 async fn wait_dsh_initialized(supervisor: &mut DshSupervisor) -> bool {
@@ -675,6 +999,56 @@ async fn wait_dsh_initialized(supervisor: &mut DshSupervisor) -> bool {
         }
     }
     false
+}
+
+async fn wait_dsh_session_transition(
+    supervisor: &mut DshSupervisor,
+    resumed: bool,
+) -> Result<Option<String>, String> {
+    while let Some(event) = supervisor.next_event().await {
+        match event {
+            DshSupervisorEvent::Adapter(DshAdapterEvent::SessionReady { session_id, .. })
+                if !resumed =>
+            {
+                return Ok(Some(session_id));
+            }
+            DshSupervisorEvent::Adapter(DshAdapterEvent::Resumed { .. }) if resumed => {
+                return Ok(None);
+            }
+            DshSupervisorEvent::Adapter(DshAdapterEvent::Error { stage, error }) => {
+                return Err(format!("{stage}: {error}"));
+            }
+            DshSupervisorEvent::ProtocolError(error) => return Err(error),
+            DshSupervisorEvent::StdoutClosed | DshSupervisorEvent::ProcessExited(_) => {
+                return Err("process exited before session became ready".into());
+            }
+            _ => {}
+        }
+    }
+    Err("event stream closed before session became ready".into())
+}
+
+async fn shutdown_dsh_supervisor(supervisor: &mut DshSupervisor) -> Result<(), String> {
+    if supervisor.shutdown().await.is_ok() {
+        loop {
+            match tokio::time::timeout(Duration::from_secs(3), supervisor.next_event()).await {
+                Ok(Some(DshSupervisorEvent::Adapter(DshAdapterEvent::ShutdownAcknowledged {
+                    ..
+                }))) => break,
+                Ok(Some(
+                    DshSupervisorEvent::StdoutClosed | DshSupervisorEvent::ProcessExited(_),
+                ))
+                | Ok(None)
+                | Err(_) => break,
+                Ok(Some(_)) => {}
+            }
+        }
+    }
+    match tokio::time::timeout(Duration::from_secs(3), supervisor.wait_for_exit()).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("dsh process did not exit after shutdown".into()),
+    }
 }
 
 fn dsh_notification_event(notification: DshNotification) -> Option<AgentEvent> {
@@ -794,7 +1168,7 @@ fn emit_dsh_event(
     turn: &str,
     message_id: Option<&str>,
     harness: &mut HarnessRuntime,
-    harness_log: Option<&AsyncHarnessEventLog>,
+    harness_log: Option<&SessionHarnessLog>,
     harness_log_seq: &mut u64,
     event: AgentEvent,
 ) {
@@ -820,6 +1194,7 @@ pub(crate) fn dsh_approval_answer(request_id: String, allow: bool) -> Result<(),
         .remove(&request_id)
         .ok_or_else(|| "that dsh approval request is no longer waiting".to_string())?;
     sender
+        .sender
         .send(if allow {
             ag_adapters::dsh_supervisor::DshApprovalResponse::Result(serde_json::json!({
                 "approved": true
@@ -936,10 +1311,13 @@ pub(crate) async fn agent_send(
         };
         let (stop, token) = StopHandle::new();
         let stopped = token.clone();
-        let mut harness = HarnessRuntime::new(session.clone());
-        harness.start();
-        let _ = harness.begin_turn(turn.clone());
-        emit_harness_status(&app, &session, &turn, &harness);
+        let (shared_harness, harness_log) = start_logged_harness(&app, &session, &turn);
+        {
+            let shared = shared_harness
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            emit_harness_status(&app, &session, &turn, &shared.0);
+        }
         let mut noted = crate::flow_log::TurnGuard::new(
             &session,
             &turn,
@@ -950,7 +1328,8 @@ pub(crate) async fn agent_send(
         let sink_session = session.clone();
         let sink_turn = turn.clone();
         let sink_message_id = message_id.clone();
-        let mut sink_harness = harness.clone();
+        let sink_harness = Arc::clone(&shared_harness);
+        let sink_log = harness_log.clone();
         let run = crate::copilot::run_turn_with_sink(
             app.clone(),
             session.clone(),
@@ -959,26 +1338,41 @@ pub(crate) async fn agent_send(
             req,
             token,
             move |event| {
-                observe_harness(&mut sink_harness, &event);
+                let (state, seq) = {
+                    let mut shared = sink_harness
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let (runtime, next_seq) = &mut *shared;
+                    observe_harness(runtime, &event);
+                    persist_harness_events(sink_log.as_deref(), runtime, next_seq);
+                    (runtime.state(), runtime.next_seq().saturating_sub(1))
+                };
                 emit_with_harness(
                     &sink_app,
                     &sink_session,
                     &sink_turn,
                     sink_message_id.as_deref(),
                     event,
-                    Some(sink_harness.state()),
-                    Some(sink_harness.next_seq().saturating_sub(1)),
+                    Some(state),
+                    Some(seq),
                 );
             },
         );
         let (chat, this_turn) = (session.clone(), turn.clone());
+        let finish_harness = Arc::clone(&shared_harness);
+        let finish_log = harness_log.clone();
         let handle = tauri::async_runtime::spawn(async move {
             run.await;
-            if stopped.is_stopped() && harness.cancel() {
-                emit_harness_status(&app, &chat, &this_turn, &harness);
-            } else if !harness.state().is_terminal() {
-                let _ = harness.complete_turn();
-                emit_harness_status(&app, &chat, &this_turn, &harness);
+            finish_logged_harness(
+                &finish_harness,
+                finish_log.as_deref(),
+                &app,
+                &chat,
+                &this_turn,
+                stopped.is_stopped(),
+            );
+            if let Some(log) = finish_log.as_deref() {
+                let _ = log.writer.flush();
             }
             noted.finish("finished");
             forget(&chat, &this_turn);
@@ -1002,10 +1396,13 @@ pub(crate) async fn agent_send(
         };
         let (stop, token) = StopHandle::new();
         let stopped = token.clone();
-        let mut harness = HarnessRuntime::new(session.clone());
-        harness.start();
-        let _ = harness.begin_turn(turn.clone());
-        emit_harness_status(&app, &session, &turn, &harness);
+        let (shared_harness, harness_log) = start_logged_harness(&app, &session, &turn);
+        {
+            let shared = shared_harness
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            emit_harness_status(&app, &session, &turn, &shared.0);
+        }
         let mut noted = crate::flow_log::TurnGuard::new(
             &session,
             &turn,
@@ -1016,7 +1413,8 @@ pub(crate) async fn agent_send(
         let sink_session = session.clone();
         let sink_turn = turn.clone();
         let sink_message_id = message_id.clone();
-        let mut sink_harness = harness.clone();
+        let sink_harness = Arc::clone(&shared_harness);
+        let sink_log = harness_log.clone();
         let run = crate::opencode_serve::run_turn_with_sink(
             app.clone(),
             session.clone(),
@@ -1025,26 +1423,41 @@ pub(crate) async fn agent_send(
             req,
             token,
             move |event| {
-                observe_harness(&mut sink_harness, &event);
+                let (state, seq) = {
+                    let mut shared = sink_harness
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let (runtime, next_seq) = &mut *shared;
+                    observe_harness(runtime, &event);
+                    persist_harness_events(sink_log.as_deref(), runtime, next_seq);
+                    (runtime.state(), runtime.next_seq().saturating_sub(1))
+                };
                 emit_with_harness(
                     &sink_app,
                     &sink_session,
                     &sink_turn,
                     sink_message_id.as_deref(),
                     event,
-                    Some(sink_harness.state()),
-                    Some(sink_harness.next_seq().saturating_sub(1)),
+                    Some(state),
+                    Some(seq),
                 );
             },
         );
         let (chat, this_turn) = (session.clone(), turn.clone());
+        let finish_harness = Arc::clone(&shared_harness);
+        let finish_log = harness_log.clone();
         let handle = tauri::async_runtime::spawn(async move {
             run.await;
-            if stopped.is_stopped() && harness.cancel() {
-                emit_harness_status(&app, &chat, &this_turn, &harness);
-            } else if !harness.state().is_terminal() {
-                let _ = harness.complete_turn();
-                emit_harness_status(&app, &chat, &this_turn, &harness);
+            finish_logged_harness(
+                &finish_harness,
+                finish_log.as_deref(),
+                &app,
+                &chat,
+                &this_turn,
+                stopped.is_stopped(),
+            );
+            if let Some(log) = finish_log.as_deref() {
+                let _ = log.writer.flush();
             }
             noted.finish("finished");
             forget(&chat, &this_turn);
@@ -1139,32 +1552,61 @@ pub(crate) async fn custom_send(
     let response = ChatResponseCapabilities::custom();
     let (chat, this_turn) = (session.clone(), turn.clone());
     let mut noted = crate::flow_log::TurnGuard::new(&chat, &this_turn, "custom", &config.model);
+    let (stop, mut token) = StopHandle::new();
+    let stopped = token.clone();
     let handle = tauri::async_runtime::spawn(async move {
-        let mut harness = HarnessRuntime::new(chat.clone());
-        harness.start();
-        let _ = harness.begin_turn(this_turn.clone());
-        emit_harness_status(&app, &chat, &this_turn, &harness);
-        custom_chat::run_turn(&app.clone(), config, messages, |event| {
-            observe_harness(&mut harness, &event);
+        let (shared_harness, harness_log) = start_logged_harness(&app, &chat, &this_turn);
+        {
+            let shared = shared_harness
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            emit_harness_status(&app, &chat, &this_turn, &shared.0);
+        }
+        let sink_harness = Arc::clone(&shared_harness);
+        let sink_log = harness_log.clone();
+        let run_app = app.clone();
+        let sink_app = app.clone();
+        let sink_chat = chat.clone();
+        let sink_turn = this_turn.clone();
+        let run = custom_chat::run_turn(&run_app, config, messages, move |event| {
+            let (state, seq) = {
+                let mut shared = sink_harness
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let (runtime, next_seq) = &mut *shared;
+                observe_harness(runtime, &event);
+                persist_harness_events(sink_log.as_deref(), runtime, next_seq);
+                (runtime.state(), runtime.next_seq().saturating_sub(1))
+            };
             emit_with_harness(
-                &app,
-                &chat,
-                &this_turn,
+                &sink_app,
+                &sink_chat,
+                &sink_turn,
                 message_id.as_deref(),
                 event,
-                Some(harness.state()),
-                Some(harness.next_seq().saturating_sub(1)),
+                Some(state),
+                Some(seq),
             )
-        })
-        .await;
-        if !harness.state().is_terminal() {
-            let _ = harness.complete_turn();
-            emit_harness_status(&app, &chat, &this_turn, &harness);
+        });
+        tokio::select! {
+            _ = run => {},
+            () = token.stopped() => {},
+        }
+        finish_logged_harness(
+            &shared_harness,
+            harness_log.as_deref(),
+            &app,
+            &chat,
+            &this_turn,
+            stopped.is_stopped(),
+        );
+        if let Some(log) = harness_log.as_deref() {
+            let _ = log.writer.flush();
         }
         noted.finish("finished");
         forget(&chat, &this_turn);
     });
-    track(session, turn, "custom", handle, None, response);
+    track(session, turn, "custom", handle, Some(stop), response);
     Ok(())
 }
 

@@ -679,33 +679,68 @@ fn tool_name(server: &str, tool: &str) -> String {
         .collect()
 }
 
-/// Starts the user's MCP servers at the same time; one that fails or is slow is left out.
-async fn start_servers(cwd: Option<&Path>, given: Option<&[String]>) -> Vec<Server> {
+/// Retries one failed attachment once; every attempt has its own startup timeout and cleanup scope.
+async fn start_with_retry<T, F: std::future::Future<Output = Result<T, String>>>(
+    mut start: impl FnMut() -> F,
+) -> Result<T, String> {
+    let mut error = String::new();
+    for _ in 0..2 {
+        match tokio::time::timeout(Duration::from_secs(30), start()).await {
+            Ok(Ok(server)) => return Ok(server),
+            Ok(Err(message)) => error = message,
+            Err(_) => error = "startup timed out after 30 seconds".to_owned(),
+        }
+    }
+    Err(format!("startup failed after 2 attempts: {error}"))
+}
+
+/// Starts all configured attachments; any failure aborts the turn after cleaning up successful starts.
+async fn start_servers(
+    cwd: Option<&Path>,
+    given: Option<&[String]>,
+) -> Result<Vec<Server>, String> {
     let project = cwd.map(Path::to_path_buf);
-    let given = given.map(<[String]>::to_vec);
     let raws = tauri::async_runtime::spawn_blocking(move || {
         crate::mcp_manage::servers_for(project.as_deref())
-            .into_iter()
-            .filter(|raw| given.as_ref().is_none_or(|names| names.contains(&raw.name)))
-            .collect::<Vec<_>>()
     })
     .await
-    .unwrap_or_default();
+    .map_err(|error| format!("MCP configuration discovery failed: {error}"))?;
+    if let Some(names) = given {
+        for name in names {
+            if !raws.iter().any(|raw| &raw.name == name) {
+                return Err(format!(
+                    "MCP server `{name}` is not configured or is disabled"
+                ));
+            }
+        }
+    }
     let handles: Vec<_> = raws
         .into_iter()
+        .filter(|raw| given.is_none_or(|names| names.contains(&raw.name)))
         .map(|raw| {
-            tokio::spawn(async move {
-                tokio::time::timeout(Duration::from_secs(30), Server::start(&raw)).await
-            })
+            let name = raw.name.clone();
+            (
+                name,
+                tokio::spawn(async move { start_with_retry(|| Server::start(&raw)).await }),
+            )
         })
         .collect();
     let mut servers = Vec::new();
-    for handle in handles {
-        if let Ok(Ok(Ok(server))) = handle.await {
-            servers.push(server);
+    let mut errors = Vec::new();
+    for (name, handle) in handles {
+        match handle.await {
+            Ok(Ok(server)) => servers.push(server),
+            Ok(Err(error)) => errors.push(format!("MCP server `{name}`: {error}")),
+            Err(error) => errors.push(format!("MCP server `{name}` startup task failed: {error}")),
         }
     }
-    servers
+    if !errors.is_empty() {
+        for server in &mut servers {
+            server.shutdown().await;
+        }
+        return Err(errors.join("\n"));
+    }
+    Ok(servers)
 }
 
 /// Runs one turn: the conversation goes to the model, its tool calls are run and answered, until it replies in
@@ -771,8 +806,13 @@ pub async fn run_turn(
     let mut servers = if turn.restricted {
         Vec::new()
     } else {
-        start_servers(turn.cwd.as_deref(), turn.mcp.as_deref()).await
+        match start_servers(turn.cwd.as_deref(), turn.mcp.as_deref()).await {
+            Ok(servers) => servers,
+            Err(message) => return emit(AgentEvent::Error { message }),
+        }
     };
+    // Keep every post-startup return inside the work future so session cleanup always follows it.
+    async {
     let mut external: Vec<(String, usize, String)> = Vec::new();
     for (index, server) in servers.iter().enumerate() {
         for tool in &server.tools {
@@ -1166,11 +1206,89 @@ pub async fn run_turn(
     emit(AgentEvent::Error {
         message: format!("stopped after {MAX_STEPS} steps without a final answer"),
     });
+    }.await;
+    for server in &mut servers {
+        server.shutdown().await;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn mcp_startup_success_is_not_retried() {
+        let mut attempts = 0;
+        let result = start_with_retry(|| {
+            attempts += 1;
+            async { Ok("attached") }
+        })
+        .await;
+        assert_eq!(result, Ok("attached"));
+        assert_eq!(attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn mcp_startup_retries_once_then_returns_attachment() {
+        let mut attempts = 0;
+        let result = start_with_retry(|| {
+            attempts += 1;
+            let attempt = attempts;
+            async move {
+                if attempt == 1 {
+                    Err("temporarily unavailable".to_owned())
+                } else {
+                    Ok("attached")
+                }
+            }
+        })
+        .await;
+        assert_eq!(result, Ok("attached"));
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn mcp_startup_failure_is_returned_after_two_attempts() {
+        let mut attempts = 0;
+        let result: Result<(), String> = start_with_retry(|| {
+            attempts += 1;
+            async { Err("no command".to_owned()) }
+        })
+        .await;
+        assert_eq!(attempts, 2);
+        assert_eq!(
+            result.unwrap_err(),
+            "startup failed after 2 attempts: no command"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_startup_retry_drops_failed_attempt_before_next_start() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        struct Attempt(Arc<AtomicUsize>);
+        impl Drop for Attempt {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let mut attempts = 0;
+        let result: Result<(), String> = start_with_retry(|| {
+            assert_eq!(dropped.load(Ordering::SeqCst), attempts);
+            attempts += 1;
+            let guard = Attempt(dropped.clone());
+            async move {
+                let _guard = guard;
+                Err("startup failed".to_owned())
+            }
+        })
+        .await;
+        assert!(result.is_err());
+        assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    }
 
     #[test]
     fn a_character_split_across_chunks_stays_whole() {

@@ -89,6 +89,7 @@ pub struct HarnessSnapshot {
     pub active_turn_id: Option<String>,
     pub active_tool_ids: Vec<String>,
     pub active_approval_ids: Vec<String>,
+    pub active_subagent_ids: Vec<String>,
     pub events: Vec<HarnessEvent>,
 }
 
@@ -107,10 +108,16 @@ pub struct HarnessRuntime {
 
 impl HarnessRuntime {
     pub fn new(session_id: impl Into<String>) -> Self {
+        Self::with_next_seq(session_id, 0)
+    }
+
+    /// Creates an empty turn runtime whose first event uses the session log's next sequence.
+    /// Lifecycle state starts at `Created`; prior turns and their active work are not restored.
+    pub fn with_next_seq(session_id: impl Into<String>, next_seq: u64) -> Self {
         Self {
             session_id: session_id.into(),
             state: HarnessState::Created,
-            next_seq: 0,
+            next_seq,
             active_turn_id: None,
             active_tool_ids: BTreeSet::new(),
             active_approval_ids: BTreeSet::new(),
@@ -131,6 +138,20 @@ impl HarnessRuntime {
     }
 
     pub fn snapshot(&self) -> HarnessSnapshot {
+        let mut active_subagent_ids = BTreeSet::new();
+        for event in &self.events {
+            match &event.kind {
+                HarnessEventKind::SubagentStarted { child_session_id } => {
+                    active_subagent_ids.insert(child_session_id.clone());
+                }
+                HarnessEventKind::SubagentFinished {
+                    child_session_id, ..
+                } => {
+                    active_subagent_ids.remove(child_session_id);
+                }
+                _ => {}
+            }
+        }
         HarnessSnapshot {
             session_id: self.session_id.clone(),
             state: self.state,
@@ -138,6 +159,7 @@ impl HarnessRuntime {
             active_turn_id: self.active_turn_id.clone(),
             active_tool_ids: self.active_tool_ids.iter().cloned().collect(),
             active_approval_ids: self.active_approval_ids.iter().cloned().collect(),
+            active_subagent_ids: active_subagent_ids.into_iter().collect(),
             events: self.events.clone(),
         }
     }
@@ -427,6 +449,18 @@ mod tests {
             .iter()
             .filter(|event| event.turn_id.is_some())
             .all(|event| event.turn_id.as_deref() == Some("turn-1")));
+    }
+
+    #[test]
+    fn snapshot_replays_active_subagent_lifecycle_from_session_history() {
+        let mut runtime = HarnessRuntime::new("session-1");
+        runtime.start();
+        runtime.begin_turn("turn-1");
+        runtime.start_subagent("child-active");
+        runtime.start_subagent("child-finished");
+        runtime.finish_subagent("child-finished", true);
+
+        assert_eq!(runtime.snapshot().active_subagent_ids, ["child-active"]);
     }
 
     #[test]

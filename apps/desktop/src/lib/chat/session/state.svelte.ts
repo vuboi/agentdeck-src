@@ -354,6 +354,10 @@ export type HarnessView = {
     turn: string;
     state: HarnessState;
     seq: number;
+    /** Identities restored from the durable snapshot; live events clear them because they do not carry these lists. */
+    activeToolIds?: string[];
+    activeApprovalIds?: string[];
+    activeSubagentIds?: string[];
 };
 
 /** Latest provider-neutral lifecycle fact. Kept beside runStates until both reducers share the same counters. */
@@ -374,12 +378,18 @@ export function applyHarnessState(
 }
 
 export function applyHarnessReplay(sessionId: string, replay: HarnessReplay) {
-    applyHarnessState(
-        sessionId,
-        replay.snapshot.active_turn_id ?? 'replayed',
-        replay.snapshot.state,
-        Math.max(0, replay.snapshot.next_seq - 1),
-    );
+    const turn = replay.snapshot.active_turn_id ?? 'replayed';
+    const seq = Math.max(0, replay.snapshot.next_seq - 1);
+    const current = harnessStates[sessionId];
+    if (current?.turn === turn && seq <= current.seq) return;
+    harnessStates[sessionId] = {
+        turn,
+        state: replay.snapshot.state,
+        seq,
+        activeToolIds: [...replay.snapshot.active_tool_ids],
+        activeApprovalIds: [...replay.snapshot.active_approval_ids],
+        activeSubagentIds: [...replay.snapshot.active_subagent_ids],
+    };
     harnessInterrupted[sessionId] = replay.interrupted;
 }
 

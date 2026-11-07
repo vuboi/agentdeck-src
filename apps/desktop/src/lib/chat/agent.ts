@@ -137,6 +137,7 @@ export type HarnessReplay = {
         active_turn_id: string | null;
         active_tool_ids: string[];
         active_approval_ids: string[];
+        active_subagent_ids: string[];
     };
     interrupted: boolean;
 };

@@ -6,8 +6,16 @@ import {
     autoSwitchProviderKey,
     limitResetAt,
     refreshProviderQuota,
+    activeProviderKey,
+    providerKeyEnv,
     type AccountConnectorId,
+    type AccountProvider,
+    type Detected,
 } from '../../agents/connectors.svelte';
+import {
+    orderProvidersByObservedLatency,
+    recordProviderTurn,
+} from '../../agents/provider-telemetry';
 import {
     type FailureKind,
     type Recovery,
@@ -17,6 +25,7 @@ import {
     recoveryNote,
     waitUnlessAborted,
 } from '../recovery/turn-failure';
+import { matchesAllowedPlan } from '../recovery/plan-eligibility';
 import { inTauri, isPreviewCopy, clock } from '../../app/platform/history';
 import { type Message, type Block } from '../mock';
 import { planOf } from '../content/blocks';
@@ -504,6 +513,27 @@ type RecoveryRoute = {
     restricted?: boolean;
 };
 
+/** Reads only plan metadata reported by the active account or provider login. Custom endpoints have no plan metadata. */
+function recoveryPlan(provider: string): string | null | undefined {
+    if (connectors.custom.some((item) => item.id === provider))
+        return undefined;
+    if (
+        provider === 'claude' ||
+        provider === 'codex' ||
+        provider === 'copilot'
+    ) {
+        const account = connectors.accounts[
+            provider as AccountProvider
+        ]?.accounts.find((item) => item.active);
+        if (account?.plan) return account.plan;
+    }
+    const loginKey = provider.replaceAll('-', '_') as Exclude<
+        keyof Detected,
+        'tools'
+    >;
+    return connectors.detected?.[loginKey]?.plan;
+}
+
 /** Resolve saved fallback rows to exact, currently available CLI or custom-connector routes. */
 function availableRecoveryRoutes(): RecoveryRoute[] {
     const result: RecoveryRoute[] = [];
@@ -520,6 +550,8 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
             routing.allowedProviders.length > 0 &&
             !routing.allowedProviders.includes(provider)
         )
+            continue;
+        if (!matchesAllowedPlan(recoveryPlan(provider), routing.allowedPlans))
             continue;
         let agent: Agent;
         let model: string | undefined;
@@ -594,10 +626,13 @@ function availableRecoveryRoutes(): RecoveryRoute[] {
 /** The route identities a chat can move to now, in the user's order. */
 /** The routes for a chat: a delegated worker never falls back to a free tier (its prompt was checked at start only). */
 function routesFor(forChat?: string): RecoveryRoute[] {
-    return routesForChat(
+    const routes = routesForChat(
         availableRecoveryRoutes(),
         forChat ? isWorkerChat(forChat) : false,
     );
+    return connectors.routingProfile.strategy === 'fast'
+        ? orderProvidersByObservedLatency(routes)
+        : routes;
 }
 
 export function recoveryChain(forChat?: string): string[] {
@@ -1492,8 +1527,7 @@ function requestChatSuggestions(
 ) {
     if (!replyStyle.chatSuggestions) return;
     const session = workspace.sessions.find((item) => item.id === sessionId);
-    if (!session || (session.agent !== 'claude' && session.agent !== 'codex'))
-        return;
+    if (!session) return;
     const asked = messagesView(sessionId).findLast(
         (item) => item.role === 'user',
     );
@@ -1501,8 +1535,16 @@ function requestChatSuggestions(
         .flatMap((block) => (block.kind === 'response' ? [block.text] : []))
         .join('\n');
     if (!prompt.trim() || !answer.trim()) return;
+    const target = parseCustomModel(session.model);
+    const custom = target
+        ? connectors.custom.find((item) => item.id === target.providerId)
+        : undefined;
+    if (target && !custom) return;
     const model =
-        session.agent === 'claude' ? 'claude-haiku-5-5' : session.model;
+        session.agent === 'claude'
+            ? 'claude-haiku-5-5'
+            : (target?.model ?? session.model);
+    const provider = target ? 'custom' : session.agent;
     const replyId = lastReplyId(sessionId);
     if (!replyId) return;
     const known = replySuggestions[replyId];
@@ -1511,11 +1553,19 @@ function requestChatSuggestions(
         try {
             const { invoke } = await import('@tauri-apps/api/core');
             const items = await invoke<string[]>('chat_suggest', {
-                provider: session.agent,
+                provider,
                 model,
                 prompt,
                 reply: answer,
                 existing,
+                custom: custom
+                    ? {
+                          kind: custom.kind,
+                          base_url: custom.baseUrl,
+                          api_key: activeProviderKey(custom)?.apiKey || null,
+                          key_env: providerKeyEnv(custom) || null,
+                      }
+                    : null,
             });
             if (turns[sessionId] !== turn) return;
             const now = replySuggestions[replyId];
@@ -2004,6 +2054,21 @@ function handleEventNow(
         liveReplies[sessionId] ??
         messagesView(sessionId).find((item) => item.id === replies[sessionId]);
     if (!session) return;
+    if ((event.kind === 'done' || event.kind === 'error') && reply) {
+        const agent = reply.agent ?? session.agent;
+        const custom =
+            agent === 'custom'
+                ? parseCustomModel(reply.model ?? session.model)
+                : null;
+        const provider = custom?.providerId ?? agent;
+        if (reply.startedAt !== undefined)
+            recordProviderTurn(
+                provider,
+                turn ?? reply.id,
+                Math.max(0, Date.now() - reply.startedAt),
+                event.kind === 'done' ? 'success' : 'error',
+            );
+    }
     // Codex writes a thread's rollout, and Claude its session file, only once a run has started. A run stopped before
     // that leaves an id with nothing to resume. The next message then starts a new conversation, instead of resuming
     // that id again and failing the same way.

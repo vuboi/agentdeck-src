@@ -30,7 +30,9 @@ pub(crate) fn parse_usage(text: &str, now: i64) -> Option<(Vec<UsageWindow>, i64
     if premium["unlimited"].as_bool().unwrap_or(false) {
         return Some((Vec::new(), now));
     }
-    let left = premium["percent_remaining"].as_f64()?;
+    let left = premium["percent_remaining"]
+        .as_f64()
+        .or_else(|| premium["percent_remaining"].as_str()?.parse().ok())?;
     let window = UsageWindow {
         label: "30d".into(),
         pct: (100.0 - left).clamp(0.0, 100.0),

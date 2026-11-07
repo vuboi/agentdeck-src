@@ -51,12 +51,20 @@ impl AsyncHarnessEventLog {
         let path = path.into();
         let worker = thread::spawn(move || {
             let log = HarnessEventLog::new(path);
+            let mut failure = None;
             while let Ok(message) = receiver.recv() {
                 match message {
                     AsyncMessage::Event(event) => {
-                        let _ = log.append(&event);
+                        if failure.is_none() {
+                            failure = log.append(&event).err();
+                        }
                     }
                     AsyncMessage::Flush(reply) => {
+                        // An append failure invalidates the remaining queue; report it before closing.
+                        if let Some(error) = failure.take() {
+                            let _ = reply.send(Err(error));
+                            break;
+                        }
                         let result = log.flush();
                         let _ = reply.send(result);
                     }
@@ -237,6 +245,95 @@ impl HarnessRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fresh_turn_runtimes_replay_one_contiguous_session() {
+        let path = std::env::temp_dir().join(format!(
+            "agentdeck-harness-two-turns-{}.jsonl",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let log = HarnessEventLog::new(&path);
+        assert_eq!(log.replay("s").unwrap().runtime.next_seq(), 0);
+        let mut expected = Vec::new();
+        for turn in ["first", "second"] {
+            let next_seq = log.replay("s").unwrap().runtime.next_seq();
+            let mut runtime = HarnessRuntime::with_next_seq("s", next_seq);
+            assert_eq!(runtime.state(), HarnessState::Created);
+            assert!(runtime.events().is_empty());
+            runtime.start();
+            assert!(runtime.begin_turn(turn));
+            assert!(runtime.assistant_delta(turn));
+            assert!(runtime.complete_turn());
+            for event in runtime.events() {
+                log.append(event).unwrap();
+                expected.push(event.clone());
+            }
+        }
+        let replay = log.replay("s").unwrap();
+        assert!(!replay.interrupted);
+        assert_eq!(replay.runtime.state(), HarnessState::Completed);
+        assert_eq!(replay.runtime.events(), expected);
+        assert_eq!(replay.runtime.next_seq(), expected.len() as u64);
+        for (seq, event) in expected.iter().enumerate() {
+            assert_eq!(event.seq, seq as u64);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn corrupt_log_cannot_supply_a_fresh_sequence() {
+        let path = std::env::temp_dir().join(format!(
+            "agentdeck-harness-corrupt-{}.jsonl",
+            std::process::id()
+        ));
+        std::fs::write(&path, "invalid JSON\n").unwrap();
+        let log = HarnessEventLog::new(&path);
+        assert!(matches!(log.replay("s"), Err(EventLogError::Json(_))));
+        let mut runtime = HarnessRuntime::new("s");
+        runtime.start();
+        let mut event = runtime.events()[0].clone();
+        event.seq = 1;
+        std::fs::write(
+            &path,
+            format!("{}\n", serde_json::to_string(&event).unwrap()),
+        )
+        .unwrap();
+        assert!(matches!(
+            log.replay("s"),
+            Err(EventLogError::Sequence {
+                expected: 0,
+                actual: 1
+            })
+        ));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn async_log_flush_reports_append_failure_and_stops_writing() {
+        let parent = std::env::temp_dir().join(format!(
+            "agentdeck-harness-blocked-parent-{}",
+            std::process::id()
+        ));
+        std::fs::write(&parent, "blocks directory creation").unwrap();
+        let path = parent.join("events.jsonl");
+        let log = AsyncHarnessEventLog::new(&path, 2);
+        let mut runtime = HarnessRuntime::new("s");
+        runtime.start();
+        log.append(&runtime.events()[0]).unwrap();
+        assert!(matches!(log.flush(), Err(EventLogError::Io(_))));
+        assert!(matches!(log.flush(), Err(EventLogError::Closed)));
+        std::fs::remove_file(&parent).unwrap();
+        std::fs::create_dir(&parent).unwrap();
+        assert!(matches!(
+            log.append(&runtime.events()[1]),
+            Err(EventLogError::Closed)
+        ));
+        drop(log);
+        assert!(!path.exists());
+        std::fs::remove_dir(parent).unwrap();
+    }
+
     #[test]
     fn append_and_replay_detects_interrupted_turn() {
         let path = std::env::temp_dir().join(format!(

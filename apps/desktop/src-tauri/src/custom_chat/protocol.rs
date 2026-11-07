@@ -6,6 +6,11 @@ use ag_adapters::agent::AgentEvent;
 use serde_json::{json, Value};
 
 use super::{chat_url, Turn, STALL};
+
+const CLOUDFLARE_CONTEXT_TOKENS: usize = 24_000;
+const CLOUDFLARE_MIN_OUTPUT_TOKENS: usize = 256;
+const CLOUDFLARE_MAX_OUTPUT_TOKENS: usize = 2_048;
+const CLOUDFLARE_REQUEST_RESERVE_TOKENS: usize = 256;
 // ---------------------------------------------------------------------------------------------------------------
 // One model call
 
@@ -113,6 +118,48 @@ pub(crate) fn responses_url(base: &str) -> String {
 
 fn messages_url(base: &str) -> String {
     format!("{}/messages", base.trim().trim_end_matches('/'))
+}
+
+fn estimated_tokens(value: &Value) -> usize {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len().div_ceil(3))
+        .unwrap_or(usize::MAX)
+}
+
+fn fit_cloudflare_messages(messages: &mut Vec<Value>, tools: &[Value]) -> Result<usize, String> {
+    loop {
+        let mut prompt = json!({ "messages": messages });
+        if !tools.is_empty() {
+            prompt["tools"] = Value::Array(tools.to_vec());
+        }
+        let available = CLOUDFLARE_CONTEXT_TOKENS
+            .saturating_sub(estimated_tokens(&prompt))
+            .saturating_sub(CLOUDFLARE_REQUEST_RESERVE_TOKENS);
+        if available >= CLOUDFLARE_MIN_OUTPUT_TOKENS {
+            return Ok(available.min(CLOUDFLARE_MAX_OUTPUT_TOKENS));
+        }
+        if messages.len() <= 1 {
+            return Err("Cloudflare prompt is too large even after removing chat history".into());
+        }
+
+        // Keep the system prompt and the newest conversation. Remove complete tool-call groups
+        // from the oldest side so the remaining transcript stays valid for the API.
+        let removed = messages.remove(1);
+        if removed["tool_calls"].is_array() {
+            while messages
+                .get(1)
+                .is_some_and(|message| message["role"] == "tool")
+            {
+                messages.remove(1);
+            }
+        }
+        while messages
+            .get(1)
+            .is_some_and(|message| message["role"] == "tool")
+        {
+            messages.remove(1);
+        }
+    }
 }
 
 pub(crate) fn provider_key(turn: &Turn) -> Option<String> {
@@ -757,6 +804,12 @@ pub(crate) async fn model_call(
             Err(error) => return Err(error.message),
         }
     }
+    let cloudflare = turn.base_url.contains("api.cloudflare.com");
+    let cloudflare_output = if cloudflare {
+        Some(fit_cloudflare_messages(&mut outgoing_messages, tools)?)
+    } else {
+        None
+    };
     let mut body = json!({
         "model": turn.model,
         "stream": true,
@@ -766,9 +819,8 @@ pub(crate) async fn model_call(
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools.to_vec());
     }
-    // Workers AI cuts an answer short at its own small default, so ask for a fixed ceiling.
-    if turn.base_url.contains("api.cloudflare.com") {
-        body["max_tokens"] = json!(2048);
+    if let Some(max_tokens) = cloudflare_output {
+        body["max_tokens"] = json!(max_tokens);
     }
     // Servers differ in how they take this, and one ignores what it does not know: `reasoning_effort` (LM Studio,
     // OpenAI-style, Ollama), `chat_template_kwargs` (llama.cpp, vLLM) and `think` (Ollama).
@@ -883,6 +935,38 @@ pub(crate) fn take_line(pending: &mut Vec<u8>) -> Option<String> {
     let end = pending.iter().position(|byte| *byte == b'\n')?;
     let line: Vec<u8> = pending.drain(..=end).collect();
     Some(String::from_utf8_lossy(&line).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_cloudflare_messages;
+    use serde_json::json;
+
+    #[test]
+    fn cloudflare_prompt_keeps_output_inside_context_limit() {
+        let mut messages = vec![json!({ "role": "system", "content": "rules" })];
+        messages.extend((0..6).map(|index| {
+            json!({
+                "role": "user",
+                "content": format!("message {index} {}", "x".repeat(12_000))
+            })
+        }));
+        let original_len = messages.len();
+
+        let max_output = fit_cloudflare_messages(&mut messages, &[]).unwrap();
+
+        assert!(max_output >= 256);
+        assert!(max_output <= 2_048);
+        assert!(messages.len() < original_len);
+        assert_eq!(messages[0]["role"], "system");
+    }
+
+    #[test]
+    fn short_cloudflare_prompt_keeps_full_output_ceiling() {
+        let mut messages = vec![json!({ "role": "system", "content": "rules" })];
+
+        assert_eq!(fit_cloudflare_messages(&mut messages, &[]).unwrap(), 2_048);
+    }
 }
 
 /// Splits a content stream on `<think>…</think>`: the text inside is reasoning, not the answer. A tag cut by a network

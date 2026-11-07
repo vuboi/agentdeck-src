@@ -475,4 +475,31 @@ mod tests {
         assert!(acp.cancel().is_ok());
         assert_eq!(acp.client.transport().state(), TransportState::Open);
     }
+
+    #[test]
+    fn sdk_resume_restores_session_and_waits_for_resume_response_before_prompt() {
+        let mut adapter = DshRpcAdapter::new(DshTransportProfile::Sdk);
+        let init = adapter.initialize("agentdeck", "0.1.82").unwrap();
+        adapter.on_frame(response(&init, json!({}))).unwrap();
+        adapter.restore_session("saved-session").unwrap();
+
+        let resume = adapter.resume().unwrap();
+        let frame: Value = serde_json::from_slice(&resume.bytes).unwrap();
+        assert_eq!(frame["method"], "session/resume");
+        assert_eq!(frame["params"]["sessionId"], "saved-session");
+        assert!(matches!(
+            adapter.prompt("continue").unwrap_err(),
+            DshAdapterError::InvalidState { .. }
+        ));
+        assert!(matches!(
+            adapter.on_frame(response(&resume, json!({}))).unwrap(),
+            DshAdapterEvent::Resumed { .. }
+        ));
+        let wait = adapter.wait().unwrap();
+        assert!(matches!(
+            adapter.on_frame(response(&wait, json!({}))).unwrap(),
+            DshAdapterEvent::WaitCompleted { .. }
+        ));
+        assert!(adapter.prompt("continue").is_ok());
+    }
 }
