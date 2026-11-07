@@ -470,7 +470,6 @@ Runtime proof must distinguish static checks, fake protocol tests, disposable ds
 - [x] dsh profile/plugin capability health and version diagnostics in MCP Store.
 - [ ] Provider health, quota, latency telemetry, routing fallback, and offline/local preference policy.
 - [ ] MCP session lifecycle, sandbox modes, inherited environment policy, and Windows handle/ACL proof.
-- [ ] Google Sheets OAuth/MCP connector for online spreadsheets; `.xlsx` remains covered by OfficeCLI.
 - [ ] Runtime UI for tool progress/retry, approval expiry, child sessions, recovery, transport errors, and settings capabilities.
 - [x] Contract, protocol, provider, frontend, Preview, and native Windows verification matrix documented.
 
