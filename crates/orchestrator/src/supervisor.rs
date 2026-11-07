@@ -53,6 +53,15 @@ impl ProcessSupervisor {
         self.state = SupervisorState::Running;
         true
     }
+
+    /// Restarts only after the old process has exited. DSH SDK resume cannot safely reuse a
+    /// session lock while the previous sidecar is still alive.
+    pub fn restart_after_exit(&mut self) -> bool {
+        if self.state != SupervisorState::Exited {
+            return false;
+        }
+        self.restart()
+    }
     pub fn cleanup_tree(&mut self) {
         self.state = SupervisorState::Stopping;
     }
@@ -82,5 +91,17 @@ mod tests {
         assert!(!s.restart());
         assert_eq!(s.state(), SupervisorState::Failed);
         assert_eq!(s.stderr_bytes(), 12);
+    }
+
+    #[test]
+    fn resume_restart_waits_for_process_exit() {
+        let mut s = ProcessSupervisor::new(1);
+        s.start();
+        s.cleanup_tree();
+        assert!(!s.restart_after_exit());
+        assert_eq!(s.state(), SupervisorState::Stopping);
+        s.exited();
+        assert!(s.restart_after_exit());
+        assert_eq!(s.state(), SupervisorState::Running);
     }
 }

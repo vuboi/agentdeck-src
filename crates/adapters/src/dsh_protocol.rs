@@ -200,6 +200,16 @@ impl DshSessionClient {
     pub fn shutdown(&mut self) -> Result<(String, Vec<u8>), TransportError> {
         self.transport.begin_shutdown()
     }
+
+    /// Reopens JSON-RPC transport after the sidecar has actually exited.
+    /// The session id stays intact so the next request can use `session/resume`.
+    pub fn reopen_after_process_exit(&mut self) -> Result<(), TransportError> {
+        if self.transport.state() != TransportState::Closed {
+            return Err(TransportError::NotOpen(self.transport.state()));
+        }
+        self.transport = JsonRpcTransport::new();
+        Ok(())
+    }
 }
 
 impl DshNotification {
@@ -412,6 +422,20 @@ mod tests {
         transport.mark_process_exited();
         assert_eq!(transport.state(), super::TransportState::Closed);
         assert!(transport.notification("session/event", json!({})).is_err());
+    }
+
+    #[test]
+    fn sdk_client_reopens_only_after_process_exit_and_keeps_session() {
+        let mut client = DshSessionClient::new(DshTransportProfile::Sdk);
+        client.set_session_id("session-1");
+        let _ = client.shutdown().unwrap();
+        assert!(client.reopen_after_process_exit().is_err());
+        client.transport_mut().mark_process_exited();
+        client.reopen_after_process_exit().unwrap();
+        let (_, frame) = client.resume().unwrap();
+        let frame = String::from_utf8(frame).unwrap();
+        assert!(frame.contains("session/resume"));
+        assert!(frame.contains("session-1"));
     }
 
     #[test]
